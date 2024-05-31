@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info
+.pytest_cache
+.ipynb_checkpoints
+venv/
+*.jpg
+*.npy
+*.geojson
+*.laz
+*.db
+
+# Internal references, dependencies, temporary folders & files
+.env
+*.env
+/db*/
+**/__ref__/
+/dependencies/
+logs/
+*.log
+/datasets/
+/milvus_data/
+/vespa*/
+*.swp
+
+
+# pytest-cov
+**/.coverage*
+/junit
+/htmlcov
+/coverage.xml
+
+# jest-cov
+**/coverage/*
+
+# pip
+**/build/
+
+# OS
+thumbs.db
+.DS_Store
+
+# javascript compiled code
+clients/typescript/**/*.js*
+clients/typescript/dist/**
+clients/typescript/**/*.d.ts
+
+**/node_modules/
+**/docs-autogen/
+**/docs-autogen-ts/

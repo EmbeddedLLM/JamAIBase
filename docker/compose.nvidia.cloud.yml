@@ -1,0 +1,52 @@
+services:
+  infinity:
+    extends:
+      file: compose.nvidia.yml
+      service: infinity
+
+  unstructuredio:
+    extends:
+      file: compose.nvidia.yml
+      service: unstructuredio
+
+  docio:
+    extends:
+      file: compose.nvidia.yml
+      service: docio
+
+  dragonfly:
+    extends:
+      file: compose.nvidia.yml
+      service: dragonfly
+
+  owl:
+    depends_on:
+      infinity:
+        condition: service_healthy
+      unstructuredio:
+        condition: service_healthy
+      docio:
+        condition: service_healthy
+      dragonfly:
+        condition: service_started
+    extends:
+      file: compose.nvidia.yml
+      service: owl
+
+  kong-external:
+    extends:
+      file: compose.cpu.cloud.yml
+      service: kong-external
+
+  kong-internal:
+    extends:
+      file: compose.cpu.cloud.yml
+      service: kong-internal
+
+  litestream:
+    extends:
+      file: compose.cpu.cloud.yml
+      service: litestream
+
+networks:
+  jamai:

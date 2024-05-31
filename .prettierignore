@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info
+.pytest_cache
+.ipynb_checkpoints
+venv/
+
+# Frontend
+services/app
+clients/typescript
+
+# Internal references, dependencies, temporary folders & files
+archive/
+/dependencies/
+logs/
+*.log
+
+# pytest-cov
+**/.coverage*
+/junit
+/htmlcov
+/coverage.xml
+
+# pip
+**/build/
+
+# Docs
+/docs/source/generated/
+/docs/source/api/generated/
+/docs/source/specs/
+
+# OS
+thumbs.db
+.DS_Store

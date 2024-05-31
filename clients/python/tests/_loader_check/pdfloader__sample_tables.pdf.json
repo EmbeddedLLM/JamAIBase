@@ -1,0 +1,59 @@
+[
+  {
+    "page_content": "The Name of the Title is Hope\n\nBENTROVATO∗andG.K.M.TOBIN∗, Institute for Clarity in Documentation, USA\nLARSTHØRVÄLD, The Thørväld Group, Iceland\nVALERIEBÉRANGER, Inria Paris-Rocquencourt, France\n\nA clear and well-documented LATEX document is presented as an article\nformatted for publication by ACM in a conference proceedings or journal\npublication. Based on the “acmart” document class, this article presents and\nexplains many of the common variations, as well as many of the formatting\nelements an author may use in the preparation of the documentation of their\nwork.\n\nAdditional Key Words and Phrases: Image Captioning, Deep Learning\n\nACM Reference Format:\nBen Trovato, G.K.M. Tobin, Lars Thørväld, and Valerie Béranger. 2018. The\nNameoftheTitleisHope.ACMTrans.Graph.37,4,Article111(August2018),\n1 page. https://doi.org/XXXXXXX.XXXXXXX\n\n1 INTRODUCTION\n\nACM’s consolidated article template, introduced in 2017, provides\na consistent LATEX style for use across ACM publications, and in-\ncorporates accessibility and metadata-extraction functionality nec-\nessary for future Digital Library endeavors. Numerous ACM and\nSIG-specific LATEX templates have been examined, and their unique\nfeatures incorporated into this single new template.\n\n2 SHORT TABLE\n\nTable 1. Performance of tokenisation and encoding schemes on MS-COCO.\n<TABLE>\n\nApproach Params.\n(M)\n\nMS-COCO test set scores\nB-1 B-2 ΔC (%)\n\nWord (baseline) 12.2 71.5 54.5 -\nWord (slim) 12.2 70.5 50.5 − 12.0\n\nCharacter 5.1 68.8 51.5 − 10.5\n</TABLE>\na Decoder size in terms of number of learnable parameters\n(excluding encoder).\n\n∗Both authors contributed equally to this research.\n\nAuthors’addresses:BenTrovato,trovato@corporation.com;G.K.M.Tobin,webmaster@\nmarysville-ohio.com, Institute for Clarity in Documentation, P.O. Box 1212, Dublin,\nOhio, USA, 43017-6221; Lars Thørväld, The Thørväld Group, 1 Thørväld Circle, Hekla,\nIceland, larst@affiliation.org; Valerie Béranger, Inria Paris-Rocquencourt, Rocquen-\ncourt, France.\n\nPermission to make digital or hard copies of all or part of this work for personal or\nclassroom use is granted without fee provided that copies are not made or distributed\nfor profit or commercial advantage and that copies bear this notice and the full citation\non the first page. Copyrights for components of this work owned by others than ACM\nmust be honored. Abstracting with credit is permitted. To copy otherwise, or republish,\nto post on servers or to redistribute to lists, requires prior specific permission and/or a\nfee. Request permissions from permissions@acm.org.\n© 2018 Association for Computing Machinery.\n0730-0301/2018/8-ART111 $15.00\nhttps://doi.org/XXXXXXX.XXXXXXX\n\nFig. 1. 1907 Franklin Model D roadster. Photograph by Harris & Ewing, Inc.\n[Public domain], via Wikimedia Commons. (https://goo.gl/VLCRBB).\n<TABLE>\n\nParameters Model 1 Model 2\nCoefficient 95% CI Coefficient 95% CI\nØ 0.190∗ (0.113, 0.268) 0.171 (0.100, 0.241)\n𝜋 0.117 (0.043, 0.191) 0.117 (0.050, 0.183)\n$ 0.210 (0.139, 0.281) 0.190 (0.127, 0.253)Ψ21 0.204 (0.135, 0.273) 0.111 ( 0.049, 0.173)\n</TABLE>\n\n2.1 Template Styles\n\nJournals use one of three template styles. All but three ACM journals\nuse the acmsmall template style:\n• acmsmall: The default journal template style.\n• acmlarge: Used by JOCCH and TAP.\n• acmtog: Used by TOG.\n\n3 FIGURES\n\nThe “figure” environment should be used for figures. One or more\nimages can be placed within a figure. If your figure contains third-\nparty material, you must clearly identify it as such, as shown in the\nexample below.\nYour figures should contain a caption which describes the figure\nto the reader.\n\nReceived 20 February 2007; revised 12 March 2009; accepted 5 June 2009\n\nACM Trans. Graph., Vol. 37, No. 4, Article 111. Publication date: August 2018.\n",
+    "metadata": {
+      "page": 0,
+      "source": "amagpt/sample_tables.pdf",
+      "file_path": "/tmp/tmpak3aalx7.pdf",
+      "total_pages": 3,
+      "Author": "Ben Trovato",
+      "CreationDate": "D:20231031072817Z",
+      "Creator": "LaTeX with acmart 2023/10/14 v1.92 Typesetting articles for the Association for Computing Machinery and hyperref 2023-07-08 v7.01b Hypertext links for LaTeX",
+      "Keywords": "Image Captioning, Deep Learning",
+      "ModDate": "D:20231031073146Z",
+      "PTEX.Fullbanner": "This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023) kpathsea version 6.3.5",
+      "Producer": "3-Heights(TM) PDF Security Shell 4.8.25.2 (http://www.pdf-tools.com) / pdcat (www.pdf-tools.com)",
+      "Title": "The Name of the Title is Hope",
+      "Trapped": "False",
+      "document_id": "9f17d92a580a15b5f4405d51f2542900"
+    }
+  },
+  {
+    "page_content": "-  3  - \n \n \nPremium = 30 x $4,100 + 50 x $29,700 + 20 x $38,600 = $2,380,000 \n \nIn  a  case  where  the  claimed  exempted  balcony  floor  space  is \nsmaller than the permissible floor space under the Joint Practice Note No. 1 the \npremium will be assessed on a pro-rata basis.  The following examples illustrate \nhow the premia are assessed in each cases: \n \n<TABLE> In each flat the lot is \nin HK Island  Case 1  Case 2  Case 3 \nTotal claimed area of \nexempted  balcony \nfloor space \n\n2.1  2.1  2.8 \n\nTotal  permissible \nexempted  balcony \nfloor  space  under \nBuildings  Ordinance \n/Joint PN1 \n\n2.5  2.6  4 \n\nFormula used  Not applicable  $15,800 x 2.1/2.6  $28,700 x 2.8/4.0 \nPremium  $4,800  $12,761.54  $20,900 \n</TABLE>\n  In  addition  to  the  premium,  an  administrative  fee  currently  of \n$23,000 will be payable.  \n \nThe district boundary follows that of the boundary of the District \nLands  Offices.  For  lots  straddling  between  two  districts,  the  higher  rate  is \napplicable. \n \n5.   Subsequent changes \n  Upon completion of the modification and issue of the first consent \nletter, subsequent changes to the composition of the exempted floor space or \npermissible exempted floor space will require a further consent letter  subject to \npayment  of  an  administrative  fee,  and  possibly  additional  premium  if \nappropriate. \n \n6.    Submission of building plans \n  APs are also advised to provide a schedule in the building plans \nsubmitted to the Buildings and Lands Departments listing out the permissible \nexempted balcony floor space and  the claimed exempted balcony  space for \nchecking purposes. \n",
+    "metadata": {
+      "page": 1,
+      "source": "amagpt/sample_tables.pdf",
+      "file_path": "/tmp/tmpak3aalx7.pdf",
+      "total_pages": 3,
+      "Author": "Ben Trovato",
+      "CreationDate": "D:20231031072817Z",
+      "Creator": "LaTeX with acmart 2023/10/14 v1.92 Typesetting articles for the Association for Computing Machinery and hyperref 2023-07-08 v7.01b Hypertext links for LaTeX",
+      "Keywords": "Image Captioning, Deep Learning",
+      "ModDate": "D:20231031073146Z",
+      "PTEX.Fullbanner": "This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023) kpathsea version 6.3.5",
+      "Producer": "3-Heights(TM) PDF Security Shell 4.8.25.2 (http://www.pdf-tools.com) / pdcat (www.pdf-tools.com)",
+      "Title": "The Name of the Title is Hope",
+      "Trapped": "False",
+      "document_id": "9f17d92a580a15b5f4405d51f2542900"
+    }
+  },
+  {
+    "page_content": "Premium Per Unit\n<TABLE>\n\nHK/KLN Sha Tin\nSai Kung\n\nTai Po\nNorth\n\nTuen Mun\nYuen Long\n\nKwai Tsing\nTsuen Wan Islands\n\n2.0 $4,100 $2,300 $0 $0 $3,000 $0\n\n2.1 $4,800 $2,900 $0 $0 $3,600 $0\n\n2.2 $5,500 $3,500 $0 $0 $4,200 $0\n\n2.3 $6,100 $4,000 $0 $0 $4,800 $0\n\n2.4 $6,800 $4,600 $0 $0 $5,400 $0\n\n2.5 $7,400 $5,100 $360 $0 $6,000 $360\n\n2.6 $15,800 $8,400 $3,600 $1,200 $8,400 $3,600\n\n2.7 $16,700 $9,000 $4,000 $1,500 $9,000 $4,000\n\n2.8 $17,600 $9,700 $4,500 $1,900 $9,700 $4,500\n\n2.9 $18,500 $10,300 $4,900 $2,200 $10,300 $4,900\n\n3.0 $19,400 $10,900 $5,300 $2,500 $10,900 $5,300\n\n3.1 $20,300 $11,600 $5,800 $2,900 $11,600 $5,800\n\n3.2 $21,200 $12,200 $6,200 $3,200 $12,200 $6,200\n\n3.3 $22,100 $12,900 $6,700 $3,600 $12,900 $6,700\n\n3.4 $23,000 $13,500 $7,100 $3,900 $13,500 $7,100\n\n3.5 $23,900 $14,100 $7,500 $4,200 $14,100 $7,500\n\n3.6 $24,900 $14,800 $8,000 $4,600 $14,800 $8,000\n\n3.7 $25,900 $15,500 $8,500 $5,000 $15,500 $8,500\n\n3.8 $26,800 $16,100 $9,000 $5,400 $16,100 $9,000\n\n3.9 $27,800 $16,800 $9,500 $5,800 $16,800 $9,500\n\n4.0 $28,700 $17,400 $9,900 $6,100 $17,400 $9,900\n\n4.1 $29,700 $18,100 $10,400 $6,500 $18,100 $10,400\n\n4.2 $30,600 $18,800 $10,900 $6,900 $18,800 $10,900\n\n4.3 $31,600 $19,400 $11,400 $7,300 $19,400 $11,400\n\n4.4 $32,500 $20,100 $11,900 $7,700 $20,100 $11,900\n\n4.5 $33,400 $20,700 $12,300 $8,000 $20,700 $12,300\n\n4.6 $34,500 $21,500 $12,900 $8,500 $21,500 $12,900\n\n4.7 $35,500 $22,300 $13,500 $9,000 $22,300 $13,500\n\n4.8 $36,600 $23,000 $14,000 $9,500 $23,000 $14,000\n\n4.9 $37,600 $23,800 $14,600 $10,000 $23,800 $14,600\n\n5.0 $38,600 $24,500 $15,100 $10,400 $24,500 $15,100\n\nwith effect from April 2001\n\n \n                                                     District\nTotal Exempted\nBalcony Area (m²) Per Unit\n</TABLE>\n\nAppendix\n\nStandard Rates for Premium Assessment for Exemption of Balconies\n",
+    "metadata": {
+      "page": 2,
+      "source": "amagpt/sample_tables.pdf",
+      "file_path": "/tmp/tmpak3aalx7.pdf",
+      "total_pages": 3,
+      "Author": "Ben Trovato",
+      "CreationDate": "D:20231031072817Z",
+      "Creator": "LaTeX with acmart 2023/10/14 v1.92 Typesetting articles for the Association for Computing Machinery and hyperref 2023-07-08 v7.01b Hypertext links for LaTeX",
+      "Keywords": "Image Captioning, Deep Learning",
+      "ModDate": "D:20231031073146Z",
+      "PTEX.Fullbanner": "This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023) kpathsea version 6.3.5",
+      "Producer": "3-Heights(TM) PDF Security Shell 4.8.25.2 (http://www.pdf-tools.com) / pdcat (www.pdf-tools.com)",
+      "Title": "The Name of the Title is Hope",
+      "Trapped": "False",
+      "document_id": "9f17d92a580a15b5f4405d51f2542900"
+    }
+  }
+]

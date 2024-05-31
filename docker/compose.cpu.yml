@@ -1,0 +1,110 @@
+services:
+  infinity:
+    image: michaelf34/infinity:0.0.32
+    container_name: jamai_infinity
+    entrypoint:
+      [
+        "/bin/sh",
+        "-c",
+        "(. /app/.venv/bin/activate && infinity_emb --port 6909 --model-name-or-path $${EMBEDDING_MODEL} --model-warmup --device cpu &);(. /app/.venv/bin/activate && infinity_emb --port 6919 --model-name-or-path $${RERANKER_MODEL} --model-warmup --device cpu )",
+      ]
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail http://localhost:6909/health && curl --silent --fail http://localhost:6919/health || exit 1"]
+      interval: 30s
+      timeout: 2s
+      retries: 5
+      start_period: 1m
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    networks:
+      - jamai
+
+  unstructuredio:
+    image: downloads.unstructured.io/unstructured-io/unstructured-api:latest
+    container_name: jamai_unstructuredio
+    entrypoint: ["/usr/bin/env", "bash", "-c", "uvicorn prepline_general.api.app:app --log-config logger_config.yaml --port 6989 --host 0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail http://localhost:6989/healthcheck || exit 1"]
+      interval: 30s
+      timeout: 2s
+      retries: 5
+      start_period: 1m
+    restart: unless-stopped
+    networks:
+      - jamai
+
+  docio:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.docio
+    image: jamai/docio
+    command: ["python", "-m", "docio.entrypoints.api"]
+    container_name: jamai_docio
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail http://localhost:6979/health || exit 1"]
+      interval: 30s
+      timeout: 2s
+      retries: 5
+      start_period: 1m
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    networks:
+      - jamai
+
+  dragonfly:
+    image: "docker.dragonflydb.io/dragonflydb/dragonfly"
+    ulimits:
+      memlock: -1
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl --silent --fail http://localhost:6379 || exit 1"]
+    #   interval: 30s
+    #   timeout: 2s
+    #   retries: 5
+    #   start_period: 1m
+    ports:
+      - "6379:6379"
+    # For better performance, consider `host` mode instead `port` to avoid docker NAT.
+    # `host` mode is NOT currently supported in Swarm Mode.
+    # https://docs.docker.com/compose/compose-file/compose-file-v3/#network_mode
+    # network_mode: "host"
+    # volumes:
+    #   - ${PWD}/dragonflydata:/data
+    networks:
+      - jamai
+
+  owl:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.owl
+    image: jamai/owl
+    container_name: jamai_owl
+    command: ["python", "-m", "owl.entrypoints.api"]
+    depends_on:
+      infinity:
+        condition: service_healthy
+      unstructuredio:
+        condition: service_healthy
+      docio:
+        condition: service_healthy
+      dragonfly:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail localhost:6969/api/health || exit 1"]
+      interval: 30s
+      timeout: 2s
+      retries: 5
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    volumes:
+      - ${PWD}/db:/app/api/db
+      - ${PWD}/logs:/app/api/logs
+    ports:
+      - "6969:${API_PORT:-6969}"
+    networks:
+      - jamai
+
+networks:
+  jamai:

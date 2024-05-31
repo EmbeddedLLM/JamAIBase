@@ -1,0 +1,20 @@
+_format_version: "2.1"
+_transform: true
+
+services:
+  - name: jamai-internal-service
+    host: kong-internal
+    port: 8000
+    routes:
+      - name: jamai-internal-route
+        paths:
+          - "/"
+
+plugins:
+  - name: rate-limiting
+    service: jamai-internal-service
+    config:
+      minute: 100
+      hour: 1000
+      policy: local
+      limit_by: ip

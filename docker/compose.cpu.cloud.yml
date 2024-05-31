@@ -1,0 +1,89 @@
+services:
+  infinity:
+    extends:
+      file: compose.cpu.yml
+      service: infinity
+
+  unstructuredio:
+    extends:
+      file: compose.cpu.yml
+      service: unstructuredio
+
+  docio:
+    extends:
+      file: compose.cpu.yml
+      service: docio
+
+  dragonfly:
+    extends:
+      file: compose.cpu.yml
+      service: dragonfly
+
+  owl:
+    depends_on:
+      infinity:
+        condition: service_healthy
+      unstructuredio:
+        condition: service_healthy
+      docio:
+        condition: service_healthy
+      dragonfly:
+        condition: service_started
+    extends:
+      file: compose.cpu.yml
+      service: owl
+
+  kong-external:
+    image: kong/kong-gateway:3.6.1.4
+    volumes:
+      - ../services/gateway/kong_external.yml:/kong/declarative/kong.yml
+    environment:
+      - KONG_DATABASE=off
+      - KONG_DECLARATIVE_CONFIG=/kong/declarative/kong.yml
+      - KONG_PROXY_ACCESS_LOG=/dev/stdout
+      - KONG_ADMIN_ACCESS_LOG=/dev/stdout
+      - KONG_PROXY_ERROR_LOG=/dev/stderr
+      - KONG_ADMIN_ERROR_LOG=/dev/stderr
+      - KONG_ADMIN_LISTEN=0.0.0.0:8001
+      - KONG_ADMIN_GUI_PATH=/
+    ports:
+      - "8000:8000" # HTTP requests
+      - "8443:8443" # HTTPS requests
+      - "127.0.0.1:8001:8001" # HTTP Admin listen
+      - "127.0.0.1:8444:8444" # HTTPS Admin listen
+    networks:
+      - jamai
+
+  kong-internal:
+    image: kong/kong-gateway:3.6.1.4
+    volumes:
+      - ../services/gateway/kong_internal.yml:/kong/declarative/kong.yml
+    environment:
+      - KONG_DATABASE=off
+      - KONG_DECLARATIVE_CONFIG=/kong/declarative/kong.yml
+      - KONG_PROXY_ACCESS_LOG=/dev/stdout
+      - KONG_ADMIN_ACCESS_LOG=/dev/stdout
+      - KONG_PROXY_ERROR_LOG=/dev/stderr
+      - KONG_ADMIN_ERROR_LOG=/dev/stderr
+      - KONG_ADMIN_LISTEN=0.0.0.0:8001
+      - KONG_ADMIN_GUI_PATH=/
+    ports:
+      - "8010:8000" # HTTP requests
+      - "8453:8443" # HTTPS requests
+      - "127.0.0.1:8011:8001" # HTTP Admin listen
+      - "127.0.0.1:8454:8444" # HTTPS Admin listen
+    networks:
+      - jamai
+  litestream:
+    image: litestream/litestream
+    environment:
+      LITESTREAM_ACCESS_KEY_ID: minioadmin
+      LITESTREAM_SECRET_ACCESS_KEY: minioadmin
+    network_mode: host
+    volumes:
+      - "../db:/data"
+      - "../services/replication/litestream.yml:/etc/litestream.yml"
+    command: replicate
+
+networks:
+  jamai:

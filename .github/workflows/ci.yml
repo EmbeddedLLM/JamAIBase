@@ -1,0 +1,172 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+jobs:
+  python_tests:
+    name: Python unit tests
+    runs-on: ubuntu-latest-l
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      #- name: Test API Key
+      #  run: |
+      #    response=$(curl --fail -s -H "Authorization: Bearer ${OPENAI_API_KEY}" https://api.openai.com/v1/engines)
+      #    echo "$response"
+      #    if [ $? -ne 0 ]; then
+      #      echo "API key test failed!"
+      #      exit 1
+      #    fi
+      #  env:
+      #    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Setup
+        run: |
+          set -e
+          cd clients/python
+          python -m pip install .[all]
+
+      - name: Check Docker Version
+        run: docker version
+
+      - name: Check Docker Compose Version
+        run: docker compose version
+
+      - name: Launch services
+        timeout-minutes: 15
+        run: |
+          set -e
+          export API_DEVICE=cpu
+          export EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+          export RERANKER_MODEL=cross-encoder/ms-marco-TinyBERT-L-2
+
+          # Edit .env file
+          ORGS=$(printenv | grep API_KEY | xargs -I {} echo {} | cut -d '=' -f 1)
+          KEYS=$(printenv | grep API_KEY | xargs -I {} echo {} | cut -d '=' -f 2-)
+          # Convert them into arrays
+          ORG_ARRAY=($ORGS)
+          KEY_ARRAY=($KEYS)
+          # Loop through the ORG_ARRAY
+          for i in "${!ORG_ARRAY[@]}"; do
+            # Get the org and key
+            org="${ORG_ARRAY[$i]}"
+            key="${KEY_ARRAY[$i]}"
+            # Replace the org with the key in the .env file
+            sed -i "s/$org=.*/$org=$key/g" .env
+          done
+
+          docker compose -f docker/compose.cpu.yml up --quiet-pull -d
+
+          # Wait for the service to finish starting up
+          set +e
+          while true; do
+              docker ps
+              response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${OWL_PORT:-6969}/health)
+              echo $response
+              if [ $response -eq 200 ]; then
+                  break
+              fi
+              printf "> Waiting for API service ...\n"
+              sleep 10
+          done
+          printf "> DONE\n"
+        env:
+          JAMAI_API_KEY: ${{ secrets.JAMAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          COMPOSE_DOCKER_CLI_BUILD: 1
+          DOCKER_BUILDKIT: 1
+
+      #- name: Test list models
+      #  run: |
+      #    response=$(curl --fail -s http://localhost:6969/api/v1/models)
+      #    echo "$response"
+      #    if [ $? -ne 0 ]; then
+      #      echo "list models test failed!"
+      #      exit 1
+      #    fi
+
+      #- name: Get docker compose logs
+      #  if: always()
+      #  run: |
+      #    docker compose -f docker/compose.cpu.yml logs
+
+      - name: Pytest
+        run: |
+          set -e
+          export JAMAI_API_BASE=http://localhost:6969/api
+          python -m pytest -vv --doctest-modules --junitxml=junit/test-results-${{ matrix.python-version }}.xml --cov-report=xml clients/python/tests
+
+      - name: Upload Pytest Test Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results-${{ matrix.python-version }}
+          path: junit/test-results-${{ matrix.python-version }}.xml
+        # Use always() to always run this step to publish test results when there are test failures
+        if: ${{ always() }}
+
+      #- name: Generate OpenAPI Json Schema
+      #  run: mkdir -p artifacts && curl http://127.0.0.1:7770/api/openapi.json >> ./artifacts/openapi.json
+
+      #- name: Upload OpenAPI Json Schema
+      #  uses: actions/upload-artifact@v4
+      #  with:
+      #    name: openapi-json
+      #    path: artifacts/openapi.json
+
+  # readmeio_update:
+  #   needs: python_tests
+  #   name: Push OpenAPI to ReadMe.io
+  #   runs-on: ubuntu-latest-l
+  #   strategy:
+  #     matrix:
+  #       python-version: ["3.10"]
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+
+  #     - name: Download OpenAPI Json Schema
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: openapi-json
+  #         path: artifacts
+
+  #     # - name: Display structure of downloaded files
+  #     #   run: ls -R artifacts
+
+  #     # Run GitHub Action to sync OpenAPI file at ./path-to-file.json
+  #     - name: Update ReadMe API Reference Documentation
+  #       # We recommend specifying a fixed version, i.e. @v8
+  #       # Docs: https://docs.github.com/actions/using-workflows/workflow-syntax-for-github-actions#example-using-versioned-actions
+  #       uses: readmeio/rdme@v8
+  #       with:
+  #         rdme: openapi artifacts/openapi.json --key=${{ secrets.README_API_KEY }} --id=${{ secrets.API_DEFINITION_ID }}
+
+  #     # - name: Generate Stainless SDK
+  #     #   uses: stainless-api/upload-openapi-spec-action@main
+  #     #   with:
+  #     #     stainless_api_key: ${{ secrets.STAINLESS_API_KEY }}
+  #     #     input_path: "artifacts/openapi.json"
+  #     #     config_path: "ellm.stainless.yaml"
+  #     #     project_name: "jamai"
