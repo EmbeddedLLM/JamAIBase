@@ -3,6 +3,17 @@ import Agent from "agentkeepalive";
 import axios, { AxiosInstance, AxiosResponse } from "axios";
 import axiosRetry from "axios-retry";
 
+export const isRunningInBrowser = () => {
+    return (
+        // @ts-ignore
+        typeof window !== "undefined" &&
+        // @ts-ignore
+        typeof window.document !== "undefined" &&
+        // @ts-ignore
+        typeof navigator !== "undefined"
+    );
+};
+
 /**
  * Configuration type for initializing the APIClient.
  */
@@ -10,18 +21,21 @@ type BaseConfig = {
     maxRetries?: number;
     httpClient?: AxiosInstance;
     timeout?: number;
+    dangerouslyAllowBrowser?: boolean
 };
 
 type ConfigWithBaseURL = BaseConfig & {
     baseURL: string;
     apiKey?: string;
     projectId?: string;
+    dangerouslyAllowBrowser?: boolean
 };
 
 type ConfigWithoutBaseURL = BaseConfig & {
     baseURL?: string;
     apiKey: string;
     projectId: string;
+    dangerouslyAllowBrowser?: boolean
 };
 
 type Config = ConfigWithBaseURL | ConfigWithoutBaseURL;
@@ -40,11 +54,19 @@ export abstract class Base {
      * @param {AxiosInstance} [httpClient] Axios instance for making HTTP requests. If not provided, a default instance will be created.
      * @param {number} [timeout] Timeout (ms) for the requests. Default value is none.
      */
-    constructor({ baseURL, apiKey, projectId, maxRetries = 0, httpClient, timeout }: Config) {
+    constructor({ baseURL, apiKey, projectId, maxRetries = 0, httpClient, timeout,
+        dangerouslyAllowBrowser = false 
+     }: Config) {
         this.maxRetries = maxRetries;
         this.httpClient = httpClient || axios.create({});
         this.timeout = timeout;
 
+        if (!dangerouslyAllowBrowser && isRunningInBrowser()) {
+            throw new Error(
+                "It looks like you're running in a browser-like environment.\n\nThis is disabled by default, as it risks exposing your secret API credentials to attackers.\nIf you understand the risks and have appropriate mitigations in place,\nyou can set the `dangerouslyAllowBrowser` option to `true`, e.g.,\n\nnew JamAI({ apiKey, dangerouslyAllowBrowser: true });"
+            );
+        }
+        
         // add baseurl to axios instance
         this.httpClient.defaults.baseURL = baseURL || "https://app.jamaibase.com";
 
@@ -62,11 +84,11 @@ export abstract class Base {
         if (maxRetries > 0) {
             axiosRetry(this.httpClient, {
                 retries: this.maxRetries,
-                retryDelay: (retryCount) => {
+                retryDelay: (retryCount: any) => {
                     console.log("Retry attempt: ", retryCount);
                     return retryCount * 1000;
                 },
-                retryCondition: (_error) => {
+                retryCondition: (_error: any) => {
                     return true;
                 }
             });
