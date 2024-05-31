@@ -1,0 +1,192 @@
+.response-message * {
+	overflow-wrap: break-word;
+}
+
+.response-message > h1 {
+	@apply text-4xl;
+	@apply font-bold;
+}
+
+.response-message > h2 {
+	@apply text-3xl;
+	@apply font-bold;
+}
+
+.response-message > h3 {
+	@apply text-2xl;
+	@apply font-bold;
+}
+
+.response-message > h4 {
+	@apply text-xl;
+	@apply font-bold;
+}
+
+.response-message > h5 {
+	@apply text-lg;
+	@apply font-bold;
+}
+
+.response-message .citation {
+	@apply text-sm;
+	@apply underline;
+	@apply font-normal;
+	@apply my-2;
+}
+
+.response-message *:not(:has(pre)) > code {
+	@apply my-1 p-1;
+	@apply text-xs;
+	@apply text-[#383a42] data-dark:text-[#ABB2BF];
+	@apply bg-[#F0F0F0] data-dark:bg-[#282C34];
+	@apply rounded-md;
+}
+
+.response-message > .pre-container {
+	@apply flex flex-col;
+	@apply my-2;
+}
+
+.response-message > .pre-container > .pre-header {
+	@apply flex;
+	@apply items-center;
+	@apply justify-between;
+	@apply px-3;
+	@apply py-1;
+	@apply bg-[#F0F0F0] data-dark:bg-[#656970];
+	@apply rounded-t-md;
+	@apply border border-[#DDD] data-dark:border-[#42464E];
+}
+
+.response-message > .pre-container > .pre-header > button {
+	@apply relative;
+	@apply flex items-center justify-center;
+	@apply h-6 w-6;
+	@apply text-[#999] data-dark:text-[#C9C9C9];
+}
+
+/** Code block copy button icons */
+.response-message > .pre-container > .pre-header > button > .copy-icon,
+.response-message > .pre-container > .pre-header > button > .check-icon {
+	@apply absolute;
+	@apply pointer-events-none;
+	@apply transition-opacity;
+}
+
+.response-message > .pre-container > .pre-header > button > .copy-icon {
+	@apply opacity-100;
+}
+
+.response-message > .pre-container > .pre-header > button > .check-icon {
+	@apply opacity-0;
+}
+
+.response-message pre {
+	@apply p-4;
+	@apply text-[#383a42] data-dark:text-[#ABB2BF];
+	@apply bg-[#FAFAFA] data-dark:bg-[#282C34];
+	@apply rounded-b-md;
+	@apply border border-t-0 border-[#DDD] data-dark:border-[#42464E];
+	@apply overflow-auto;
+}
+
+.response-message > pre::-webkit-scrollbar {
+	width: 8px;
+	height: 6px;
+	border: 0px solid hsl(0, 78%, 40%);
+	border-top: 0;
+	border-bottom: 0;
+}
+
+.response-message > pre::-webkit-scrollbar-thumb {
+	border-radius: 10px;
+	background: #dbdbdb;
+}
+
+.response-message > pre::-webkit-scrollbar-thumb:hover {
+	background: #949494;
+}
+
+.response-message > pre::-webkit-scrollbar-thumb:active {
+	background: #616161;
+}
+
+.response-message > .table-container {
+	@apply bg-white data-dark:bg-[#484C55];
+	@apply rounded-md;
+	@apply overflow-x-auto;
+	@apply border border-[#DDD] data-dark:border-[#42464E];
+}
+
+.response-message > .table-container > table {
+	@apply w-full;
+	@apply text-sm;
+}
+
+.response-message > .table-container > table > thead {
+	@apply sticky top-0;
+	@apply bg-white data-dark:bg-[#484C55];
+}
+
+.response-message > .table-container > table > thead th {
+	@apply p-4;
+	@apply text-left;
+}
+
+.response-message > .table-container > table > tbody > tr {
+	@apply hover:bg-[#F0F0F0] data-dark:hover:bg-[#656970];
+	@apply border-t border-[#DDD] data-dark:border-[#454545];
+	@apply overflow-auto;
+	@apply transition-colors duration-75;
+}
+
+.response-message > .table-container > table > tbody > tr > * {
+	@apply px-4 py-2;
+	@apply text-left font-normal;
+}
+
+.response-message > blockquote {
+	@apply px-2;
+	@apply bg-white data-dark:bg-[#484C55];
+	@apply rounded-md;
+}
+
+.response-message ol {
+	@apply flex;
+	@apply flex-col;
+	@apply gap-2;
+	@apply ml-6;
+	@apply list-decimal;
+}
+
+.response-message ol ol {
+	@apply mt-2;
+}
+
+.response-message ul {
+	@apply flex;
+	@apply flex-col;
+	@apply gap-2;
+	@apply ml-6;
+	@apply list-disc;
+}
+
+.response-message ul ul {
+	@apply mt-2;
+}
+
+.response-message ul:has(ul) > * > ul {
+	@apply list-[circle];
+}
+
+.response-message input[type='checkbox'] {
+	/* TODO: Add checkbox styling */
+	/* @apply checkbox; */
+	@apply rounded-sm;
+	@apply h-5;
+	@apply w-5;
+}
+
+.response-message input[type='checkbox']:disabled {
+	@apply opacity-100;
+}

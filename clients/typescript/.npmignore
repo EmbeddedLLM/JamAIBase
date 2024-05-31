@@ -1,0 +1,7 @@
+.env
+examples/**/*
+__tests__
+coverage
+.prettierrc
+jest.config.ts
+.npmrc

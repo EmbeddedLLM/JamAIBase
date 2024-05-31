@@ -1,0 +1,11 @@
+[flake8]
+max-line-length = 99
+select = C,E,F,W,B,B950
+extend-ignore = E203,E402,E501,F541,W503,F401
+extend-exclude =
+    .vscode/,
+    archive/,
+    build/,
+    configs/,
+    dependencies/,
+    venv/

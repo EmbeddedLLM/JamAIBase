@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info
+.pytest_cache
+.ipynb_checkpoints
+venv/
+*.png
+*.jpg
+*.npy
+*.geojson
+*.laz
+
+# Internal references, dependencies, temporary folders & files
+# .env
+**/__ref__/
+/dependencies/
+logs/
+*.log
+/datasets/
+/milvus_data/
+/vespa*/
+
+# pytest-cov
+**/.coverage*
+/junit
+/htmlcov
+/coverage.xml
+
+# pip
+**/build/
+
+# OS
+thumbs.db
+.DS_Store

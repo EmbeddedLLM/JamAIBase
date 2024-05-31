@@ -1,0 +1,24 @@
+_format_version: "2.1"
+_transform: true
+
+upstreams:
+  - name: jamai-backend-upstream
+    algorithm: consistent-hashing
+    hash_on: header
+    hash_on_header: X_PROJECT_ID
+    targets:
+      - target: 192.168.80.60:6969
+
+services:
+  - name: jamai-backend-service
+    host: jamai-backend-upstream
+    routes:
+      - name: jamai-route
+        paths:
+          - "/"
+  - name: jamai-admin-service
+    url: http://192.168.80.60:6969/api/admin/v1/
+    routes:
+      - name: jamai-admin-route
+        paths:
+          - "/api/admin/v1/"

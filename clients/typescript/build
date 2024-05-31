@@ -1,0 +1,43 @@
+#!/bin/bash
+set -e
+
+node scripts/fix-test-include-tsconfig.cjs
+rm -rf dist && npx microbundle --tsconfig tsconfig.json --no-sourcemap && tsc-alias -p tsconfig.json
+
+cp -rp README.md dist
+cp dist/index.d.ts dist/index.d.mts
+
+for file in LICENSE CHANGELOG.md; do
+  if [ -e "${file}" ]; then cp "${file}" dist; fi
+done
+
+node scripts/make-dist-package-json.cjs > dist/package.json
+
+# make sure that nothing crashes when we require the output CJS or
+# import the output ESM
+(cd dist && node -e 'require("jamaibase")')
+(cd dist && node -e 'import("jamaibase")' --input-type=module)
+
+# npm exec tsc-multi
+# node scripts/fix-index-exports.cjs
+# cp dist/index.d.ts dist/index.d.mts
+# cp tsconfig.dist-src.json dist/src/tsconfig.json
+
+# node scripts/postprocess-files.cjs
+
+
+
+# if command -v deno &> /dev/null && [ -e ./build-deno ]
+# then
+#   ./build-deno
+# fi
+
+# rm -rf dist
+# mkdir -p dist
+
+# cp -r src dist/
+
+# cp *.js dist/
+# cp *.json dist/
+
+# tsc --project tsconfig.build.json --traceResolution

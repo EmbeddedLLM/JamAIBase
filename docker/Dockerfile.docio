@@ -1,0 +1,11 @@
+FROM docker.io/embeddedllminfo/jamaibase:ci
+
+WORKDIR /app
+
+COPY --chown=$MAMBA_USER:$MAMBA_USER . .
+ARG MAMBA_DOCKERFILE_ACTIVATE=1  # (otherwise python will not be found)
+
+RUN cd /app/clients/python \
+    && python -m pip install --no-cache-dir --upgrade . \
+    && cd /app/services/docio \
+    && python -m pip install --no-cache-dir --upgrade .

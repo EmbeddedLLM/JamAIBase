@@ -1,0 +1,49 @@
+### https://git-scm.com/docs/gitattributes
+
+# When `text` is set to "auto", the path is marked for automatic end-of-line conversion.
+# If Git decides that the content is text, its line endings are converted to LF on checkin.
+# When the file has been committed with CRLF, no conversion is done.
+# https://git-scm.com/docs/gitattributes#Documentation/gitattributes.txt-Settostringvalueauto
+* text=auto eol=lf
+
+# These files are text and should be normalized (Convert crlf => lf)
+# Setting the `text` attribute on a path enables end-of-line normalization and marks the path as a text file.
+# End-of-line conversion takes place without guessing the content type.
+# https://git-scm.com/docs/gitattributes#_text
+*.css text
+*.html text
+*.js text
+*.md text
+*.py text
+*.sh text
+
+# These files are binary and should be left untouched
+# `binary` is a built-in macro for `-text` `-diff` (ie unset `text` and `diff`)
+# https://git-scm.com/docs/gitattributes#_using_macro_attributes
+*.7z binary
+*.bin binary
+*.cu.o binary
+*.db binary
+*.doc binary
+*.docx binary
+*.gz binary
+*.jar binary
+*.jpeg binary
+*.jpg binary
+*.npy binary
+*.npz binary
+*.pcd binary
+*.pdf binary
+*.pkl binary
+*.png binary
+*.ppt binary
+*.pptx binary
+*.pth binary
+*.so binary
+*.xls binary
+*.xlsx binary
+*.zip binary
+
+# These files should not be processed by Linguist for language detection on GitHub.com
+*.p linguist-detectable=false
+*.gz linguist-detectable=false

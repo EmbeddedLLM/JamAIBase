@@ -1,0 +1,16 @@
+FROM python:3.10
+
+RUN pip install --no-cache-dir --upgrade setuptools
+
+WORKDIR /app
+
+COPY ./clients/python /app/client
+WORKDIR /app/client
+RUN pip install --no-cache-dir --upgrade .
+
+COPY ./services/api /app/api
+WORKDIR /app/api
+
+RUN pip install --no-cache-dir --upgrade .
+
+CMD ["python", "-m", "owl.entrypoints.api"]

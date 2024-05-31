@@ -1,0 +1,62 @@
+name: Linting Workflow
+
+on:
+  push:
+    branches:
+      - "*"
+
+jobs:
+  python_lint:
+    name: Python linting and formatting checks
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install linting libraries
+        run: |
+          set -e
+          cd clients/python
+          python3 -m pip install .[lint]
+
+      - name: Check Python files using Black
+        run: |
+          set -e
+          black --check --verbose --diff --config clients/python/pyproject.toml .
+
+      - name: Run flake8 lint tests (errors)
+        run: |
+          set -e
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Run flake8 lint tests (warnings)
+        run: |
+          set -e
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=99 --statistics
+
+  prettier_lint:
+    name: Prettier Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "16" # Specify the Node.js version you want to use
+
+      - name: Check files using Prettier
+        run: |
+          npm install -g prettier@3.1
+          prettier --check .
