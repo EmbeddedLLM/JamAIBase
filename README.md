@@ -87,24 +87,39 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
 
 ## Getting Started
 
-### Clone the Repository:
+1. Clone the repository:
 
-```bash
-git clone https://github.com/EmbeddedLLM/JamAIBase.git
-cd JamAIBase
-```
+   ```shell
+   $ git clone https://github.com/EmbeddedLLM/JamAIBase.git
+   $ cd JamAIBase
+   ```
 
-### Install Dependencies:
+### Install Python Client
 
-```bash
-npm install
-```
+1. Create a Python (>= 3.10) environment and install `jamaibase`:
+   ```shell
+   $ mm create -n jam310 python=3.10 -y
+   $ pip install jamaibase
+   ```
 
-### Run the Application:
+### Install JS Client
 
-```bash
-npm start
-```
+1. Create a Python (>= 3.10) environment and install `jamaibase`:
+   ```shell
+   $ npm install jamaibase
+   ```
+
+### Launch self-hosted services
+
+1. Launch the Docker containers by running one of these:
+
+   ```shell
+   # CPU-only
+   $ docker compose -f docker/compose.cpu.yml up --quiet-pull -d
+
+   # With NVIDIA GPU
+   $ docker compose -f docker/compose.nvidia.yml up --quiet-pull -d
+   ```
 
 ### Explore the Documentation:
 
