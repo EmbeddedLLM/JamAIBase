@@ -125,10 +125,11 @@ services:
     environment:
       - NODE_ENV=production
       - BODY_SIZE_LIMIT=Infinity
+      - PORT=4000
     env_file:
       - ../.env
     ports:
-      - "4000:${FRONTEND_PORT:-4000}"
+      - "${FRONTEND_PORT:-4000}:4000"
     networks:
       - jamai
 
