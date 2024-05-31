@@ -385,16 +385,17 @@ async def authenticate(request: Request, call_next):
     request.state.project_id = project_id
     request.state.api_key = token
     request.state.openmeter_id = openmeter_id
-    request.state.billing_manager = BillingManager(
-        request=request,
-        quotas=quotas,
-        quota_reset_at=quota_reset_at,
-        organization_tier=org_tier,
-        openmeter_id=openmeter_id,
-        organization_id=org_id,
-        project_id=project_id,
-        api_key=token,
-    )
+    if BillingManager is not None:
+        request.state.billing_manager = BillingManager(
+            request=request,
+            quotas=quotas,
+            quota_reset_at=quota_reset_at,
+            organization_tier=org_tier,
+            openmeter_id=openmeter_id,
+            organization_id=org_id,
+            project_id=project_id,
+            api_key=token,
+        )
     # Add API keys into header
     headers = dict(request.scope["headers"])
     if openai_api_key:
@@ -421,14 +422,15 @@ async def authenticate(request: Request, call_next):
     t2 = perf_counter()
 
     # --- Send events --- #
-    tasks = BackgroundTasks()
-    tasks.add_task(
-        request.state.billing_manager.process_all,
-        auth_latency_ms=(t1 - t0) * 1e3,
-        request_latency_ms=(t2 - t1) * 1e3,
-        content_length_gb=float(response.headers.get("content-length", 0)) / (1024**3),
-    )
-    response.background = tasks
+    if BillingManager is not None:
+        tasks = BackgroundTasks()
+        tasks.add_task(
+            request.state.billing_manager.process_all,
+            auth_latency_ms=(t1 - t0) * 1e3,
+            request_latency_ms=(t2 - t1) * 1e3,
+            content_length_gb=float(response.headers.get("content-length", 0)) / (1024**3),
+        )
+        response.background = tasks
     return response
 
 
