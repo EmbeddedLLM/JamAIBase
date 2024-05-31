@@ -1,28 +1,6 @@
 {
   "llm_models": [
     {
-      "id": "ellm/meta-llama/Llama-3-8B-Instruct",
-      "litellm_id": "openai/meta-llama/Llama-3-8B-Instruct",
-      "object": "model",
-      "name": "Meta Llama 3 (8B)",
-      "context_length": 8000,
-      "languages": ["en", "cn"],
-      "capabilities": ["chat"],
-      "owned_by": "ellm",
-      "api_base": "http://vllm:8000/v1"
-    },
-    {
-      "id": "ellm/meta-llama/Llama-3-70B-Instruct",
-      "litellm_id": "openai/meta-llama/Llama-3-70B-Instruct",
-      "object": "model",
-      "name": "Meta Llama 3 (70B)",
-      "context_length": 8000,
-      "languages": ["en", "cn"],
-      "capabilities": ["chat"],
-      "owned_by": "ellm",
-      "api_base": "http://vllm:8000/v1"
-    },
-    {
       "id": "openai/gpt-3.5-turbo",
       "object": "model",
       "name": "OpenAI GPT-3.5 Turbo",
