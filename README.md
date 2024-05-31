@@ -111,7 +111,13 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
    $ cd JamAIBase
    ```
 
-2. Launch the Docker containers by running one of these:
+2. Add your API keys into `.env`:
+
+   ```
+   OPENAI_API_KEY=your_key
+   ```
+
+3. Launch the Docker containers by running one of these:
 
    ```shell
    # CPU-only
@@ -119,6 +125,12 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
 
    # With NVIDIA GPU
    $ docker compose -f docker/compose.nvidia.yml up --quiet-pull -d
+   ```
+
+4. Try it out:
+
+   ```shell
+   $ curl localhost:6969/api/v1/models
    ```
 
 ### Explore the Documentation:
