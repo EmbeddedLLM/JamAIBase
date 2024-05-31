@@ -1,6 +1,6 @@
 # JamAI Base
 
-![JamAI Base Logo](JamAI_Base_Cover.png)
+![JamAI Base Cover](JamAI_Base_Cover.png)
 
 ## Overview
 
