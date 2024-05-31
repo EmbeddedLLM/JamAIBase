@@ -1,0 +1,281 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+	overflow: hidden;
+}
+
+@layer base {
+	:root {
+		--background: 0 0% 100%;
+		--foreground: 0 0% 3.9%;
+		--text: 0 0% 0%;
+
+		--muted: 0 0% 96.1%;
+		--muted-foreground: 0 0% 45.1%;
+
+		--popover: 0 0% 100%;
+		--popover-foreground: 0 0% 3.9%;
+
+		--card: 0 0% 100%;
+		--card-foreground: 0 0% 3.9%;
+
+		--border: 0 0% 89.8%;
+		--input: 0 0% 89.8%;
+
+		--primary: 0 0% 9%;
+		--primary-foreground: 0 0% 98%;
+
+		--secondary: 339 50% 50%;
+		--secondary-foreground: 0 0% 9%;
+
+		--accent: 0 0% 94%;
+		--accent-foreground: 0 0% 9%;
+
+		--success: 127 63% 49%;
+		--warning: 39 100% 50%;
+
+		--destructive: 3 100% 61%;
+		--destructive-foreground: 0 0% 100%;
+
+		--ring: 0 0% 3.9%;
+
+		--radius: 0.5rem;
+	}
+
+	:root[data-theme='dark'] {
+		--background: 0 0% 3.9%;
+		--foreground: 0 0% 98%;
+		--text: 0 0% 100%;
+
+		--muted: 0 0% 14.9%;
+		--muted-foreground: 0 0% 63.9%;
+
+		--popover: 220 9% 14%;
+		--popover-foreground: 0 0% 98%;
+
+		--card: 0 0% 3.9%;
+		--card-foreground: 0 0% 98%;
+
+		--border: 0 0% 14.9%;
+		--input: 0 0% 14.9%;
+
+		--primary: 0 0% 98%;
+		--primary-foreground: 0 0% 9%;
+
+		--secondary: 339 50% 50%;
+		--secondary-foreground: 0 0% 98%;
+
+		--accent: 0 0% 30%;
+		--accent-foreground: 0 0% 98%;
+
+		--success: 127 63% 49%;
+		--warning: 39 100% 50%;
+
+		--destructive: 3 100% 61%;
+		--destructive-foreground: 0 0% 100%;
+
+		--ring: 0 0% 83.1%;
+	}
+}
+
+@layer base {
+	* {
+		@apply border-border;
+	}
+	body {
+		@apply bg-background text-foreground;
+	}
+}
+
+/* * {
+	outline: red 1px solid;
+} */
+
+.response-cursor::after {
+	content: '';
+	display: inline-block;
+	height: 1rem;
+	width: 0.5rem;
+	@apply bg-black;
+	@apply data-dark:bg-white;
+	@apply animate-blink;
+	@apply translate-y-[0.1rem];
+}
+
+:root[data-theme='dark'] .os-scrollbar,
+.os-dark .os-scrollbar {
+	--os-handle-bg: rgba(255, 255, 255, 0.44) !important;
+	--os-handle-bg-hover: rgba(255, 255, 255, 0.55);
+	--os-handle-bg-active: rgba(255, 255, 255, 0.66);
+}
+
+::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+	border: 0px solid hsl(0, 0%, 27%);
+	border-top: 0;
+	border-bottom: 0;
+}
+
+::-webkit-scrollbar-corner {
+	display: none;
+}
+
+::-webkit-scrollbar-track {
+	border-radius: 4px;
+}
+
+/* FIXME: data-dark hover and active states not applying */
+::-webkit-scrollbar-thumb {
+	border-radius: 10px;
+	@apply bg-black/[0.44];
+	@apply hover:bg-black/[0.55];
+	@apply active:bg-black/[0.66];
+	@apply data-dark:bg-white/[0.44];
+	@apply data-dark:hover:bg-white/[0.55];
+	@apply data-dark:active:bg-white/[0.66];
+}
+
+/** NProgress styling */
+#nprogress {
+	pointer-events: none;
+}
+
+#nprogress .bar {
+	/* background: rgb(255, 43, 244); */
+	@apply bg-primary;
+
+	position: fixed;
+	z-index: 1031;
+	top: 0;
+	left: 0;
+
+	width: 100%;
+	height: 2px;
+}
+
+/* Fancy blur effect */
+#nprogress .peg {
+	display: block;
+	position: absolute;
+	right: 0px;
+	width: 100px;
+	height: 100%;
+	box-shadow:
+		0 0 10px #29d,
+		0 0 5px #29d;
+	opacity: 1;
+
+	-webkit-transform: rotate(3deg) translate(0px, -4px);
+	-ms-transform: rotate(3deg) translate(0px, -4px);
+	transform: rotate(3deg) translate(0px, -4px);
+}
+
+/* Remove these to get rid of the spinner */
+#nprogress .spinner {
+	display: block;
+	position: fixed;
+	z-index: 1031;
+	top: 15px;
+	right: 15px;
+}
+
+#nprogress .spinner-icon {
+	width: 18px;
+	height: 18px;
+	box-sizing: border-box;
+
+	border: solid 2px transparent;
+	border-top-color: #29d;
+	border-left-color: #29d;
+	border-radius: 50%;
+
+	-webkit-animation: nprogress-spinner 400ms linear infinite;
+	animation: nprogress-spinner 400ms linear infinite;
+}
+
+.nprogress-custom-parent {
+	overflow: hidden;
+	position: relative;
+}
+
+.nprogress-custom-parent #nprogress .spinner,
+.nprogress-custom-parent #nprogress .bar {
+	position: absolute;
+}
+
+@-webkit-keyframes nprogress-spinner {
+	0% {
+		-webkit-transform: rotate(0deg);
+	}
+	100% {
+		-webkit-transform: rotate(360deg);
+	}
+}
+@keyframes nprogress-spinner {
+	0% {
+		transform: rotate(0deg);
+	}
+	100% {
+		transform: rotate(360deg);
+	}
+}
+
+/** Progress bar */
+.total-progress {
+	@apply rounded-none;
+}
+
+.total-progress::-webkit-progress-bar {
+	@apply bg-neutral-300;
+}
+
+.total-progress::-webkit-progress-value {
+	@apply bg-secondary;
+	@apply rounded-tl-none;
+	@apply rounded-bl-none;
+}
+
+/** From daisyui - https://github.com/saadeghi/daisyui/blob/33b6125e7fb7f4c188040876d1cc9529803adb87/src/components/unstyled/radial-progress.css */
+.radial-progress {
+	@apply relative inline-grid h-[var(--size)] w-[var(--size)] place-content-center rounded-full bg-transparent;
+	vertical-align: middle;
+	box-sizing: content-box;
+}
+.radial-progress::-moz-progress-bar {
+	@apply appearance-none bg-transparent;
+}
+.radial-progress::-webkit-progress-value {
+	@apply appearance-none bg-transparent;
+}
+.radial-progress::-webkit-progress-bar {
+	@apply appearance-none bg-transparent;
+}
+.radial-progress:before,
+.radial-progress:after {
+	@apply absolute rounded-full;
+	content: '';
+}
+.radial-progress:before {
+	@apply inset-0;
+	background:
+		radial-gradient(farthest-side, currentColor 98%, #0000) top/var(--thickness) var(--thickness)
+			no-repeat,
+		conic-gradient(currentColor calc(var(--value) * 1%), #0000 0);
+	-webkit-mask: radial-gradient(
+		farthest-side,
+		#0000 calc(99% - var(--thickness)),
+		#000 calc(100% - var(--thickness))
+	);
+	mask: radial-gradient(
+		farthest-side,
+		#0000 calc(99% - var(--thickness)),
+		#000 calc(100% - var(--thickness))
+	);
+}
+.radial-progress:after {
+	inset: calc(50% - var(--thickness) / 2);
+	transform: rotate(calc(var(--value) * 3.6deg - 90deg)) translate(calc(var(--size) / 2 - 50%));
+}

@@ -106,5 +106,31 @@ services:
     networks:
       - jamai
 
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    image: jamai/frontend
+    container_name: jamai_frontend
+    command: ["node", "server"]
+    depends_on:
+      owl:
+        condition: service_healthy
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl --silent --fail localhost:6968/api/health || exit 1"]
+    #   interval: 30s
+    #   timeout: 2s
+    #   retries: 5
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - BODY_SIZE_LIMIT=Infinity
+    env_file:
+      - ../.env
+    ports:
+      - "4000:${FRONTEND_PORT:-4000}"
+    networks:
+      - jamai
+
 networks:
   jamai:

@@ -1,0 +1,10 @@
+FROM node:20-alpine
+
+WORKDIR /app
+COPY ./services/app .
+RUN npm ci
+
+RUN npx vite build
+RUN mv temp build
+
+CMD ["node", "server"]
