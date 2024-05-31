@@ -87,13 +87,6 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
 
 ## Getting Started
 
-1. Clone the repository:
-
-   ```shell
-   $ git clone https://github.com/EmbeddedLLM/JamAIBase.git
-   $ cd JamAIBase
-   ```
-
 ### Install Python Client
 
 1. Create a Python (>= 3.10) environment and install `jamaibase`:
@@ -111,7 +104,14 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
 
 ### Launch self-hosted services
 
-1. Launch the Docker containers by running one of these:
+1. Clone the repository:
+
+   ```shell
+   $ git clone https://github.com/EmbeddedLLM/JamAIBase.git
+   $ cd JamAIBase
+   ```
+
+2. Launch the Docker containers by running one of these:
 
    ```shell
    # CPU-only
@@ -125,20 +125,6 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
 
 - [API Documentation](https://jamaibase.readme.io)
 - [Platform Documentation](https://docs.jamaibase.com)
-
-## SDKs
-
-### JavaScript/TypeScript SDK:
-
-```bash
-npm install jamaibase
-```
-
-### Python SDK:
-
-```bash
-pip install jamaibase
-```
 
 ## Community and Support
 
