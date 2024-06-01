@@ -80,7 +80,7 @@ jobs:
           set +e
           while true; do
               docker ps
-              response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${OWL_PORT:-6969}/health)
+              response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${OWL_PORT:-6969}/api/health)
               echo $response
               if [ $response -eq 200 ]; then
                   break
@@ -90,11 +90,11 @@ jobs:
           done
           printf "> DONE\n"
         env:
-          JAMAI_API_KEY: ${{ secrets.JAMAI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          # JAMAI_API_KEY: ${{ secrets.JAMAI_API_KEY }}
           COMPOSE_DOCKER_CLI_BUILD: 1
           DOCKER_BUILDKIT: 1
 

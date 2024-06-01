@@ -84,11 +84,11 @@ export abstract class Base {
         if (maxRetries > 0) {
             axiosRetry(this.httpClient, {
                 retries: this.maxRetries,
-                retryDelay: (retryCount: any) => {
+                retryDelay: (retryCount) => {
                     console.log("Retry attempt: ", retryCount);
                     return retryCount * 1000;
                 },
-                retryCondition: (_error: any) => {
+                retryCondition: (_error) => {
                     return true;
                 }
             });

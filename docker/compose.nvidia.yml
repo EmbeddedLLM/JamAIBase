@@ -47,5 +47,10 @@ services:
       file: compose.cpu.yml
       service: owl
 
+  frontend:
+    extends:
+      file: compose.cpu.yml
+      service: frontend
+
 networks:
   jamai:

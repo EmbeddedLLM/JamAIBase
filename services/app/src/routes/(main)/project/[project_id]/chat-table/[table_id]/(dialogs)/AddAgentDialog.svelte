@@ -82,10 +82,12 @@
 					},
 					body: JSON.stringify({
 						table_id: responseBody.id,
-						data: {
-							User: userOpener,
-							AI: aiOpener
-						},
+						data: [
+							{
+								User: userOpener,
+								AI: aiOpener
+							}
+						],
 						stream: false
 					})
 				});

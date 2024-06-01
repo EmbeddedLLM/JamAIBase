@@ -196,6 +196,9 @@ def _create_table(
 ) -> p.TableMetaResponse:
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
+        # Check quota
+        request.state.billing_manager.check_db_storage_quota()
+        # Create
         with table.create_session() as session:
             _, meta = table.create_table(session, schema)
             meta = p.TableMetaResponse.model_validate(
@@ -250,6 +253,9 @@ def duplicate_table(
 ) -> p.TableMetaResponse:
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
+        # Check quota
+        request.state.billing_manager.check_db_storage_quota()
+        # Duplicate
         with table.create_session() as session:
             meta = table.duplicate_table(session, table_id_src, table_id_dst, include_data, deploy)
             meta = p.TableMetaResponse.model_validate(
@@ -346,6 +352,9 @@ def list_tables(
         )
     )
     try:
+        # Check quota
+        request.state.billing_manager.check_egress_quota()
+        # List
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         with table.create_session() as session:
             metas, total = table.list_meta(
@@ -419,6 +428,9 @@ def _add_columns(
 ) -> p.TableMetaResponse:
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
+        # Check quota
+        request.state.billing_manager.check_db_storage_quota()
+        # Create
         with table.create_session() as session:
             _, meta = table.add_columns(session, schema)
             meta = p.TableMetaResponse.model_validate(
@@ -537,6 +549,9 @@ def list_rows(
     ),
 ) -> p.Page[dict[p.Name, Any]]:
     try:
+        # Check quota
+        request.state.billing_manager.check_egress_quota()
+        # List
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         rows, total = table.list_rows(
             table_id=table_id,
@@ -604,6 +619,11 @@ async def add_rows(
 ):
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
+        # Check quota
+        request.state.billing_manager.check_gen_table_llm_quota(table, body.table_id)
+        request.state.billing_manager.check_db_storage_quota()
+        request.state.billing_manager.check_egress_quota()
+        # Maybe re-index
         if body.reindex or (
             body.reindex is None
             and table.count_rows(body.table_id) <= config.owl_immediate_reindex_max_rows
@@ -663,6 +683,11 @@ async def regen_rows(
 ):
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
+        # Check quota
+        request.state.billing_manager.check_gen_table_llm_quota(table, body.table_id)
+        request.state.billing_manager.check_db_storage_quota()
+        request.state.billing_manager.check_egress_quota()
+        # Maybe re-index
         if body.reindex or (
             body.reindex is None
             and table.count_rows(body.table_id) <= config.owl_immediate_reindex_max_rows
@@ -714,10 +739,14 @@ def update_row(
 ) -> p.OkResponse:
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
+        # Check quota
+        request.state.billing_manager.check_db_storage_quota()
+        # Check column type
         if table_type == p.TableType.knowledge:
             col_names = set(n.lower() for n in body.data.keys())
             if "text embed" in col_names or "title embed" in col_names:
                 raise TableSchemaFixedError("Cannot update 'Text Embed' or 'Title Embed'.")
+        # Update
         with table.create_session() as session:
             table.update_rows(
                 session,
@@ -800,6 +829,9 @@ def hybrid_search(
     voyage_api_key: Annotated[str, Header(description="Voyage API key.")] = "",
 ) -> list[dict[p.Name, Any]]:
     try:
+        # Check quota
+        request.state.billing_manager.check_egress_quota()
+        # Search
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         with table.create_session() as session:
             rows = table.hybrid_search(
@@ -926,6 +958,12 @@ async def _add_file(
 
     # --- Add into Knowledge Table --- #
     table = _get_gen_table(request.state.org_id, request.state.project_id, p.TableType.knowledge)
+    # Check quota
+    request.state.billing_manager.check_gen_table_llm_quota(table, table_id)
+    request.state.billing_manager.check_db_storage_quota()
+    request.state.billing_manager.check_file_storage_quota()
+    request.state.billing_manager.check_egress_quota()
+
     with table.create_session() as session:
         meta = table.open_meta(session, table_id)
         title_embed = None
@@ -1073,6 +1111,9 @@ def get_conversation_thread(
     table_id: str = Path(pattern=p.TABLE_NAME_PATTERN, description="Table ID or name."),
 ) -> p.ChatThread:
     try:
+        # Check quota
+        request.state.billing_manager.check_egress_quota()
+        # Fetch
         table: ChatTable = _get_gen_table(
             request.state.org_id, request.state.project_id, p.TableType.chat
         )
