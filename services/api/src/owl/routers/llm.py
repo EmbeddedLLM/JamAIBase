@@ -326,7 +326,10 @@ async def generate_completions(
     voyage_api_key: Annotated[str, Header(description="Voyage API key.")] = "",
 ):
     try:
-        await request.state.billing_manager.check_llm_quota(body.model)
+        # Check quota
+        request.state.billing_manager.check_llm_quota(body.model)
+        request.state.billing_manager.check_egress_quota()
+        # Run LLM
         body, request_dict, references = await _preprocess_completion(
             request=request,
             body=body,

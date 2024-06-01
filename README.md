@@ -2,6 +2,14 @@
 
 ![JamAI Base Cover](JamAI_Base_Cover.png)
 
+<!-- prettier-ignore -->
+![Linting](https://github.com/EmbeddedLLM/JamAIBase/actions/workflows/lint.yml/badge.svg)
+![CI](https://github.com/EmbeddedLLM/JamAIBase/actions/workflows/ci.yml/badge.svg)
+
+<!-- prettier-ignore -->
+> [!TIP]
+> [Explore our docs](https://docs.jamaibase.com)
+
 ## Overview
 
 Welcome to JamAI Base – the real-time database that orchestrates Large Language Models (LLMs) for you. Designed to simplify AI integration, JamAI Base offers a Backend as a Service (BaaS) platform with an intuitive, spreadsheet-like interface. Focus on defining your data requirements through natural language prompts, and let us handle the complexities of RAG, LLMOps, conversation histories, and LLM orchestration.
@@ -127,7 +135,12 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
    $ docker compose -f docker/compose.nvidia.yml up --quiet-pull -d
    ```
 
-4. Try it out:
+   <!-- prettier-ignore -->
+   > [!TIP]
+   > By default, frontend and backend are accessible at ports 4000 and 6969.
+   > You can change the ports exposed to host by setting env var like so `API_PORT=6970 FRONTEND_PORT=4001 docker compose -f docker/compose.cpu.yml up --quiet-pull -d`
+
+4. Try the command below in your terminal, or open your browser and go to `localhost:4000`.
 
    ```shell
    $ curl localhost:6969/api/v1/models

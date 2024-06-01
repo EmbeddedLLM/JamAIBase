@@ -17,6 +17,8 @@ services:
     restart: unless-stopped
     env_file:
       - ../.env
+    volumes:
+      - ${PWD}/infinity_cache:/app/.cache
     networks:
       - jamai
 
@@ -63,8 +65,6 @@ services:
     #   timeout: 2s
     #   retries: 5
     #   start_period: 1m
-    ports:
-      - "6379:6379"
     # For better performance, consider `host` mode instead `port` to avoid docker NAT.
     # `host` mode is NOT currently supported in Swarm Mode.
     # https://docs.docker.com/compose/compose-file/compose-file-v3/#network_mode
@@ -102,7 +102,7 @@ services:
       - ${PWD}/db:/app/api/db
       - ${PWD}/logs:/app/api/logs
     ports:
-      - "6969:${API_PORT:-6969}"
+      - "${API_PORT:-6969}:6969"
     networks:
       - jamai
 
@@ -117,7 +117,7 @@ services:
       owl:
         condition: service_healthy
     # healthcheck:
-    #   test: ["CMD-SHELL", "curl --silent --fail localhost:6968/api/health || exit 1"]
+    #   test: ["CMD-SHELL", "curl --silent --fail --output /dev/null localhost:4000/project/default/action-table || exit 1"]
     #   interval: 30s
     #   timeout: 2s
     #   retries: 5
@@ -125,7 +125,7 @@ services:
     environment:
       - NODE_ENV=production
       - BODY_SIZE_LIMIT=Infinity
-      - PORT=4000
+      - FRONTEND_PORT=4000
     env_file:
       - ../.env
     ports:

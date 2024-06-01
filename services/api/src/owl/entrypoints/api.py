@@ -14,7 +14,7 @@ from time import perf_counter
 import redis
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.openapi.utils import get_openapi
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 from loguru import logger
 from pydantic import SecretStr
@@ -22,7 +22,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.background import BackgroundTasks
 from uuid_utils import uuid7
 
-from owl.config import LLM_PRICES_KEY, MODEL_CONFIG_KEY, PRICES_KEY
 from owl.routers import gen_table, llm
 from owl.utils.exceptions import (
     ContextOverflowError,
@@ -36,7 +35,6 @@ from owl.utils.logging import replace_logging_handlers, setup_logger_sinks
 from owl.utils.openapi import custom_generate_unique_id
 
 try:
-    from owl.cloud_billing import BillingManager
     from owl.cloud_client import OwlAsync
     from owl.routers import cloud_admin
 except ImportError as e:
@@ -48,7 +46,16 @@ except ImportError as e:
     )
     OwlAsync = None
     cloud_admin = None
-    BillingManager = None
+try:
+    from owl.cloud_billing import BillingManager
+except ImportError as e:
+    logger.warning(
+        (
+            "Failed to import cloud modules. Ignore this warning if you are using OSS mode. "
+            f"Exception: {e}"
+        )
+    )
+    from owl.billing import BillingManager
 
 
 class Config(BaseSettings):
@@ -162,6 +169,15 @@ else:
         app.include_router(
             router, prefix=prefix, tags=tags, generate_unique_id_function=custom_generate_unique_id
         )
+
+# Permissive CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.on_event("startup")
@@ -385,17 +401,16 @@ async def authenticate(request: Request, call_next):
     request.state.project_id = project_id
     request.state.api_key = token
     request.state.openmeter_id = openmeter_id
-    if BillingManager is not None:
-        request.state.billing_manager = BillingManager(
-            request=request,
-            quotas=quotas,
-            quota_reset_at=quota_reset_at,
-            organization_tier=org_tier,
-            openmeter_id=openmeter_id,
-            organization_id=org_id,
-            project_id=project_id,
-            api_key=token,
-        )
+    request.state.billing_manager = BillingManager(
+        request=request,
+        quotas=quotas,
+        quota_reset_at=quota_reset_at,
+        organization_tier=org_tier,
+        openmeter_id=openmeter_id,
+        organization_id=org_id,
+        project_id=project_id,
+        api_key=token,
+    )
     # Add API keys into header
     headers = dict(request.scope["headers"])
     if openai_api_key:
@@ -422,15 +437,14 @@ async def authenticate(request: Request, call_next):
     t2 = perf_counter()
 
     # --- Send events --- #
-    if BillingManager is not None:
-        tasks = BackgroundTasks()
-        tasks.add_task(
-            request.state.billing_manager.process_all,
-            auth_latency_ms=(t1 - t0) * 1e3,
-            request_latency_ms=(t2 - t1) * 1e3,
-            content_length_gb=float(response.headers.get("content-length", 0)) / (1024**3),
-        )
-        response.background = tasks
+    tasks = BackgroundTasks()
+    tasks.add_task(
+        request.state.billing_manager.process_all,
+        auth_latency_ms=(t1 - t0) * 1e3,
+        request_latency_ms=(t2 - t1) * 1e3,
+        content_length_gb=float(response.headers.get("content-length", 0)) / (1024**3),
+    )
+    response.background = tasks
     return response
 
 
@@ -611,6 +625,7 @@ openapi_schema["components"]["securitySchemes"] = {
         "in": "header",
     },
 }
+openapi_schema["security"] = [{"Authentication": [], "X-PROJECT-ID": []}]
 openapi_schema["info"]["x-logo"] = {"url": "https://www.jamaibase.com/favicon.svg"}
 app.openapi_schema = openapi_schema
 
