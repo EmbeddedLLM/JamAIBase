@@ -111,9 +111,10 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
    ```shell
    $ npm install jamaibase
    ```
+
 ### Option 1: Use the JamAI Base Cloud
 
-   Get free LLM tokens on JamAI Base Cloud. [Sign up now.](https://cloud.jamaibase.com/)
+Get free LLM tokens on JamAI Base Cloud. [Sign up now.](https://cloud.jamaibase.com/)
 
 ### Option 2: Launch self-hosted services
 
@@ -157,9 +158,11 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
 - [Platform Documentation](https://docs.jamaibase.com)
 
 ## Examples
+
 Want to try building apps with JamAI Base? We've got some awesome examples to get you started! Check out our [example docs](https://docs.jamaibase.com/getting-started/use-case) for inspiration.
 
 Here are a couple of cool frontend examples:
+
 1. [Simple Chatbot Bot using NLUX](https://docs.jamaibase.com/getting-started/quick-start/nlux-frontend-only): Build a basic chatbot without any backend setup. It's a great way to dip your toes in!
 2. [Simple Chatbot Bot using NLUX + Express.js](https://docs.jamaibase.com/getting-started/quick-start/nlux-+-express.js): Take it a step further and add some backend power with Express.js.
 
