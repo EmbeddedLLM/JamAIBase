@@ -13,6 +13,7 @@
 ## Overview
 
 Welcome to JamAI Base – the real-time database that orchestrates Large Language Models (LLMs) for you. Designed to simplify AI integration, JamAI Base offers a Backend as a Service (BaaS) platform with an intuitive, spreadsheet-like interface. Focus on defining your data requirements through natural language prompts, and let us handle the complexities of RAG, LLMOps, conversation histories, and LLM orchestration.
+
 ![JamAI Base Demo](jamaibase.webp)
 
 ## Key Benefits
