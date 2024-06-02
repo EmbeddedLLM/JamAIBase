@@ -8,7 +8,7 @@
 
 <!-- prettier-ignore -->
 > [!TIP]
-> [Explore our docs](https://docs.jamaibase.com)
+> [Explore our docs](#explore-the-documentation)
 
 ## Overview
 
@@ -141,10 +141,10 @@ Get free LLM tokens on JamAI Base Cloud. [Sign up now.](https://cloud.jamaibase.
    $ docker compose -f docker/compose.nvidia.yml up --quiet-pull -d
    ```
 
-   <!-- prettier-ignore -->
-   > [!TIP]
-   > By default, frontend and backend are accessible at ports 4000 and 6969.
-   > You can change the ports exposed to host by setting env var like so `API_PORT=6970 FRONTEND_PORT=4001 docker compose -f docker/compose.cpu.yml up --quiet-pull -d`
+<!-- prettier-ignore -->
+> [!TIP]
+> By default, frontend and backend are accessible at ports 4000 and 6969.
+> You can change the ports exposed to host by setting env var like so `API_PORT=6970 FRONTEND_PORT=4001 docker compose -f docker/compose.cpu.yml up --quiet-pull -d`
 
 4. Try the command below in your terminal, or open your browser and go to `localhost:4000`.
 
@@ -156,6 +156,8 @@ Get free LLM tokens on JamAI Base Cloud. [Sign up now.](https://cloud.jamaibase.
 
 - [API Documentation](https://jamaibase.readme.io)
 - [Platform Documentation](https://docs.jamaibase.com)
+- [Changelog](CHANGELOG.md)
+- [Versioning](VERSIONING.md)
 
 ## Examples
 
