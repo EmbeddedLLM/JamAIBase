@@ -30,8 +30,8 @@ jobs:
 
       - name: Remove cloud-only modules and install Python client
         run: |
-          bash scripts/remove_cloud_modules.sh
           set -e
+          bash scripts/remove_cloud_modules.sh
           cd clients/python
           python -m pip install .[all]
 
