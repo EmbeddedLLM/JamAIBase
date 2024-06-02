@@ -22,9 +22,7 @@ vite build
 
 # Copy the build files to the build directory
 rm -rf build
-mkdir build
-cp -r temp/* build/
-rm -rf temp
+mv temp build
 
 # Reload PM2 app if not in dev mode
 if [ $DEV_MODE -eq 0 ]; then

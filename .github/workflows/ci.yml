@@ -28,20 +28,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      #- name: Test API Key
-      #  run: |
-      #    response=$(curl --fail -s -H "Authorization: Bearer ${OPENAI_API_KEY}" https://api.openai.com/v1/engines)
-      #    echo "$response"
-      #    if [ $? -ne 0 ]; then
-      #      echo "API key test failed!"
-      #      exit 1
-      #    fi
-      #  env:
-      #    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-      - name: Setup
+      - name: Remove cloud-only modules and install Python client
         run: |
           set -e
+          bash scripts/remove_cloud_modules.sh
           cd clients/python
           python -m pip install .[all]
 
@@ -97,20 +87,6 @@ jobs:
           # JAMAI_API_KEY: ${{ secrets.JAMAI_API_KEY }}
           COMPOSE_DOCKER_CLI_BUILD: 1
           DOCKER_BUILDKIT: 1
-
-      #- name: Test list models
-      #  run: |
-      #    response=$(curl --fail -s http://localhost:6969/api/v1/models)
-      #    echo "$response"
-      #    if [ $? -ne 0 ]; then
-      #      echo "list models test failed!"
-      #      exit 1
-      #    fi
-
-      #- name: Get docker compose logs
-      #  if: always()
-      #  run: |
-      #    docker compose -f docker/compose.cpu.yml logs
 
       - name: Pytest
         run: |

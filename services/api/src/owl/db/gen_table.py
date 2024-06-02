@@ -12,7 +12,6 @@ import pyarrow as pa
 from filelock import FileLock
 from lancedb.table import LanceTable
 from loguru import logger
-from pydantic import BaseModel
 from sqlalchemy import desc
 from sqlmodel import Session, SQLModel, select
 from typing_extensions import Self
@@ -67,7 +66,7 @@ class GenerativeTable:
         self.db_url = Path(db_url)
         self.vector_db_url = Path(vector_db_url)
 
-    def lock(self, name: str, timeout: int = 60):
+    def lock(self, name: str, timeout: int = 5):
         name = f"{self.lock_name_prefix}/{name}.lock"
         self.locks[name] = self.locks.get(name, FileLock(name, timeout=timeout))
         return self.locks[name]

@@ -1,7 +1,8 @@
-import asyncio
 import pathlib
+from asyncio import sleep
 from datetime import timedelta
 from hashlib import blake2b
+from time import perf_counter
 from typing import Annotated, Any
 
 import numpy as np
@@ -122,7 +123,7 @@ async def periodic_reindex():
     lock = FileLock(f"{config.owl_db_dir}/periodic_reindex.lock", blocking=False)
     try:
         with lock:
-            logger.info("Periodic Lance re-indexing started.")
+            t0 = perf_counter()
             num_ok = num_skipped = num_failed = 0
             for session, table, meta, table_path in _iter_all_tables():
                 if session is None:
@@ -136,14 +137,18 @@ async def periodic_reindex():
                 except Exception:
                     logger.exception(f"Periodic Lance re-indexing failed for table: {table_path}")
                     num_failed += 1
+            t = perf_counter() - t0
+            # Hold the lock for a while to block other workers
+            await sleep(max(0.0, (config.owl_reindex_period_sec - t) * 0.5))
         logger.info(
             (
-                "Periodic Lance re-indexing completed "
-                f"({num_ok:,d} OK, {num_skipped:,d} skipped, {num_failed:,d} failed)."
+                f"Periodic Lance re-indexing completed (t={t:,.3f} s, "
+                f"{num_ok:,d} OK, {num_skipped:,d} skipped, {num_failed:,d} failed)."
             )
         )
     except Timeout:
-        logger.info("Periodic Lance re-indexing skipped.")
+        # logger.info("Periodic Lance re-indexing skipped.")
+        pass
     except Exception:
         logger.exception("Periodic Lance re-indexing encountered an error.")
 
@@ -154,7 +159,7 @@ async def periodic_optimize():
     lock = FileLock(f"{config.owl_db_dir}/periodic_optimization.lock", blocking=False)
     try:
         with lock:
-            logger.info("Periodic Lance optimization started.")
+            t0 = perf_counter()
             num_ok = num_skipped = num_failed = 0
             for _, table, meta, table_path in _iter_all_tables():
                 done = True
@@ -177,14 +182,18 @@ async def periodic_optimize():
                 except Exception:
                     logger.exception(f"Periodic Lance optimization failed for table: {table_path}")
                     num_failed += 1
+            t = perf_counter() - t0
+            # Hold the lock for a while to block other workers
+            await sleep(max(0.0, (config.owl_reindex_period_sec - t) * 0.5))
         logger.info(
             (
-                "Periodic Lance optimization completed "
-                f"({num_ok:,d} OK, {num_skipped:,d} skipped, {num_failed:,d} failed)."
+                f"Periodic Lance optimization completed (t={t:,.3f} s, "
+                f"{num_ok:,d} OK, {num_skipped:,d} skipped, {num_failed:,d} failed)."
             )
         )
     except Timeout:
-        logger.info("Periodic Lance optimization skipped.")
+        # logger.info("Periodic Lance optimization skipped.")
+        pass
     except Exception:
         logger.exception("Periodic Lance optimization encountered an error.")
 
