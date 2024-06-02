@@ -51,11 +51,6 @@
 		document.cookie = `activeOrganizationId=${$activeOrganization?.organization_id}; path=/; max-age=3153600000; samesite=strict`;
 	}
 
-	//* Project id cookie for API
-	$: if (browser && $page.params) {
-		document.cookie = `activeProjectId=${$page.params.project_id ?? ''}; path=/; max-age=3153600000; samesite=strict`;
-	}
-
 	onMount(() => {
 		//* Reflect changes to user preference for immediately
 		window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (event) => {

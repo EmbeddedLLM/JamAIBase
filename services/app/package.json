@@ -8,7 +8,7 @@
 		"build": "/bin/bash build.sh",
 		"preview": "vite preview",
 		"start": "node server",
-		"devstart": "ORIGIN=http://localhost:4173 HOST=localhost PORT=4173 NODE_ENV=development node server",
+		"devstart": "ORIGIN=http://localhost:4173 HOST=localhost FRONTEND_PORT=4173 NODE_ENV=development node server",
 		"test": "npm run test:integration && npm run test:unit",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",

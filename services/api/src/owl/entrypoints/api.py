@@ -3,6 +3,7 @@ API server.
 
 ```shell
 $ python -m owl.entrypoints.api
+$ JAMAI_API_BASE=http://localhost:6969/api TZ=Asia/Singapore python -m owl.entrypoints.api
 ```
 """
 
@@ -16,6 +17,7 @@ from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
+from filelock import Timeout
 from loguru import logger
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -226,8 +228,8 @@ async def authenticate(request: Request, call_next):
     # Defaults
     project_id, org_id, org_tier = CONFIG.default_project, CONFIG.default_org, "free"
     token, openmeter_id = "", "default"
-    quota_reset_at = ""
-    quotas = defaultdict(lambda: 1.0)
+    quotas, quota_reset_at = defaultdict(lambda: 1.0), ""
+    db_storage_gb = file_storage_gb = 0.0
 
     # --- OSS Mode --- #
     if CONFIG.service_key_plain == "":
@@ -380,9 +382,11 @@ async def authenticate(request: Request, call_next):
                     )
                 org_id, external_keys = org_info.id, org_info.external_keys
             openmeter_id = org_info.openmeter_id
-            quota_reset_at = org_info.quota_reset_at
             org_tier = org_info.tier
             quotas = org_info.quotas
+            quota_reset_at = org_info.quota_reset_at
+            db_storage_gb = org_info.db_storage_gb
+            file_storage_gb = org_info.file_storage_gb
             if openmeter_id is None:
                 logger.warning(
                     f"{request.state.id} - Organization {org_id} does not have OpenMeter ID."
@@ -399,14 +403,14 @@ async def authenticate(request: Request, call_next):
     # --- Set request state and headers --- #
     request.state.org_id = org_id
     request.state.project_id = project_id
-    request.state.api_key = token
-    request.state.openmeter_id = openmeter_id
     request.state.billing_manager = BillingManager(
         request=request,
+        openmeter_id=openmeter_id,
         quotas=quotas,
         quota_reset_at=quota_reset_at,
+        db_storage_gb=db_storage_gb,
+        file_storage_gb=file_storage_gb,
         organization_tier=org_tier,
-        openmeter_id=openmeter_id,
         organization_id=org_id,
         project_id=project_id,
         api_key=token,
@@ -455,6 +459,21 @@ async def health() -> Response:
 
 
 # --- Order of handlers does not matter --- #
+
+
+@app.exception_handler(Timeout)
+async def write_lock_timeout_exc_handler(request: Request, exc: Timeout):
+    return ORJSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "error": "write_lock_timeout",
+            "message": "This table is currently busy. Please try again later.",
+            "detail": str(exc),
+            "request_id": request.state.id,
+            "exception": exc.__class__.__name__,
+        },
+        headers={"Retry-After": 10},
+    )
 
 
 @app.exception_handler(UpgradeTierError)

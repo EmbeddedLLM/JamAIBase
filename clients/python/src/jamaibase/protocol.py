@@ -1206,7 +1206,13 @@ class RowAddData(BaseModel):
                 if k in failed_cols:
                     d[k], state["original"] = None, d[k]
                 if d[k] is None:
-                    if col.dtype == DtypeEnum.str_:
+                    if col.dtype == DtypeEnum.int_:
+                        d[k] = 0
+                    elif col.dtype == DtypeEnum.float_:
+                        d[k] = 0.0
+                    elif col.dtype == DtypeEnum.bool_:
+                        d[k] = False
+                    elif col.dtype == DtypeEnum.str_:
                         # Store null string as ""
                         # https://github.com/lancedb/lancedb/issues/1160
                         d[k] = ""

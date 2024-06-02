@@ -12,8 +12,17 @@ const headers = {
 	Authorization: `Bearer ${JAMAI_SERVICE_KEY}`
 };
 
-export const load = async ({ cookies, depends, fetch, locals, url }) => {
+export const load = async ({ cookies, depends, fetch, locals, params, url }) => {
 	depends('layout:root');
+
+	if (params.project_id) {
+		cookies.set('activeProjectId', params.project_id, {
+			path: '/',
+			maxAge: 3153600,
+			httpOnly: false,
+			sameSite: 'strict'
+		});
+	}
 
 	const prices = nodeCache.get('prices') as PriceRes;
 

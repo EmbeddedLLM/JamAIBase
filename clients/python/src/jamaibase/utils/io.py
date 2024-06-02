@@ -14,8 +14,9 @@ import numpy as np
 import orjson
 import srsly
 import toml
-from jamaibase.utils.types import JSONInput, JSONOutput
 from PIL import ExifTags, Image
+
+from jamaibase.utils.types import JSONInput, JSONOutput
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ def dump_json(data: JSONInput, path: str, **kwargs) -> str:
     Args:
         data (JSONInput): The data.
         path (str): Path to the file.
-        **kwargs: Other keyword arguments to pass into `srsly.write_json`.
+        **kwargs: Other keyword arguments to pass into `orjson.dumps`.
 
     Returns:
         path (str): Path to the file.

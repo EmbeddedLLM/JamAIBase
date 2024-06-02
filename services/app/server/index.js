@@ -4,7 +4,8 @@ import express from 'express';
 import cors from 'cors';
 import expressOpenIdConnect from 'express-openid-connect';
 
-const { FRONTEND_PORT, NODE_ENV, BASE_URL } = process.env;
+const { NODE_ENV, BASE_URL } = process.env;
+const FRONTEND_PORT = process.env.FRONTEND_PORT || 4000;
 
 const app = express();
 app.use(cors());

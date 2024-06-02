@@ -81,18 +81,12 @@ def test_get_and_list_organizations(client_cls: Type[Owl]):
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
 def test_create_flow(client_cls: Type[Owl]):
     owl = client_cls()
-    # response = owl.delete_user(USER_ID_A)
-    # assert isinstance(response, OkResponse)
-    # response = owl.delete_user(USER_ID_B)
-    # assert isinstance(response, OkResponse)
+    response = owl.delete_user(USER_ID_A)
+    assert isinstance(response, OkResponse)
+    response = owl.delete_user(USER_ID_B)
+    assert isinstance(response, OkResponse)
     # response = owl.delete_organization("org_f12d46652cfa3120006e44e2")
     # assert isinstance(response, OkResponse)
-
-    orgs = owl.list_organizations().items
-    for org in orgs:
-        org = owl.refresh_quota(org.id)
-        print(org)
-    exit()
 
     # Create user
     duncan = _create_user(owl)
