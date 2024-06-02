@@ -14,6 +14,8 @@
 
 Welcome to JamAI Base – the real-time database that orchestrates Large Language Models (LLMs) for you. Designed to simplify AI integration, JamAI Base offers a Backend as a Service (BaaS) platform with an intuitive, spreadsheet-like interface. Focus on defining your data requirements through natural language prompts, and let us handle the complexities of RAG, LLMOps, conversation histories, and LLM orchestration.
 
+![JamAI Base Demo](jamaibase.webp)
+
 ## Key Benefits
 
 ### Ease of Use
@@ -110,7 +112,11 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
    $ npm install jamaibase
    ```
 
-### Launch self-hosted services
+### Option 1: Use the JamAI Base Cloud
+
+Get free LLM tokens on JamAI Base Cloud. [Sign up now.](https://cloud.jamaibase.com/)
+
+### Option 2: Launch self-hosted services
 
 1. Clone the repository:
 
@@ -151,12 +157,23 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
 - [API Documentation](https://jamaibase.readme.io)
 - [Platform Documentation](https://docs.jamaibase.com)
 
+## Examples
+
+Want to try building apps with JamAI Base? We've got some awesome examples to get you started! Check out our [example docs](https://docs.jamaibase.com/getting-started/use-case) for inspiration.
+
+Here are a couple of cool frontend examples:
+
+1. [Simple Chatbot Bot using NLUX](https://docs.jamaibase.com/getting-started/quick-start/nlux-frontend-only): Build a basic chatbot without any backend setup. It's a great way to dip your toes in!
+2. [Simple Chatbot Bot using NLUX + Express.js](https://docs.jamaibase.com/getting-started/quick-start/nlux-+-express.js): Take it a step further and add some backend power with Express.js.
+
+Let us know if you have any questions – we're here to help! Happy coding! 😊
+
 ## Community and Support
 
 Join our vibrant developer community for comprehensive documentation, tutorials, and resources:
 
-- **Discord**: [Join our Discord](Discord_Link)
-- **GitHub**: [Star our GitHub repository](GitHub_Repository_Link)
+- **Discord**: [Join our Discord](https://discord.gg/rV6DECA8Dw)
+- **GitHub**: [Star our GitHub repository](https://github.com/EmbeddedLLM/JamAIBase)
 
 ## Contributing
 
@@ -164,8 +181,8 @@ We welcome contributions! Please read our [Contributing Guide](Contributing_Guid
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE_Link) file for details.
+This project is released under the Apache 2.0 License. - see the [LICENSE](https://github.com/EmbeddedLLM/JamAIBase/blob/main/LICENSE) file for details.
 
 ## Contact
 
-Follow us on [LinkedIn](LinkedIn_Link) for updates and news.
+Follow us on [X](https://x.com/EmbeddedLLM) and [LinkedIn](https://www.linkedin.com/company/embedded-llm/) for updates and news.
