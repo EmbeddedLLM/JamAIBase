@@ -83,10 +83,6 @@ UI
 - Fix change password button not working
 - Fix missing project ID error when performing certain actions
 - Fix pagination arrows not working in large tables
-- Improve file upload status component
-- Display column dtype on the header
-- Fix tables page not redirecting after switching organizations
-- Improve UX for renaming table columns
 
 Backend - owl (API server)
 
@@ -112,6 +108,8 @@ Backend - owl (API server)
   - Removed `openai/gpt-4-vision-preview`
 - Dependencies
   - Pin `unstructured-client` to 0.22.0
+  - Added `tenacity`
+  - Bumped dependency versions
 
 Backend - docio (PDF loader)
 
@@ -134,11 +132,6 @@ CI / CD / OSS
   - Cloud removal script
   - Docker Compose health checks (`curl` was removed from `unstructured-io/unstructured-api`)
   - Fixed CORS error when uploading files
-
-Dependencies
-
-- Added `tenacity` to `owl`
-- Bumped `owl` dependency versions
 
 Misc
 
