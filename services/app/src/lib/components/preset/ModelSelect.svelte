@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { onMount } from 'svelte';
 	import throttle from 'lodash/throttle';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
@@ -6,6 +7,7 @@
 	import { cn } from '$lib/utils';
 	import logger from '$lib/logger';
 
+	import { toast } from 'svelte-sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as Select from '$lib/components/ui/select';
 
@@ -25,8 +27,9 @@
 
 	async function getModels() {
 		const response = await fetch(
-			'/api/v1/models' +
-				(capabilityFilter ? `?${new URLSearchParams({ capabilities: capabilityFilter })}` : ''),
+			`${PUBLIC_JAMAI_URL}/api/v1/models${
+				capabilityFilter ? `?${new URLSearchParams({ capabilities: capabilityFilter })}` : ''
+			}`,
 			{
 				method: 'GET',
 				credentials: 'same-origin'
@@ -38,7 +41,9 @@
 			$modelsAvailable = responseBody.data;
 		} else {
 			logger.error('MODELS_FETCH_FAILED', responseBody);
-			alert('Failed to fetch models: ' + (responseBody.message || JSON.stringify(responseBody)));
+			toast.error('Failed to fetch models', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		}
 	}
 	const throttledInvalidateModels = throttle(getModels, 5000);
@@ -63,7 +68,7 @@
 					className
 				)}
 			>
-				<span class="whitespace-nowrap line-clamp-1 font-normal text-left">
+				<span class="w-full whitespace-nowrap line-clamp-1 font-normal text-left">
 					{buttonText}
 				</span>
 

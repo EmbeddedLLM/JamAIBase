@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { onMount, tick } from 'svelte';
 	import { invalidate } from '$app/navigation';
 	import { browser } from '$app/environment';
@@ -11,12 +11,11 @@
 	import { codeblock, codehighlight, table } from '$lib/showdown';
 	import type { ChatRequest, GenTableStreamEvent } from '$lib/types';
 
+	import { toast } from 'svelte-sonner';
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import SendIcon from '$lib/icons/SendIcon.svelte';
 	import logger from '$lib/logger';
-
-	const { PUBLIC_JAMAI_URL } = env;
 
 	export let generationStatus: boolean;
 
@@ -99,7 +98,9 @@
 		if (response.status != 200) {
 			const responseBody = await response.json();
 			logger.error('CHATTBL_CHAT_ADD', responseBody);
-			alert('Failed to add row: ' + (responseBody.message || JSON.stringify(responseBody)));
+			toast.error('Failed to add row', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 			chatMessage = cachedChatMessage;
 		} else {
 			generationStatus = true;
@@ -136,15 +137,24 @@
 							}
 
 							if (parsedValue.object == 'gen_table.completion.chunk') {
-								thread = [
-									...thread.slice(0, -1),
-									{
-										role: 'assistant',
-										content:
-											thread[thread.length - 1].content +
-											(parsedValue.choices[0].message.content ?? '')
-									}
-								];
+								if (
+									parsedValue.choices[0].finish_reason &&
+									parsedValue.choices[0].finish_reason === 'error'
+								) {
+									logger.error('CHATTBL_CHAT_ADDSTREAM', parsedValue);
+									console.error('STREAMING_ERROR', parsedValue);
+									alert(`Error while streaming: ${parsedValue.choices[0].message.content}`);
+								} else {
+									thread = [
+										...thread.slice(0, -1),
+										{
+											role: 'assistant',
+											content:
+												thread[thread.length - 1].content +
+												(parsedValue.choices[0].message.content ?? '')
+										}
+									];
+								}
 							} else {
 								console.log('Unknown message:', parsedValue);
 							}

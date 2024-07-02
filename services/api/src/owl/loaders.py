@@ -1,7 +1,7 @@
 import re
 import sys
-from os.path import splitext
-from tempfile import NamedTemporaryFile
+from os.path import join, splitext
+from tempfile import TemporaryDirectory
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents.base import Document
@@ -45,19 +45,21 @@ def make_printable(s: str) -> str:
 
 
 def load_file(file_name: str, content: bytes) -> list[Chunk]:
-    ext = splitext(file_name)[1]
-    with NamedTemporaryFile(suffix=ext) as tmp:
-        tmp.write(content)
-        tmp.flush()
-        logger.debug("Loading from temporary file: {name}", name=tmp.name)
+    ext = splitext(file_name)[1].lower()
+    with TemporaryDirectory() as tmp_dir_path:
+        tmp_path = join(tmp_dir_path, f"tmpfile{ext}")
+        with open(tmp_path, "wb") as tmp:
+            tmp.write(content)
+            tmp.flush()
+        logger.debug(f"Loading from temporary file: {tmp_path}")
 
         if ext in (".txt", ".md", ".pdf", ".csv"):
-            loader = DocIOAPIFileLoader(tmp.name, config.docio_url)
+            loader = DocIOAPIFileLoader(tmp_path, config.docio_url)
             documents = loader.load()
             logger.debug("File '{file_name}' loaded: {docs}", file_name=file_name, docs=documents)
         elif ext in (".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls"):
             documents = UnstructuredAPIFileLoader(
-                tmp.name,
+                tmp_path,
                 url=config.unstructuredio_url,
                 api_key=config.unstructuredio_api_key_plain,
                 mode="paged",

@@ -41,6 +41,11 @@ jobs:
       - name: Check Docker Compose Version
         run: docker compose version
 
+      - name: Authenticating to the Container registry
+        run: echo $JH_PAT | docker login ghcr.io -u tanjiahuei@gmail.com --password-stdin
+        env:
+          JH_PAT: ${{ secrets.JH_PAT }}
+
       - name: Launch services
         timeout-minutes: 15
         run: |

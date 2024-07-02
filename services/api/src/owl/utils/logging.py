@@ -37,15 +37,39 @@ def replace_logging_handlers(names: list[str], include_submodules: bool = True):
         raise TypeError("`names` should be a list of str.")
     logger_names = []
     for name in names:
+        name = name.lower()
         if include_submodules:
-            logger_names += [n for n in logging.root.manager.loggerDict if n.startswith(name)]
+            logger_names += [
+                n for n in logging.root.manager.loggerDict if n.lower().startswith(name)
+            ]
         else:
-            logger_names += [n for n in logging.root.manager.loggerDict if n == name]
+            logger_names += [n for n in logging.root.manager.loggerDict if n.lower() == name]
     logger.info(f"Replacing logger handlers: {logger_names}")
     loggers = (logging.getLogger(n) for n in logger_names)
     for lgg in loggers:
         lgg.handlers = [InterceptHandler()]
     # logging.getLogger(name).handlers = [InterceptHandler()]
+
+
+def suppress_logging_handlers(names: list[str], include_submodules: bool = True):
+    """
+    Suppresses logging handlers by setting them to `WARNING`.
+    """
+    if not isinstance(names, (list, tuple)):
+        raise TypeError("`names` should be a list of str.")
+    logger_names = []
+    for name in names:
+        name = name.lower()
+        if include_submodules:
+            logger_names += [
+                n for n in logging.root.manager.loggerDict if n.lower().startswith(name)
+            ]
+        else:
+            logger_names += [n for n in logging.root.manager.loggerDict if n.lower() == name]
+    logger.info(f"Suppressing logger handlers: {logger_names}")
+    loggers = (logging.getLogger(n) for n in logger_names)
+    for lgg in loggers:
+        lgg.setLevel("ERROR")
 
 
 def setup_logger_sinks():

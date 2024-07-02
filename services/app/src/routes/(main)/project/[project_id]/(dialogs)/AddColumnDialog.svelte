@@ -1,27 +1,31 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
+	import toUpper from 'lodash/toUpper';
 	import { invalidate } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
 	import { modelsAvailable } from '$globalStore';
 	import { insertAtCursor } from '$lib/utils';
-	import { actionTableDTypes } from '$lib/constants';
+	import { genTableDTypes } from '$lib/constants';
 	import logger from '$lib/logger';
-	import type { ActionTableCol, ChatRequest } from '$lib/types';
+	import type { GenTableCol, ChatRequest } from '$lib/types';
 
 	import ModelSelect from '$lib/components/preset/ModelSelect.svelte';
+	import InputText from '$lib/components/InputText.svelte';
 	import Range from '$lib/components/Range.svelte';
+	import { toast } from 'svelte-sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Select from '$lib/components/ui/select';
 
-	const { PUBLIC_JAMAI_URL } = env;
-
 	export let isAddingColumn: { type: 'input' | 'output'; showDialog: boolean };
-	let usableColumns: ActionTableCol[] = [];
+	export let tableType: 'action' | 'knowledge' | 'chat';
+
+	let usableColumns: GenTableCol[] = [];
 	$: if ($page.data.table && $page.data.table.tableData && $page.data.table.tableData.cols) {
 		usableColumns =
-			($page.data.table.tableData.cols as ActionTableCol[])?.filter(
+			($page.data.table.tableData.cols as GenTableCol[])?.filter(
 				(col) => col.id !== 'ID' && col.id !== 'Updated at'
 			) ?? [];
 	}
@@ -38,13 +42,13 @@
 
 	async function handleAddColumn() {
 		if (!columnName || !selectedDatatype) {
-			return alert('Please fill in all fields');
+			return toast.error('Please fill in all fields');
 		}
 
 		if (isLoading) return;
 		isLoading = true;
 
-		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat/columns/add`, {
+		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/columns/add`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -82,10 +86,12 @@
 
 		if (!response.ok) {
 			const responseBody = await response.json();
-			logger.error('CHATTBL_COLUMN_ADD', responseBody);
-			alert('Failed to add column: ' + (responseBody.message || JSON.stringify(responseBody)));
+			logger.error(toUpper(`${tableType}TBL_COLUMN_ADD`), responseBody);
+			toast.error('Failed to add column', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		} else {
-			invalidate('chat-table:slug');
+			invalidate(`${tableType}-table:slug`);
 			isAddingColumn = { ...isAddingColumn, showDialog: false };
 			columnName = '';
 			selectedDatatype = '';
@@ -114,19 +120,15 @@
 		<div class="grow py-3 w-full overflow-auto">
 			<div class="flex flex-col gap-2 px-6 pl-8 py-2 w-full text-center">
 				<span class="font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-					Column ID
+					Column ID*
 				</span>
 
-				<input
-					type="text"
-					bind:value={columnName}
-					class="px-3 py-2 w-full text-sm bg-transparent data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#42464E] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-				/>
+				<InputText bind:value={columnName} placeholder="Required" />
 			</div>
 
 			<div class="flex flex-col gap-2 px-6 pl-8 py-4 w-full text-center">
 				<span class="font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-					Data Type
+					Data type*
 				</span>
 
 				<Select.Root>
@@ -134,17 +136,19 @@
 						<Button
 							builders={[builder]}
 							variant="outline"
-							class="flex items-center justify-between gap-8 pl-3 pr-2 h-10 min-w-full bg-white data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1]"
+							class="flex items-center justify-between gap-8 pl-3 pr-2 h-10 min-w-full bg-white data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1] {!selectedDatatype
+								? 'italic text-muted-foreground'
+								: ''}"
 						>
-							<span class="whitespace-nowrap line-clamp-1 font-normal text-left">
-								{selectedDatatype ? selectedDatatype : 'Select Data Type'}
+							<span class="w-full whitespace-nowrap line-clamp-1 font-normal text-left">
+								{selectedDatatype ? selectedDatatype : 'Select data type'}
 							</span>
 
 							<ChevronDown class="h-4 w-4" />
 						</Button>
 					</Select.Trigger>
 					<Select.Content side="bottom" class="max-h-96 overflow-y-auto">
-						{#each actionTableDTypes as dType}
+						{#each genTableDTypes as dType}
 							<Select.Item
 								on:click={() => (selectedDatatype = dType)}
 								value={dType}
@@ -281,14 +285,13 @@
 
 		<Dialog.Actions>
 			<div class="flex gap-2">
+				<DialogPrimitive.Close asChild let:builder>
+					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
+						Cancel
+					</Button>
+				</DialogPrimitive.Close>
 				<Button
-					variant="link"
-					on:click={() => (isAddingColumn = { ...isAddingColumn, showDialog: false })}
-					class="grow px-6"
-				>
-					Cancel
-				</Button>
-				<Button
+					type="button"
 					loading={isLoading}
 					on:click={handleAddColumn}
 					class="relative grow px-6 rounded-full"

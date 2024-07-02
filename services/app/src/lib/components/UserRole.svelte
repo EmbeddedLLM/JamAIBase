@@ -1,9 +1,7 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_IS_LOCAL } from '$env/static/public';
 	import { activeOrganization } from '$globalStore';
 	import { cn } from '$lib/utils';
-
-	const { PUBLIC_IS_LOCAL } = env;
 
 	let className: string | undefined | null = undefined;
 	export { className as class };

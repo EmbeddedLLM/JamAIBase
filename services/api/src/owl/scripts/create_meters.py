@@ -72,8 +72,6 @@ meters = [
         "groupBy": {
             "type": "$.type",  # "db" or "file"
             "org_id": "$.org_id",
-            "project_id": "$.project_id",
-            "api_key": "$.api_key",
         },
         "valueProperty": "$.amount_gb",
     },

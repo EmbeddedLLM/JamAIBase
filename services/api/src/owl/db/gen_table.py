@@ -1,4 +1,5 @@
 import re
+from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -14,6 +15,7 @@ from lancedb.table import LanceTable
 from loguru import logger
 from sqlalchemy import desc
 from sqlmodel import Session, SQLModel, select
+from tenacity import retry, stop_after_attempt, wait_exponential
 from typing_extensions import Self
 from uuid_extensions import uuid7str
 
@@ -22,7 +24,6 @@ from jamaibase.utils.io import json_loads
 from owl.config import get_embed_model_info
 from owl.db import create_sql_tables, create_sqlite_engine
 from owl.models import CloudEmbedder, CloudReranker
-from owl.utils import get_api_key
 from owl.utils.exceptions import ResourceExistsError, ResourceNotFoundError, TableSchemaFixedError
 
 # Lance only support null values in string column
@@ -301,7 +302,14 @@ class GenerativeTable:
             )
         cols = deepcopy(meta.cols)
         for c in cols:
-            c["gen_config"] = updates.column_map.get(c["id"], c["gen_config"])
+            # Validate and update
+            gen_config = updates.column_map.get(c["id"], c["gen_config"])
+            if gen_config is not None:
+                if "embedding_model" in gen_config:
+                    gen_config = p.EmbedGenConfig.model_validate(gen_config).model_dump()
+                else:
+                    gen_config = p.ChatRequest.model_validate(gen_config).model_dump()
+            c["gen_config"] = gen_config
         meta.cols = cols
         p.TableSchema.model_validate(meta)
         session.add(meta)
@@ -527,6 +535,21 @@ class GenerativeTable:
             ]
         except ValueError as e:
             raise ResourceNotFoundError(e)
+        # Validate changes
+        p.TableSchemaCreate.model_validate(
+            dict(
+                id=meta.id,
+                cols=[
+                    c
+                    for c in meta.cols
+                    if not (
+                        c["id"].endswith("_")
+                        or c["id"].lower() in ("id", "updated at")
+                        or c["dtype"].startswith("float")
+                    )
+                ],
+            )
+        )
         meta.updated_at = datetime.now(timezone.utc).isoformat()
         session.add(meta)
         session.commit()
@@ -534,7 +557,11 @@ class GenerativeTable:
         return meta
 
     def add_rows(
-        self, session: Session, table_id: p.TableName, data: list[dict[p.Name, Any]]
+        self,
+        session: Session,
+        table_id: p.TableName,
+        data: list[dict[p.Name, Any]],
+        errors: list[list[str]] | None = None,
     ) -> Self:
         if not isinstance(data, list):
             raise TypeError("`data` must be a list.")
@@ -542,7 +569,7 @@ class GenerativeTable:
             table = self.open_table(table_id)
             meta = self.open_meta(session, table_id)
             # Validate data and generate ID & timestamp under write lock
-            data = p.RowAddData(table_meta=meta, data=data).set_id().data
+            data = p.RowAddData(table_meta=meta, data=data, errors=errors).set_id().data
             # Add to Lance Table
             table.add(data)
             # Update metadata
@@ -555,15 +582,21 @@ class GenerativeTable:
         self,
         session: Session,
         table_id: p.TableName,
-        where: str | None = None,
         *,
-        values: dict | None = None,
+        where: str | None,
+        values: dict[str, Any],
+        errors: list[str] | None = None,
     ) -> Self:
         with self.lock(table_id):
             table = self.open_table(table_id)
             meta = self.open_meta(session, table_id)
             # Validate data and generate ID & timestamp under write lock
-            values = p.RowUpdateData(table_meta=meta, data=[values]).sql_escape().data[0]
+            values = p.RowUpdateData(
+                table_meta=meta,
+                data=[values],
+                errors=None if errors is None else [errors],
+            )
+            values = values.sql_escape().data[0]
             # TODO: Vector column update seems to be broken
             values = {k: v for k, v in values.items() if not isinstance(v, np.ndarray)}
             table.update(where=where, values=values)
@@ -611,6 +644,8 @@ class GenerativeTable:
             ret = {"value": data}
             if "original" in state:
                 ret["original"] = state["original"]
+            # if "error" in state:
+            #     ret["error"] = state["error"]
             return ret
         else:
             return data
@@ -727,15 +762,16 @@ class GenerativeTable:
         return self
 
     @staticmethod
+    @retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(4))
     def _run_query(
         table: LanceTable,
         query: np.ndarray | list | str | None = None,
         column_name: str | None = None,
         where: str | None = None,
         limit: p.PositiveInt = 10_000,
-        metric: str = "dot",
+        metric: str = "cosine",
         nprobes: p.PositiveInt = 50,
-        refine_factor: p.PositiveInt = 50,
+        refine_factor: p.PositiveInt = 20,
     ) -> list[dict[str, Any]]:
         is_vector = isinstance(query, (list, np.ndarray))
         if query is None:
@@ -752,6 +788,9 @@ class GenerativeTable:
             vector_column_name=column_name,
             query_type=query_type,
         )
+        if query_type == "fts":
+            # Prevent term query
+            query_builder = query_builder.phrase_query()
         if is_vector:
             query_builder = (
                 query_builder.metric(metric).nprobes(nprobes).refine_factor(refine_factor)
@@ -761,16 +800,26 @@ class GenerativeTable:
         return query_builder.limit(limit).to_list()
 
     @staticmethod
-    def _merge_sub_rows(rows: dict, sub_rows: list[dict], score_key: str, merge_op):
-        for r in sub_rows:
-            _id = r["ID"]
-            if _id in rows:
-                if score_key in rows[_id]:
-                    r[score_key] = merge_op(r[score_key], rows[_id][score_key])
-                rows[_id].update(r)
-            else:
-                rows[_id] = r
-        return rows
+    def _reciprocal_rank_fusion(
+        search_results: list[list[dict]], result_key: str = "ID", K: int = 60
+    ):
+        """
+        Perform reciprocal rank fusion to merge the rank of the search results (arbitrary number of results and can be varying in length)
+        Args:
+            search_results: list of search results from lance query, search result is a sorted list of dict (descending order of closeness)
+            result_key: dict key of the search result
+            K: const (def=60) for reciprocal rank fusion
+        Return:
+            A list of dict of originial result with the rrf scores (higher scroes, higher ranking)
+        """
+        rrf_scores = defaultdict(lambda: {"rrf_score": 0.0})
+        for search_result in search_results:
+            for rank, result in enumerate(search_result, start=1):
+                result_id = result[result_key]
+                rrf_scores[result_id]["rrf_score"] += 1.0 / (rank + K)
+                rrf_scores[result_id].update(result)
+        sorted_rrf = sorted(rrf_scores.values(), key=lambda x: x["rrf_score"], reverse=True)
+        return sorted_rrf
 
     def hybrid_search(
         self,
@@ -781,9 +830,9 @@ class GenerativeTable:
         where: str | None = None,
         limit: p.PositiveInt = 100,
         columns: list[p.Name] | None = None,
-        metric: str = "dot",
+        metric: str = "cosine",
         nprobes: p.PositiveInt = 50,
-        refine_factor: p.PositiveInt = 50,
+        refine_factor: p.PositiveInt = 20,
         reranking_model: str | None = None,
         convert_null: bool = True,
         remove_state_cols: bool = False,
@@ -820,26 +869,28 @@ class GenerativeTable:
         else:
             if not isinstance(query, str):
                 raise TypeError(f"`query` must be string, received: {type(query)}")
-            rows = {}
-            for c in self.fts_cols(meta):
+            search_results = []
+            # 2024-06 (BUG?): lance fts works on all indexed cols at once (can't specify the col to be searched)
+            # Thus no need to loop through indexed col one by one
+            if self.fts_cols(meta):
                 t1 = perf_counter()
-                sub_rows = self._run_query(
+                fts_result = self._run_query(
                     table=table,
                     query=re.sub(r"[^\w\s]", "", query).replace("\n", " "),
-                    column_name=c.id,
+                    # column_name=c.id,
                     where=where,
                     limit=limit,
                     metric=metric,
                     nprobes=nprobes,
                     refine_factor=refine_factor,
                 )
-                rows = self._merge_sub_rows(rows, sub_rows, "score", max)
-                timings[f"FTS: {c.id}"] = perf_counter() - t1
+                timings[f"FTS:"] = perf_counter() - t1
+                search_results.append(fts_result)
             for c in self.embedding_cols(meta):
                 t1 = perf_counter()
                 gen_config = p.EmbedGenConfig.model_validate(c.gen_config)
-                api_key = get_api_key(
-                    gen_config.embedding_model,
+                embedder = CloudEmbedder(
+                    embedder_name=gen_config.embedding_model,
                     openai_api_key=openai_api_key,
                     anthropic_api_key=anthropic_api_key,
                     gemini_api_key=gemini_api_key,
@@ -849,15 +900,11 @@ class GenerativeTable:
                     jina_api_key=jina_api_key,
                     voyage_api_key=voyage_api_key,
                 )
-                embedder = CloudEmbedder(
-                    embedder_name=gen_config.embedding_model,
-                    api_key=api_key,
-                )
-                embedding = embedder.embed_documents(texts=[query])
+                embedding = embedder.embed_queries(texts=[query])
                 # TODO: Benchmark this
                 # Searching using float16 seems to be faster on float32 and float16 indexes
                 # 2024-05-21, lance 0.6.13, pylance 0.10.12
-                embedding = np.asarray(embedding[0], dtype=np.float16)
+                embedding = np.asarray(embedding.data[0].embedding, dtype=np.float16)
                 embedding = embedding / np.linalg.norm(embedding)
                 timings[f"Embed ({gen_config.embedding_model}): {c.id}"] = perf_counter() - t1
                 t1 = perf_counter()
@@ -871,28 +918,19 @@ class GenerativeTable:
                     nprobes=nprobes,
                     refine_factor=refine_factor,
                 )
-                for r in sub_rows:
-                    r["vector_score"] = 3.0 - r["_distance"]
-                rows = self._merge_sub_rows(rows, sub_rows, "vector_score", max)
+                # vector_score from lance is 1.0 - cosine similarity (0. exact match)
+                search_results.append(sub_rows)
                 timings[f"VS: {c.id}"] = perf_counter() - t1
-            rows = list(rows.values())
+            # list of search results with rrf_score
+            rows = self._reciprocal_rank_fusion(search_results)
             if reranking_model is None:
-                for r in rows:
-                    r["hybrid_score"] = r.get("score", 0.0) + r.get("vector_score", 0.0)
-                rows = list(sorted(rows, key=lambda r: r["hybrid_score"], reverse=True))
-                _scores = [
-                    (
-                        f'(hybrid_score={r["hybrid_score"]:.1f}, '
-                        f'fts_score={r.get("score", 0.0):.1f}, '
-                        f'vector_score={r.get("vector_score", 0.0):.1f})'
-                    )
-                    for r in rows
-                ]
+                # No longer do a linear combination for hybrid scores, use RRF score instead.
+                _scores = [(f'(RRF_score={r["rrf_score"]:.1f}, ') for r in rows]
                 logger.info(f"Hybrid search scores: {_scores}")
             else:
                 t1 = perf_counter()
-                api_key = get_api_key(
-                    reranking_model,
+                reranker = CloudReranker(
+                    reranker_name=reranking_model,
                     openai_api_key=openai_api_key,
                     anthropic_api_key=anthropic_api_key,
                     gemini_api_key=gemini_api_key,
@@ -902,12 +940,14 @@ class GenerativeTable:
                     jina_api_key=jina_api_key,
                     voyage_api_key=voyage_api_key,
                 )
-                reranker = CloudReranker(
-                    reranker_name=reranking_model,
-                    api_key=api_key,
-                )
                 chunks = reranker.rerank_chunks(
-                    chunks=[p.Chunk(text=row["Text"], title=row["Title"]) for row in rows],
+                    chunks=[
+                        p.Chunk(
+                            text="" if row["Text"] is None else row["Text"],
+                            title="" if row["Title"] is None else row["Title"],
+                        )
+                        for row in rows
+                    ],
                     query=query,
                 )
                 rerank_order = [c[2] for c in chunks]
@@ -978,7 +1018,7 @@ class GenerativeTable:
         self,
         session: Session,
         table_id: p.TableName,
-        metric: str = "dot",
+        metric: str = "cosine",
         num_partitions: int | None = None,
         num_sub_vectors: int | None = None,
         accelerator: str | None = None,
@@ -1314,12 +1354,12 @@ class ChatTable(GenerativeTable):
     def update_gen_config(
         self, session: Session, updates: p.GenConfigUpdateRequest
     ) -> p.TableMeta:
-        with self.create_session() as session:
-            meta = self.open_meta(session, updates.table_id)
-        if meta.parent_id is not None:
-            raise TableSchemaFixedError(
-                "Unable to update generation config of a conversation table."
-            )
+        # with self.create_session() as session:
+        #     meta = self.open_meta(session, updates.table_id)
+        # if meta.parent_id is not None:
+        #     raise TableSchemaFixedError(
+        #         "Unable to update generation config of a conversation table."
+        #     )
         return super().update_gen_config(session, updates)
 
     def rename_columns(

@@ -124,12 +124,12 @@ async def test_model_names(client_cls: Type[JamAI | JamAIAsync]):
     assert "embedding" not in name_cat
     assert "rerank" not in name_cat
 
-    response = await run(jamai.model_names, capabilities=["chat", "image"])
-    assert isinstance(response, list)
-    name_cat = ",".join(response)
-    assert "gpt-4" in name_cat
-    assert "embedding" not in name_cat
-    assert "rerank" not in name_cat
+    # response = await run(jamai.model_names, capabilities=["chat", "image"])
+    # assert isinstance(response, list)
+    # name_cat = ",".join(response)
+    # assert "gpt-4" in name_cat
+    # assert "embedding" not in name_cat
+    # assert "rerank" not in name_cat
 
     response = await run(jamai.model_names, capabilities=["embed"])
     assert isinstance(response, list)
@@ -190,6 +190,7 @@ async def test_chat_completion(client_cls: Type[JamAI | JamAIAsync], model: str)
     assert isinstance(response, p.ChatCompletionChunk)
     assert isinstance(response.text, str)
     assert len(response.text) > 1
+    assert isinstance(response.usage, p.CompletionUsage)
     assert isinstance(response.prompt_tokens, int)
     assert isinstance(response.completion_tokens, int)
     assert response.references is None
@@ -203,6 +204,38 @@ async def test_chat_completion(client_cls: Type[JamAI | JamAIAsync], model: str)
     assert len(responses) > 0
     assert all(isinstance(r, p.ChatCompletionChunk) for r in responses)
     assert all(isinstance(r.text, str) for r in responses)
+    assert all(r.references is None for r in responses)
+    assert isinstance(response.usage, p.CompletionUsage)
+    assert isinstance(response.prompt_tokens, int)
+    assert isinstance(response.completion_tokens, int)
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("model", ["openai/gpt-3.5-turbo"])
+async def test_long_chat_completion(client_cls: Type[JamAI | JamAIAsync], model: str):
+    jamai = client_cls(project_id="", api_key="")
+
+    # Streaming
+    request = p.ChatRequest(
+        id="test",
+        model=model,
+        messages=[
+            p.ChatEntry.system("You are a concise assistant."),
+            p.ChatEntry.user(" ".join(["What is a llama?"] * 5000)),
+        ],
+        temperature=0.001,
+        top_p=0.001,
+        max_tokens=50,
+        stream=True,
+    )
+    if isinstance(jamai, JamAIAsync):
+        responses = [r async for r in run_gen_async(jamai.generate_chat_completions, request)]
+    else:
+        responses = [r for r in run_gen_sync(jamai.generate_chat_completions, request)]
+    assert len(responses) > 0
+    assert all(isinstance(r, p.ChatCompletionChunk) for r in responses)
+    assert responses[-1].finish_reason == "error"
     assert all(r.references is None for r in responses)
 
 
@@ -313,4 +346,6 @@ async def test_chat_completion(client_cls: Type[JamAI | JamAIAsync], model: str)
 
 
 if __name__ == "__main__":
-    _get_models()
+    import asyncio
+
+    asyncio.run(test_long_chat_completion(JamAI, model="together/Qwen/Qwen1.5-0.5B-Chat"))

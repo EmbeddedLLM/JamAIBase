@@ -1,9 +1,6 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { env } from '$env/dynamic/public';
+import { PUBLIC_JAMAI_URL } from '$env/static/public';
 import logger from '$lib/logger.js';
-import type { ActionTable, ActionTableRow, ChatRequest } from '$lib/types.js';
-
-const { PUBLIC_JAMAI_URL } = env;
+import type { GenTable, GenTableRow, ChatRequest } from '$lib/types.js';
 
 export const load = async ({ depends, fetch, params, parent, url }) => {
 	depends('chat-table:slug');
@@ -45,12 +42,12 @@ export const load = async ({ depends, fetch, params, parent, url }) => {
 			}
 			return {
 				error: responseTableData.status,
-				message: JSON.stringify({ tableData, rows, thread })
+				message: { tableData, rows, thread }
 			};
 		} else {
 			return {
-				tableData: tableData as ActionTable,
-				rows: rows.items as ActionTableRow[],
+				tableData: tableData as GenTable,
+				rows: rows.items as GenTableRow[],
 				total_rows: rows.total,
 				thread: thread.thread as ChatRequest['messages']
 			};

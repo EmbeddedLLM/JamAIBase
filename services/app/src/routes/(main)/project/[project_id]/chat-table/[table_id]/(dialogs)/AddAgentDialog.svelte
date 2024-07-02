@@ -1,17 +1,19 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { invalidate } from '$app/navigation';
+	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import { modelsAvailable } from '$globalStore';
+	import { pastChatAgents } from '../../../tablesStore';
+	import { idPattern } from '$lib/constants';
 	import logger from '$lib/logger';
 	import type { ChatRequest } from '$lib/types';
 
 	import ModelSelect from '$lib/components/preset/ModelSelect.svelte';
+	import InputText from '$lib/components/InputText.svelte';
 	import Range from '$lib/components/Range.svelte';
+	import { toast } from 'svelte-sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
-	import { pastChatAgents } from '../../chatTablesStore';
-
-	const { PUBLIC_JAMAI_URL } = env;
 
 	export let isAddingAgent: boolean;
 
@@ -26,9 +28,13 @@
 	let aiOpener = '';
 
 	async function handleAddAgent() {
-		if (!agentName) {
-			return alert('Please fill in all fields');
-		}
+		if (!agentName) return toast.error('Agent ID is required');
+		if (!selectedModel) return toast.error('Model not selected');
+
+		if (!idPattern.test(agentName))
+			return toast.error(
+				'Agent ID must contain only alphanumeric characters and underscores/hyphens, and start and end with alphanumeric characters'
+			);
 
 		if (isLoading) return;
 		isLoading = true;
@@ -71,7 +77,9 @@
 		const responseBody = await response.json();
 		if (!response.ok) {
 			logger.error('CHATTBL_AGENT_ADD', responseBody);
-			alert('Failed to add agent: ' + (responseBody.message || JSON.stringify(responseBody)));
+			toast.error('Failed to add agent', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		} else {
 			if (userOpener || aiOpener) {
 				const openerResponse = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat/rows/add`, {
@@ -95,10 +103,9 @@
 				if (!openerResponse.ok) {
 					const openerResponseBody = await openerResponse.json();
 					logger.error('CHATTBL_AGENT_ADDOPENER', openerResponseBody);
-					alert(
-						'Failed to add conversation opener: ' +
-							(responseBody.message || JSON.stringify(responseBody))
-					);
+					toast.error('Failed to add conversation opener', {
+						description: responseBody.message || JSON.stringify(responseBody)
+					});
 				}
 			}
 
@@ -132,19 +139,15 @@
 		<div class="grow py-3 w-full overflow-auto">
 			<div class="flex flex-col gap-2 px-6 pl-8 py-2 w-full text-center">
 				<span class="font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-					Agent ID
+					Agent ID*
 				</span>
 
-				<input
-					type="text"
-					bind:value={agentName}
-					class="px-3 py-2 w-full text-sm bg-transparent data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#42464E] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-				/>
+				<InputText bind:value={agentName} placeholder="Required" />
 			</div>
 
 			<div class="flex flex-col gap-1 px-6 pl-8 py-2">
 				<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-					Models
+					Models*
 				</span>
 
 				<ModelSelect
@@ -152,13 +155,14 @@
 					sameWidth={true}
 					bind:selectedModel
 					buttonText={selectedModel || 'Select model'}
+					class={!selectedModel ? 'italic text-muted-foreground' : ''}
 				/>
 			</div>
 
 			<div class="grid grid-cols-3 gap-4 px-6 pl-8 py-2 w-full text-center">
 				<div class="flex flex-col gap-1">
 					<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-						Temperature
+						Temperature*
 					</span>
 
 					<input
@@ -176,7 +180,7 @@
 
 				<div class="flex flex-col gap-1">
 					<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-						Max tokens
+						Max tokens*
 					</span>
 
 					<input
@@ -197,7 +201,7 @@
 
 				<div class="flex flex-col gap-1">
 					<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-						Top-p
+						Top-p*
 					</span>
 
 					<input
@@ -258,12 +262,15 @@
 
 		<Dialog.Actions>
 			<div class="flex gap-2">
-				<Button variant="link" on:click={() => (isAddingAgent = false)} class="grow px-6">
-					Cancel
-				</Button>
+				<DialogPrimitive.Close asChild let:builder>
+					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
+						Cancel
+					</Button>
+				</DialogPrimitive.Close>
 				<Button
-					loading={isLoading}
 					on:click={handleAddAgent}
+					type="button"
+					loading={isLoading}
 					class="relative grow px-6 rounded-full"
 				>
 					Add

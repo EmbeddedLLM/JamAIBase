@@ -83,7 +83,6 @@ dependencies = [
     "toml>=0.10.2",
     "tqdm>=4.66.1",
     "typing_extensions>=4.10.0",
-    "uuid-utils~=0.6.1",
     "uuid7~=0.1.0",
 ]
 dynamic = ["version"]

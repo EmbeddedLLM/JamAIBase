@@ -1,7 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
 
-import redis
 from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -11,6 +10,7 @@ from jamaibase.protocol import (
     ModelListConfig,
     RerankingModelConfig,
 )
+from owl.cache import CACHE
 
 CURR_DIR = Path(__file__).resolve().parent
 
@@ -19,11 +19,9 @@ class Config(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
     owl_log_dir: str = "logs"
     owl_models_config: str = str(CURR_DIR / "models.json")
-    owl_redis_host: str = "dragonfly"
 
 
 CONFIG = Config()
-REDIS = redis.Redis(host=CONFIG.owl_redis_host, port=6379, db=0)
 MODEL_CONFIG_KEY = "<owl> models"
 PRICES_KEY = "<owl> prices"
 LLM_PRICES_KEY = "<owl> llm_prices"
@@ -38,11 +36,10 @@ def _load_model_config() -> ModelListConfig:
 
 
 def get_model_json() -> str:
-    # REDIS.delete(MODEL_CONFIG_KEY)
-    models = REDIS.get(MODEL_CONFIG_KEY)
+    models = CACHE.get(MODEL_CONFIG_KEY)
     if models is None:
         models = _load_model_config().model_dump_json()
-        REDIS.set(MODEL_CONFIG_KEY, models)
+        CACHE[MODEL_CONFIG_KEY] = models
         logger.warning(f"Model config set to: {models}")
         return models
     return models
@@ -51,7 +48,7 @@ def get_model_json() -> str:
 def get_model_info(
     model_type: str, model_id: str
 ) -> LLMModelConfig | EmbeddingModelConfig | RerankingModelConfig:
-    models = REDIS.get(MODEL_CONFIG_KEY)
+    models = CACHE.get(MODEL_CONFIG_KEY)
     if models is None:
         models = get_model_json()
     models = ModelListConfig.model_validate_json(models)

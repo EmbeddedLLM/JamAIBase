@@ -1,13 +1,10 @@
-import { env } from '$env/dynamic/public';
-import { env as privateEnv } from '$env/dynamic/private';
+import { PUBLIC_IS_LOCAL } from '$env/static/public';
+import { JAMAI_URL, JAMAI_SERVICE_KEY } from '$env/static/private';
 import { dev } from '$app/environment';
 import { json, type Handle } from '@sveltejs/kit';
 import nodeCache from '$lib/nodeCache';
 import logger from '$lib/logger';
 import type { OrganizationReadRes, Project } from '$lib/types';
-
-const { PUBLIC_IS_LOCAL } = env;
-const { JAMAI_URL, JAMAI_SERVICE_KEY } = privateEnv;
 
 const PROXY_PATHS: { path: string; target: string }[] = [
 	{
@@ -37,6 +34,7 @@ const handleApiProxy: Handle = async ({ event }) => {
 
 	if (PUBLIC_IS_LOCAL === 'false') {
 		if (event.locals.user) {
+			const activeOrganizationId = event.cookies.get('activeOrganizationId');
 			const projectId =
 				event.cookies.get('activeProjectId') || event.request.headers.get('x-project-id');
 
@@ -51,8 +49,19 @@ const handleApiProxy: Handle = async ({ event }) => {
 			const projectBody = (await projectRes.json()) as Project;
 
 			if (!projectRes.ok) {
+				if (projectRes.status === 404) {
+					return json(projectBody, { status: 404 });
+				}
 				logger.error('APP_PROXY_PROJECTGET', projectBody);
-				return json({ message: 'Error fetching project info' }, { status: 500 });
+				return json(projectBody, { status: projectRes.status });
+			}
+
+			//* Ensure project is in organization, if applicable
+			if (activeOrganizationId && activeOrganizationId !== projectBody.organization_id) {
+				return json(
+					{ message: 'Project not found.', org_id: projectBody.organization_id },
+					{ status: 404 }
+				);
 			}
 
 			const orgId = projectBody.organization_id;
@@ -64,8 +73,11 @@ const handleApiProxy: Handle = async ({ event }) => {
 			const orgInfoBody = (await orgInfoRes.json()) as OrganizationReadRes;
 
 			if (!orgInfoRes.ok) {
+				if (orgInfoRes.status === 404) {
+					return json(orgInfoBody, { status: 404 });
+				}
 				logger.error('APP_PROXY_ORGGET', orgInfoBody);
-				return json({ message: 'Error fetching organization info' }, { status: 500 });
+				return json(orgInfoBody, { status: orgInfoRes.status });
 			}
 
 			if (!orgInfoBody.users!.find((user) => user.user_id === event.locals.user!.sub)) {

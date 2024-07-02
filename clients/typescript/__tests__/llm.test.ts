@@ -1,5 +1,6 @@
 import JamAI from "@/index";
 import { ChatCompletionChunkSchema, ChatRequest } from "@/resources/llm/chat";
+import { EmbeddingResponseSchema } from "@/resources/llm/embedding";
 import { ModelInfoResponseSchema, ModelNamesResponseSchema } from "@/resources/llm/model";
 import dotenv from "dotenv";
 
@@ -120,15 +121,25 @@ describe("APIClient LLM", () => {
 
         expect(response).toBeInstanceOf(ReadableStream);
         const reader = response.getReader();
-        let count : number = 0;
+        let count: number = 0;
         while (true) {
             const { done, value } = await reader.read();
+
             if (done) {
                 break;
             }
-            // console.log(StreamChatCompletionChunkSchema.parse(value));
             count += 1;
         }
         expect(count).toBeGreaterThan(2);
+    });
+
+    it("generate embedding", async () => {
+        const response = await client.generateEmbeddings({
+            type: "document",
+            model: "ellm/BAAI/bge-m3",
+            input: "This is embedding test"
+        });
+
+        expect(EmbeddingResponseSchema.parse(response)).toEqual(response);
     });
 });

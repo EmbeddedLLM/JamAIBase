@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { onMount } from 'svelte';
 	import { beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/stores';
@@ -7,29 +7,28 @@
 	import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
 	import autoAnimate from '@formkit/auto-animate';
 	import { showRightDock } from '$globalStore';
-	import { pastActionTables } from '../actionTablesStore';
+	import { pastChatConversations } from '../../tablesStore';
 	import { timestampsDisplayName } from '$lib/constants';
 	import logger from '$lib/logger';
-	import type { ActionTable, Timestamp } from '$lib/types';
+	import type { GenTable, Timestamp } from '$lib/types';
 
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
+	import { toast } from 'svelte-sonner';
 	import CloseIcon from '$lib/icons/CloseIcon.svelte';
 	import SearchIcon from '$lib/icons/SearchIcon.svelte';
-	import ActionTableIcon from '$lib/icons/ActionTableIcon.svelte';
+	import ChatTableIcon from '$lib/icons/ChatTableIcon.svelte';
 	import DeleteIcon from '$lib/icons/DeleteIcon.svelte';
 	import EditIcon from '$lib/icons/EditIcon.svelte';
 	import CheckIcon from '$lib/icons/CheckIcon.svelte';
 
-	const { PUBLIC_JAMAI_URL } = env;
-
 	export let isDeletingTable: string | null;
 
-	let searchResults: ActionTable[] = [];
+	let searchResults: GenTable[] = [];
 	let searchQuery: string;
 	let isNoResults = false;
 
-	let isLoadingMoreATables = false;
-	let moreATablesFinished = false; //FIXME: Bandaid fix for infinite loop caused by loading circle
+	let isLoadingMoreCTables = false;
+	let moreCTablesFinished = false; //FIXME: Bandaid fix for infinite loop caused by loading circle
 	let currentOffset = 0;
 	const limit = 50;
 
@@ -37,23 +36,24 @@
 	let saveEditBtn: HTMLButtonElement;
 
 	onMount(() => {
-		getActionTables();
+		getChatTables();
 
 		return () => {
-			$pastActionTables = [];
+			$pastChatConversations = [];
 		};
 	});
 
 	beforeNavigate(() => (isEditingTableID = null));
 
-	async function getActionTables() {
-		isLoadingMoreATables = true;
+	async function getChatTables() {
+		isLoadingMoreCTables = true;
 
 		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/action?` +
+			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat?` +
 				new URLSearchParams({
 					offset: currentOffset.toString(),
-					limit: limit.toString()
+					limit: limit.toString(),
+					parent_id: '_chat_'
 				}),
 			{
 				method: 'GET',
@@ -63,22 +63,25 @@
 		currentOffset += limit;
 
 		if (response.status == 200) {
-			const moreActionTables = await response.json();
-			if (moreActionTables.items.length) {
-				$pastActionTables = [...$pastActionTables, ...moreActionTables.items];
+			const moreChatTables = await response.json();
+			if (moreChatTables.items.length) {
+				$pastChatConversations = [...$pastChatConversations, ...moreChatTables.items];
 			} else {
 				//* Finished loading oldest conversation
-				moreATablesFinished = true;
+				moreCTablesFinished = true;
 			}
 		} else {
 			const responseBody = await response.json();
-			logger.error('ACTIONTBL_LIST_TBL', responseBody);
-			alert(
-				'Failed to fetch action tables: ' + (responseBody.message || JSON.stringify(responseBody))
-			);
+			if (response.status !== 404) {
+				logger.error('CHATTBL_LIST_TBL', responseBody);
+			}
+			console.error(responseBody);
+			toast.error('Failed to fetch chat tables', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		}
 
-		isLoadingMoreATables = false;
+		isLoadingMoreCTables = false;
 	}
 
 	let timestamps: Timestamp = {
@@ -93,7 +96,7 @@
 	let timestampKeys = Object.keys(timestamps) as Array<keyof Timestamp>;
 	$: {
 		timestampKeys.forEach((key) => (timestamps[key] = null));
-		$pastActionTables.forEach((table, index) => {
+		$pastChatConversations.forEach((table, index) => {
 			const timeDiff = Date.now() - new Date(table.updated_at).getTime();
 			if (timeDiff < 24 * 60 * 60 * 1000) {
 				if (timestamps.today == null) {
@@ -140,7 +143,7 @@
 		const editedTableID = (e.currentTarget.childNodes[0] as HTMLTextAreaElement).value.trim();
 
 		const response = await fetch(
-			`/api/v1/gen_tables/action/rename/${isEditingTableID}/${editedTableID}`,
+			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat/rename/${isEditingTableID}/${editedTableID}`,
 			{
 				method: 'POST'
 			}
@@ -164,26 +167,26 @@
 			// 	}
 			// }
 
-			$pastActionTables = [
+			$pastChatConversations = [
 				{
-					...$pastActionTables.find((table) => table.id == isEditingTableID)!,
+					...$pastChatConversations.find((table) => table.id == isEditingTableID)!,
 					id: editedTableID,
 					updated_at: new Date().toISOString()
 				},
-				...$pastActionTables.filter((table) => table.id != isEditingTableID)
+				...$pastChatConversations.filter((table) => table.id != isEditingTableID)
 			];
 
 			if ($page.params.table_id == isEditingTableID) {
-				goto(`/project/${$page.params.project_id}/action-table/${editedTableID}`);
+				goto(`/project/${$page.params.project_id}/chat-table/${editedTableID}`);
 			}
 
 			isEditingTableID = null;
 		} else {
 			const responseBody = await response.json();
-			logger.error('ACTIONTBL_RENAME_TBL', responseBody);
-			alert(
-				'Error while renaming table: ' + (responseBody.message || JSON.stringify(responseBody))
-			);
+			logger.error('CHATTBL_RENAME_TBL', responseBody);
+			toast.error('Failed to rename table', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		}
 	}
 
@@ -215,11 +218,10 @@
 			}
 		} else {
 			const responseBody = await response.json();
-			logger.error('ACTIONTBL_SEARCH_TABLE', responseBody);
-			alert(
-				'Error while retrieving search results: ' +
-					(responseBody.message || JSON.stringify(responseBody))
-			);
+			logger.error('CHATTBL_SEARCH_TABLE', responseBody);
+			toast.error('Error while retrieving search results', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		}
 	}
 
@@ -229,18 +231,20 @@
 		const offset = target.scrollHeight - target.clientHeight - target.scrollTop;
 		const LOAD_THRESHOLD = 20; //? Minimum offset scroll height to load more conversations
 
-		if (offset < LOAD_THRESHOLD && !isLoadingMoreATables && !moreATablesFinished) {
-			await getActionTables();
+		if (offset < LOAD_THRESHOLD && !isLoadingMoreCTables && !moreCTablesFinished) {
+			await getChatTables();
 		}
 	};
 </script>
 
 <span class="flex items-center gap-2 mx-6 text-sm text-[#999999]">Table history</span>
 
-<div inert={!$showRightDock || null} class="relative mx-6">
+<hr class="border-[#DDD] data-dark:border-[#2A2A2A]" />
+
+<!-- <div inert={!$showRightDock || null} class="relative mx-6">
 	<SearchIcon class="absolute top-1/2 left-3 -translate-y-1/2 h-6 w-6" />
 	<input
-		name="search-action-tables"
+		name="search-chat-tables"
 		placeholder="Search"
 		bind:value={searchQuery}
 		on:input={debounce(handleSearch, 400)}
@@ -257,7 +261,7 @@
 			<CloseIcon class="h-5" />
 		</button>
 	{/if}
-</div>
+</div> -->
 
 {#if searchResults.length || isNoResults}
 	{#if isNoResults}
@@ -277,13 +281,13 @@
 <OverlayScrollbarsComponent
 	inert={!$showRightDock || null}
 	defer
-	data-pw="action-tables"
+	data-pw="chat-tables"
 	events={{ scroll: (instance, e) => debounce(scrollHandler, 300)(e) }}
 	on:osInitialized={(e) => autoAnimate(e.detail[0].elements().viewport)}
 	class="grow flex flex-col ml-6 mb-6 pr-6 rounded-md overflow-auto os-dark"
 >
-	{#each !searchResults.length && !isNoResults ? $pastActionTables : searchResults as actionTable, index (actionTable.id)}
-		{#if actionTable && actionTable.id}
+	{#each !searchResults.length && !isNoResults ? $pastChatConversations : searchResults as chatTable, index (chatTable.id)}
+		{#if chatTable && chatTable.id}
 			{#if !searchResults.length && !isNoResults}
 				{#each timestampKeys as time (time)}
 					{#if timestamps[time] == index}
@@ -295,7 +299,7 @@
 					{/if}
 				{/each}
 			{/if}
-			{#if isEditingTableID == actionTable.id}
+			{#if isEditingTableID == chatTable.id}
 				<div
 					class="relative flex my-2 px-3 py-2 bg-[#F5F5F5] data-dark:bg-[#444951] text-left transition-colors duration-75 rounded-lg group/item"
 				>
@@ -305,7 +309,7 @@
 							autofocus
 							rows="3"
 							name="edited-table"
-							value={$pastActionTables.find((table) => table.id == isEditingTableID)?.id}
+							value={$pastChatConversations.find((table) => table.id == isEditingTableID)?.id}
 							on:keydown={interceptSubmit}
 							on:blur={(e) => {
 								if (e.relatedTarget != saveEditBtn) isEditingTableID = null;
@@ -336,43 +340,43 @@
 				</div>
 			{:else}
 				<a
-					data-pw="action-table"
-					title={actionTable.id}
-					href={`/project/${$page.params.project_id}/action-table/${actionTable.id}`}
+					data-pw="chat-table"
+					title={chatTable.id}
+					href={`/project/${$page.params.project_id}/chat-table/${chatTable.id}`}
 					class={`relative flex items-center p-2 text-left ${
-						$page.params.table_id == actionTable.id &&
+						$page.params.table_id == chatTable.id &&
 						'data-dark:text-foreground-content bg-[#F5F5F5] data-dark:bg-[#444951]'
 					} hover:bg-[#F5F5F5] data-dark:hover:bg-[#444951] transition-colors duration-75 rounded-lg group/item`}
 				>
-					<ActionTableIcon class="h-7 mr-2" />
+					<ChatTableIcon class="h-7 mr-2" />
 
 					<div class="relative flex grow w-full overflow-hidden">
 						<span class="line-clamp-1 text-sm">
-							{actionTable.id}
+							{chatTable.id}
 						</span>
 						<div
 							class={`absolute right-0 h-full w-16 bg-gradient-to-l from-[#F5F5F5] data-dark:from-[#444951] from-75% ${
-								$page.params.table_id == actionTable.id ? 'opacity-100' : 'opacity-0'
+								$page.params.table_id == chatTable.id ? 'opacity-100' : 'opacity-0'
 							} group-hover/item:opacity-100 transition-opacity duration-75`}
 						/>
 					</div>
 
 					<button
 						title="Edit table name"
-						on:click|preventDefault={() => editTableID(actionTable.id)}
+						on:click|preventDefault={() => editTableID(chatTable.id)}
 						class={`group/button absolute top-1/2 right-6 p-2 -translate-y-1/2 min-w-[2rem] ${
-							$page.params.table_id == actionTable.id ? 'block' : 'hidden'
+							$page.params.table_id == chatTable.id ? 'block' : 'hidden'
 						} group-hover/item:block`}
 					>
 						<EditIcon
-							class="h-6 group-hover/button:[&>*]:fill-text/50 [&>*]:transition-[fill] [&>*]:duration-75"
+							class="h-4 group-hover/button:[&>*]:text-text/50 [&>*]:transition-[color] [&>*]:duration-75"
 						/>
 					</button>
 					<button
 						title="Delete table"
-						on:click|preventDefault={() => (isDeletingTable = actionTable.id)}
+						on:click|preventDefault={() => (isDeletingTable = chatTable.id)}
 						class={`group/button absolute top-1/2 right-0 p-2 -translate-y-1/2 min-w-[2rem] ${
-							$page.params.table_id == actionTable.id ? 'block' : 'hidden'
+							$page.params.table_id == chatTable.id ? 'block' : 'hidden'
 						} group-hover/item:block`}
 					>
 						<DeleteIcon
@@ -383,7 +387,7 @@
 			{/if}
 		{/if}
 	{/each}
-	{#if isLoadingMoreATables}
+	{#if isLoadingMoreCTables}
 		<div class="flex items-center justify-center mx-auto p-4">
 			<LoadingSpinner class="h-5 w-5 text-[#4169e1] data-dark:text-[#5b7ee5]" />
 		</div>

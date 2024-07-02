@@ -9,11 +9,11 @@ services:
         "(. /app/.venv/bin/activate && infinity_emb --port 6909 --model-name-or-path $${EMBEDDING_MODEL} --model-warmup --device cpu &);(. /app/.venv/bin/activate && infinity_emb --port 6919 --model-name-or-path $${RERANKER_MODEL} --model-warmup --device cpu )",
       ]
     healthcheck:
-      test: ["CMD-SHELL", "curl --silent --fail http://localhost:6909/health && curl --silent --fail http://localhost:6919/health || exit 1"]
-      interval: 30s
+      test: ["CMD-SHELL", "curl --fail http://localhost:6909/health && curl --fail http://localhost:6919/health || exit 1"]
+      interval: 10s
       timeout: 2s
-      retries: 5
-      start_period: 1m
+      retries: 20
+      start_period: 10s
     restart: unless-stopped
     env_file:
       - ../.env
@@ -27,11 +27,11 @@ services:
     container_name: jamai_unstructuredio
     entrypoint: ["/usr/bin/env", "bash", "-c", "uvicorn prepline_general.api.app:app --log-config logger_config.yaml --port 6989 --host 0.0.0.0"]
     healthcheck:
-      test: ["CMD-SHELL", "curl --silent --fail http://localhost:6989/healthcheck || exit 1"]
-      interval: 30s
+      test: ["CMD-SHELL", "wget http://localhost:6989/healthcheck -O /dev/null || exit 1"]
+      interval: 10s
       timeout: 2s
-      retries: 5
-      start_period: 1m
+      retries: 20
+      start_period: 10s
     restart: unless-stopped
     networks:
       - jamai
@@ -44,11 +44,11 @@ services:
     command: ["python", "-m", "docio.entrypoints.api"]
     container_name: jamai_docio
     healthcheck:
-      test: ["CMD-SHELL", "curl --silent --fail http://localhost:6979/health || exit 1"]
-      interval: 30s
+      test: ["CMD-SHELL", "curl --fail http://localhost:6979/health || exit 1"]
+      interval: 10s
       timeout: 2s
-      retries: 5
-      start_period: 1m
+      retries: 20
+      start_period: 10s
     restart: unless-stopped
     env_file:
       - ../.env
@@ -56,15 +56,15 @@ services:
       - jamai
 
   dragonfly:
-    image: "docker.dragonflydb.io/dragonflydb/dragonfly"
+    image: "ghcr.io/embeddedllm/dragonfly"
     ulimits:
       memlock: -1
-    # healthcheck:
-    #   test: ["CMD-SHELL", "curl --silent --fail http://localhost:6379 || exit 1"]
-    #   interval: 30s
-    #   timeout: 2s
-    #   retries: 5
-    #   start_period: 1m
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 6379 || exit 1"]
+      interval: 10s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
     # For better performance, consider `host` mode instead `port` to avoid docker NAT.
     # `host` mode is NOT currently supported in Swarm Mode.
     # https://docs.docker.com/compose/compose-file/compose-file-v3/#network_mode
@@ -89,12 +89,13 @@ services:
       docio:
         condition: service_healthy
       dragonfly:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl --silent --fail localhost:6969/api/health || exit 1"]
-      interval: 30s
+      test: ["CMD-SHELL", "curl --fail localhost:6969/api/health || exit 1"]
+      interval: 10s
       timeout: 2s
-      retries: 5
+      retries: 20
+      start_period: 10s
     restart: unless-stopped
     env_file:
       - ../.env
@@ -110,22 +111,26 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
+      args:
+        CHECK_ORIGIN: "false"
+        JAMAI_URL: "http://owl:6969"
+        JAMAI_SERVICE_KEY: ""
     image: jamai/frontend
     container_name: jamai_frontend
     command: ["node", "server"]
     depends_on:
       owl:
         condition: service_healthy
-    # healthcheck:
-    #   test: ["CMD-SHELL", "curl --silent --fail --output /dev/null localhost:4000/project/default/action-table || exit 1"]
-    #   interval: 30s
-    #   timeout: 2s
-    #   retries: 5
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail localhost:4000 || exit 1"]
+      interval: 10s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
     restart: unless-stopped
     environment:
       - NODE_ENV=production
       - BODY_SIZE_LIMIT=Infinity
-      - FRONTEND_PORT=4000
     env_file:
       - ../.env
     ports:

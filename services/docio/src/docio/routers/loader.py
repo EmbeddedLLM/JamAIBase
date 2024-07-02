@@ -1,6 +1,6 @@
 import sys
-from os.path import splitext
-from tempfile import NamedTemporaryFile
+from os.path import join, splitext
+from tempfile import TemporaryDirectory
 
 from fastapi import APIRouter, File, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -12,10 +12,6 @@ from s3fs import S3FileSystem
 
 from docio.langchain.pdfplumber import PDFPlumberLoader
 from jamaibase.protocol import Document
-
-# from unstructured_client import UnstructuredClient
-# from unstructured_client.models import shared
-# from unstructured_client.models.errors import SDKError
 
 
 class Config(BaseSettings):
@@ -115,13 +111,13 @@ async def load_file_api(
     )
     try:
         ext = splitext(file.filename)[1]
-
-        with NamedTemporaryFile(suffix=ext) as tmp:
-            tmp.write(await file.read())
-            tmp.flush()
-            logger.trace("Loading from temporary file: {name}", name=tmp.name)
-
-            documents = load_file(tmp.name)
+        with TemporaryDirectory() as tmp_dir_path:
+            tmp_path = join(tmp_dir_path, f"tmpfile{ext}")
+            with open(tmp_path, "wb") as tmp:
+                tmp.write(await file.read())
+                tmp.flush()
+            logger.trace("Loading from temporary file: {name}", name=tmp_path)
+            documents = load_file(tmp_path)
         for d in documents:
             d.metadata["source"] = file.filename
             d.metadata["document_id"] = file.filename

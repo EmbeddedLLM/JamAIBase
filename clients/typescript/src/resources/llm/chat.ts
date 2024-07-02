@@ -37,10 +37,10 @@ const FunctionChoiceSpecSchema = z.object({
     name: z.string()
 });
 
-const ChatCompletionUsageSchema = z.object({
-    prompt_tokens: z.number().nullable().optional(),
-    completions_tokens: z.number().nullable().optional(),
-    total_tokens: z.number().nullable().optional()
+export const ChatCompletionUsageSchema = z.object({
+    prompt_tokens: z.number().nullable().optional().default(0),
+    completion_tokens: z.number().nullable().optional().default(0),
+    total_tokens: z.number().nullable().optional().default(0)
 });
 
 /**

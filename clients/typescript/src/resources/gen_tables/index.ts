@@ -6,6 +6,9 @@ import {
     GenTableRowsChatCompletionChunks,
     GenTableRowsChatCompletionChunksSchema,
     GenTableStreamChatCompletionChunk,
+    GenTableStreamChatCompletionChunkSchema,
+    GenTableStreamReferences,
+    GenTableStreamReferencesSchema,
     GetConversationThreadRequest,
     GetConversationThreadResponse,
     GetConversationThreadResponseSchema
@@ -43,6 +46,7 @@ import {
     UpdateGenConfigRequest,
     UpdateRowRequest
 } from "@/resources/gen_tables/tables";
+import { ChunkError } from "@/resources/shared/error";
 
 export class GenTable extends Base {
     public async listTables({ table_type, limit = 100, offset = 0, parent_id }: ListTableRequest): Promise<PageListTableMetaResponse> {
@@ -403,7 +407,7 @@ export class GenTable extends Base {
         });
     }
 
-    public async addRowStream(params: AddRowRequest) {
+    public async addRowStream(params: AddRowRequest): Promise<ReadableStream<GenTableStreamChatCompletionChunk | GenTableStreamReferences>> {
         const apiURL = `/api/v1/gen_tables/${params.table_type}/rows/add`;
 
         const response = await this.httpClient.post(
@@ -424,8 +428,8 @@ export class GenTable extends Base {
             throw new Error(`Received Error Status: ${response.status}`);
         }
 
-        const stream = new ReadableStream<GenTableStreamChatCompletionChunk>({
-            async start(controller: ReadableStreamDefaultController<GenTableStreamChatCompletionChunk>) {
+        const stream = new ReadableStream<GenTableStreamChatCompletionChunk | GenTableStreamReferences>({
+            async start(controller: ReadableStreamDefaultController<GenTableStreamChatCompletionChunk | GenTableStreamReferences>) {
                 response.data.on("data", (data: any) => {
                     data = data.toString();
                     if (data.endsWith("\n\n")) {
@@ -433,7 +437,6 @@ export class GenTable extends Base {
                             .split("\n\n")
                             .filter((i: string) => i.trim())
                             .flatMap((line: string) => line.split("\n")); //? Split by \n to handle collation
-
                         for (const line of lines) {
                             const chunk = line
                                 .toString()
@@ -444,10 +447,19 @@ export class GenTable extends Base {
 
                             try {
                                 const parsedValue = JSON.parse(chunk);
-                                controller.enqueue(parsedValue);
-                            } catch (err) {
-                                console.error("Error parsing:", chunk);
-                                continue;
+                                if (parsedValue["object"] === "gen_table.completion.chunk") {
+                                    controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
+                                } else if (parsedValue["object"] === "gen_table.references") {
+                                    controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
+                                } else {
+                                    throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
+                                }
+                            } catch (err: any) {
+                                if (err instanceof ChunkError) {
+                                    controller.error(new ChunkError(err.message));
+                                } else {
+                                    continue;
+                                }
                             }
                         }
                     } else {
@@ -460,19 +472,29 @@ export class GenTable extends Base {
 
                         try {
                             const parsedValue = JSON.parse(chunk);
-                            controller.enqueue(parsedValue);
-                        } catch (err) {
-                            console.error("Error parsing:", chunk);
+                            if (parsedValue["object"] === "gen_table.completion.chunk") {
+                                controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
+                            } else if (parsedValue["object"] === "gen_table.references") {
+                                controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
+                            } else {
+                                throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
+                            }
+                        } catch (err: any) {
+                            if (err instanceof ChunkError) {
+                                controller.error(new ChunkError(err.message));
+                            }
                         }
                     }
                 });
 
                 response.data.on("error", (data: any) => {
-                    console.error("error: ", data);
+                    controller.error("Unexpected Error.");
                 });
 
                 response.data.on("end", () => {
-                    controller.close();
+                    if (controller.desiredSize !== null) {
+                        controller.close();
+                    }
                 });
             }
         });
@@ -525,8 +547,8 @@ export class GenTable extends Base {
             throw new Error(`Received Error Status: ${response.status}`);
         }
 
-        const stream = new ReadableStream<GenTableStreamChatCompletionChunk>({
-            async start(controller: ReadableStreamDefaultController<GenTableStreamChatCompletionChunk>) {
+        const stream = new ReadableStream<GenTableStreamChatCompletionChunk | GenTableStreamReferences>({
+            async start(controller: ReadableStreamDefaultController<GenTableStreamChatCompletionChunk | GenTableStreamReferences>) {
                 response.data.on("data", (data: any) => {
                     data = data.toString();
                     if (data.endsWith("\n\n")) {
@@ -545,9 +567,17 @@ export class GenTable extends Base {
 
                             try {
                                 const parsedValue = JSON.parse(chunk);
-                                controller.enqueue(parsedValue);
+                                if (parsedValue["object"] === "gen_table.completion.chunk") {
+                                    controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
+                                } else if (parsedValue["object"] === "gen_table.references") {
+                                    controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
+                                } else {
+                                    throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
+                                }
                             } catch (err) {
-                                console.error("Error parsing:", chunk);
+                                if (err instanceof ChunkError) {
+                                    controller.error(new ChunkError(err.message));
+                                }
                                 continue;
                             }
                         }
@@ -561,19 +591,29 @@ export class GenTable extends Base {
 
                         try {
                             const parsedValue = JSON.parse(chunk);
-                            controller.enqueue(parsedValue);
-                        } catch (err) {
-                            console.error("Error parsing:", chunk);
+                            if (parsedValue["object"] === "gen_table.completion.chunk") {
+                                controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
+                            } else if (parsedValue["object"] === "gen_table.references") {
+                                controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
+                            } else {
+                                throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
+                            }
+                        } catch (err: any) {
+                            if (err instanceof ChunkError) {
+                                controller.error(new ChunkError(err.message));
+                            }
                         }
                     }
                 });
 
                 response.data.on("error", (data: any) => {
-                    console.error("error: ", data);
+                    controller.error("Unexpected error.");
                 });
 
                 response.data.on("end", () => {
-                    controller.close();
+                    if (controller.desiredSize !== null) {
+                        controller.close();
+                    }
                 });
             }
         });

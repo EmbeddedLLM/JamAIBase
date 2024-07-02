@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_IS_LOCAL } from '$env/static/public';
 	import { page } from '$app/stores';
-	import { invalidate } from '$app/navigation';
+	import { goto, invalidate } from '$app/navigation';
 	import ChevronsUpDown from 'lucide-svelte/icons/chevrons-up-down';
 	import { activeOrganization } from '$globalStore';
 	import type { OrganizationReadRes } from '$lib/types';
@@ -11,10 +11,10 @@
 	import PeopleIcon from '$lib/icons/PeopleIcon.svelte';
 	import AssignmentIcon from '$lib/icons/AssignmentIcon.svelte';
 	import ActionTableIcon from '$lib/icons/ActionTableIcon.svelte';
+	import RowIcon from '$lib/icons/RowIcon.svelte';
 	import ChatTableIcon from '$lib/icons/ChatTableIcon.svelte';
 	import AddIcon from '$lib/icons/AddIcon.svelte';
-
-	const { PUBLIC_IS_LOCAL } = env;
+	import Check from 'lucide-svelte/icons/check';
 
 	let isSelectOrgOpen = false;
 
@@ -54,15 +54,29 @@
 						{#each $page.data.userData?.organizations ?? [] as org}
 							<DropdownMenu.Item
 								on:click={() => {
-									$activeOrganization = org;
-									invalidate('layout:root');
+									if (org?.organization_id !== $activeOrganization?.organization_id) {
+										$activeOrganization = org;
+										if ($page.route.id?.includes('/project/[project_id]')) {
+											goto('/project');
+										} else {
+											invalidate('layout:root');
+										}
+									}
 								}}
-								class="flex justify-between gap-10 cursor-pointer {$activeOrganization?.organization_id ===
+								class="flex items-center gap-1 text-xs cursor-pointer {$activeOrganization?.organization_id ===
 								org.organization_id
 									? 'bg-[#F7F7F7]'
-									: ''}"
+									: ''} rounded-sm"
 							>
+								<PeopleIcon class="h-3.5 mb-0.5" />
 								{org.organization_name}
+
+								<Check
+									class="h-3.5 ml-auto"
+									style="display: {$activeOrganization?.organization_id === org.organization_id
+										? 'block'
+										: 'none'}"
+								/>
 							</DropdownMenu.Item>
 						{/each}
 					</DropdownMenu.Group>
@@ -71,7 +85,7 @@
 						<DropdownMenu.Item asChild>
 							<a
 								href="/new-organization"
-								class="flex items-center justify-start gap-1.5 pl-2 pr-16 py-1.5 text-sm hover:bg-accent rounded-md"
+								class="flex items-center justify-start gap-1.5 pl-2 pr-16 py-1.5 text-xs hover:bg-accent rounded-sm"
 							>
 								<AddIcon class="mb-0.5 h-2.5" />
 								New Organization
@@ -111,27 +125,29 @@
 			>
 				<AssignmentIcon class="h-3.5" />
 				<span>
-					{PUBLIC_IS_LOCAL === 'false' ? activeProject?.name ?? 'Unknown' : 'Default Project'}
+					{PUBLIC_IS_LOCAL === 'false'
+						? activeProject?.name ?? $page.params.project_id
+						: 'Default Project'}
 				</span>
 			</a>
 		{/if}
 		{#if $page.route.id?.endsWith('/project/[project_id]/action-table/[table_id]')}
 			<span class="text-[#999]">/</span>
-			<div class="flex items-center gap-1 px-1.5 py-1">
+			<div class="flex items-center gap-1 px-1.5 pl-0.5 pr-1">
 				<ActionTableIcon class="h-3.5" />
-				<span>Action Table</span>
+				<span>{$page.params.table_id}</span>
 			</div>
 		{:else if $page.route.id?.endsWith('/project/[project_id]/knowledge-table/[table_id]')}
 			<span class="text-[#999]">/</span>
-			<div class="flex items-center gap-1 px-1.5 py-1">
-				<AssignmentIcon class="h-3.5" />
-				<span>Knowledge Table</span>
+			<div class="flex items-center gap-1 px-1.5 pl-0.5 pr-1">
+				<RowIcon class="mb-0.5 h-3.5" />
+				<span>{$page.params.table_id}</span>
 			</div>
 		{:else if $page.route.id?.endsWith('/project/[project_id]/chat-table/[table_id]')}
 			<span class="text-[#999]">/</span>
-			<div class="flex items-center gap-1 px-1.5 py-1">
+			<div class="flex items-center gap-1 px-1.5 pl-0.5 pr-1">
 				<ChatTableIcon class="h-3.5" />
-				<span>Chat Table</span>
+				<span>{$page.params.table_id}</span>
 			</div>
 		{/if}
 	</div>

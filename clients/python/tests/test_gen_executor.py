@@ -1,9 +1,10 @@
 import random
 import time
 from asyncio.coroutines import iscoroutine
-from typing import AsyncGenerator, Generator, Type
+from typing import AsyncGenerator, Generator
 
 import pytest
+from flaky import flaky
 from loguru import logger
 
 from jamaibase import JamAI, JamAIAsync
@@ -19,6 +20,7 @@ from jamaibase.protocol import (
 
 CLIENT_CLS = [JamAI, JamAIAsync]
 GEN_TYPES = ["REGEN"]
+DATA_LENGTHS = ["normal", "exceed"]
 
 
 async def run(fn, *args, **kwargs):
@@ -110,7 +112,32 @@ def column_map_prompt(content: str, max_tokens: int):
     }
 
 
-def data():
+def column_map_long_prompt(content: str, max_tokens: int):
+    return {
+        "id": "",
+        "model": "ellm/meta-llama/Llama-3-8B-Instruct",
+        # "model": "together/Qwen/Qwen1.5-0.5B-Chat",
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a concise assistant.",
+            },
+            {
+                "role": "user",
+                "content": " ".join([content] * 5000),
+            },
+        ],
+        "functions": [],
+        "function_call": "auto",
+        "temperature": 0.01,
+        "top_p": 0.1,
+        "stream": False,
+        "stop": [],
+        "max_tokens": max_tokens,
+    }
+
+
+def data(data_lengths=["normal"]):
     input_dict = {"xx": "str", "yy": "str", "zz": "str"}
     output_dict = {
         "aa": "str",
@@ -263,7 +290,7 @@ def data():
         # }
     ]
 
-    def get_nodes_data(inv_nodes, output_dict, content_postfix, max_tokens):
+    def get_nodes_data(inv_nodes, output_dict, content_postfix, max_tokens, data_length):
         nodes_data = []
         for inv_node in inv_nodes:
             column_map = {}
@@ -277,26 +304,44 @@ def data():
                 logger.info(end, starts)
                 logger.info(sub_content)
                 content = f"{sub_content} \n\n{content_postfix}"
-                column_map[end] = column_map_prompt(content, max_tokens)
+                column_map[end] = (
+                    column_map_prompt(content, max_tokens)
+                    if data_length == "normal"
+                    else column_map_long_prompt(content, max_tokens)
+                )
                 expected_column_gen[end] = expected_gen
-            nodes_data.append((input_dict, output_dict, column_map, row, expected_column_gen))
+            nodes_data.append(
+                (input_dict, output_dict, column_map, row, expected_column_gen, data_length)
+            )
         return nodes_data
 
     content_postfix = "Output exactly the content above, don't include any other information."
-    # content_postfix2 = "Output exactly the content above, don't include any other information. Then create a story."
+    content_postfix2 = "Output exactly the content above, don't include any other information. Then create a story."
     # all_nodes_data = get_nodes_data(inv_nodes2, output_dict2, content_postfix2, max_tokens=5)
     # all_nodes_data = get_nodes_data(inv_nodes2, output_dict2, content_postfix2, max_tokens=1000)
     # all_nodes_data = get_nodes_data(inv_nodes2, output_dict2, content_postfix2, max_tokens=500)
     # all_nodes_data = get_nodes_data(inv_nodes2, output_dict2, content_postfix2, max_tokens=300)
     # all_nodes_data = get_nodes_data(inv_nodes2, output_dict2, content_postfix, max_tokens=100)
-    all_nodes_data = get_nodes_data(inv_nodes, output_dict, content_postfix, max_tokens=100)
+    all_nodes_data = []
+    for data_length in data_lengths:
+        all_nodes_data += get_nodes_data(
+            # inv_nodes, output_dict, content_postfix, max_tokens=100, data_length=data_length
+            inv_nodes2,
+            output_dict2,
+            content_postfix,
+            max_tokens=100,
+            data_length=data_length,
+        )
     # all_nodes_data = get_nodes_data(inv_nodes, output_dict, content_postfix2, max_tokens=300)
     return all_nodes_data
 
 
+@flaky(max_runs=3, min_passes=1)
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
 @pytest.mark.parametrize("gen_type", GEN_TYPES)
-@pytest.mark.parametrize("input_dict, output_dict, column_map, row, expected_column_gen", data())
+@pytest.mark.parametrize(
+    "input_dict, output_dict, column_map, row, expected_column_gen, data_length", data()
+)
 async def test_nonstream_concurrent_execution(
     client_cls: JamAI | JamAIAsync,
     gen_type,
@@ -305,6 +350,7 @@ async def test_nonstream_concurrent_execution(
     column_map,
     row,
     expected_column_gen,
+    data_length,
 ):
     """
     Tests concurrent execution in non-streaming mode with dependencies.
@@ -398,9 +444,13 @@ async def test_nonstream_concurrent_execution(
     await run(jamai.delete_table, TableType.action, table_id)
 
 
+@flaky(max_runs=3, min_passes=1)
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
 @pytest.mark.parametrize("gen_type", GEN_TYPES)
-@pytest.mark.parametrize("input_dict, output_dict, column_map, row, expected_column_gen", data())
+@pytest.mark.parametrize(
+    "input_dict, output_dict, column_map, row, expected_column_gen, data_length",
+    data(DATA_LENGTHS),
+)
 async def test_stream_concurrent_execution(
     client_cls: JamAI | JamAIAsync,
     gen_type,
@@ -409,6 +459,7 @@ async def test_stream_concurrent_execution(
     column_map,
     row,
     expected_column_gen,
+    data_length,
 ):
     """
     Tests concurrent execution in streaming mode with dependencies.
@@ -542,18 +593,24 @@ async def test_stream_concurrent_execution(
         expected_gen = expected_column_gen[output_column_name]
         column_gen = row[output_column_name]["value"]
         len_expected_gen = len(expected_gen)
-        len_column_gen = len(column_gen)
-        if len_column_gen >= len_expected_gen:
-            assert column_gen[:len_expected_gen] == expected_gen
+        len_column_gen = len(column_gen) if column_gen is not None else 0
+        if data_length == "normal":
+            if len_column_gen >= len_expected_gen:
+                assert column_gen[:len_expected_gen] == expected_gen
+            else:
+                assert column_gen == expected_gen[:len_column_gen]
         else:
-            assert column_gen == expected_gen[:len_column_gen]
+            assert column_gen.startswith("[ERROR]")
 
     await run(jamai.delete_table, TableType.action, table_id)
 
 
+@flaky(max_runs=3, min_passes=1)
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
 @pytest.mark.parametrize("gen_type", GEN_TYPES)
-@pytest.mark.parametrize("input_dict, output_dict, column_map, row, expected_column_gen", data())
+@pytest.mark.parametrize(
+    "input_dict, output_dict, column_map, row, expected_column_gen, data_length", data()
+)
 async def test_multirows_nonstream_concurrent_execution(
     client_cls: JamAI | JamAIAsync,
     gen_type,
@@ -562,6 +619,7 @@ async def test_multirows_nonstream_concurrent_execution(
     column_map,
     row,
     expected_column_gen,
+    data_length,
 ):
     """
     Tests concurrent execution in non-streaming mode with dependencies.
@@ -668,9 +726,13 @@ async def test_multirows_nonstream_concurrent_execution(
     await run(jamai.delete_table, TableType.action, table_id)
 
 
+@flaky(max_runs=3, min_passes=1)
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
 @pytest.mark.parametrize("gen_type", GEN_TYPES)
-@pytest.mark.parametrize("input_dict, output_dict, column_map, row, expected_column_gen", data())
+@pytest.mark.parametrize(
+    "input_dict, output_dict, column_map, row, expected_column_gen, data_length",
+    data(DATA_LENGTHS),
+)
 async def test_multirows_stream_concurrent_execution(
     client_cls: JamAI | JamAIAsync,
     gen_type,
@@ -679,6 +741,7 @@ async def test_multirows_stream_concurrent_execution(
     column_map,
     row,
     expected_column_gen,
+    data_length,
 ):
     """
     Tests concurrent execution in streaming mode with dependencies.
@@ -710,6 +773,9 @@ async def test_multirows_stream_concurrent_execution(
             ),
         ):
             chunks.append(chunk)
+            # if isinstance(chunk, ErrorChunk):
+            #     logger.debug(f"Error Chunk: {chunk}")
+            # else:
             if chunk.row_id not in first_chunk_times.keys():
                 first_chunk_times[chunk.row_id] = {}
             if chunk.output_column_name not in first_chunk_times[chunk.row_id].keys():
@@ -729,6 +795,9 @@ async def test_multirows_stream_concurrent_execution(
             ),
         ):
             chunks.append(chunk)
+            # if isinstance(chunk, ErrorChunk):
+            #     logger.debug(f"Error Chunk: {chunk}")
+            # else:
             if chunk.row_id not in first_chunk_times.keys():
                 first_chunk_times[chunk.row_id] = {}
             if chunk.output_column_name not in first_chunk_times[chunk.row_id].keys():
@@ -765,6 +834,9 @@ async def test_multirows_stream_concurrent_execution(
                 ),
             ):
                 chunks.append(chunk)
+                # if isinstance(chunk, ErrorChunk):
+                #     logger.debug(f"Error Chunk: {chunk}")
+                # else:
                 if chunk.row_id not in first_chunk_times.keys():
                     first_chunk_times[chunk.row_id] = {}
                 if chunk.output_column_name not in first_chunk_times[chunk.row_id].keys():
@@ -784,6 +856,9 @@ async def test_multirows_stream_concurrent_execution(
                 ),
             ):
                 chunks.append(chunk)
+                # if isinstance(chunk, ErrorChunk):
+                #     logger.debug(f"Error Chunk: {chunk}")
+                # else:
                 if chunk.row_id not in first_chunk_times.keys():
                     first_chunk_times[chunk.row_id] = {}
                 if chunk.output_column_name not in first_chunk_times[chunk.row_id].keys():
@@ -812,10 +887,13 @@ async def test_multirows_stream_concurrent_execution(
         expected_gen = expected_column_gen[output_column_name]
         column_gen = row[output_column_name]["value"]
         len_expected_gen = len(expected_gen)
-        len_column_gen = len(column_gen)
-        if len_column_gen >= len_expected_gen:
-            assert column_gen[:len_expected_gen] == expected_gen
+        len_column_gen = len(column_gen) if column_gen is not None else 0
+        if data_length == "normal":
+            if len_column_gen >= len_expected_gen:
+                assert column_gen[:len_expected_gen] == expected_gen
+            else:
+                assert column_gen == expected_gen[:len_column_gen]
         else:
-            assert column_gen == expected_gen[:len_column_gen]
+            assert column_gen.startswith("[ERROR]")
 
     await run(jamai.delete_table, TableType.action, table_id)

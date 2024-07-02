@@ -1,6 +1,6 @@
 <script lang="ts">
 	import * as Dialog from '$lib/components/ui/dialog';
-	import UploadingGraphic from '../UploadingGraphic.svelte';
+	import UploadingGraphic from '../(svg)/UploadingGraphic.svelte';
 
 	export let isUploadingFile: boolean;
 </script>

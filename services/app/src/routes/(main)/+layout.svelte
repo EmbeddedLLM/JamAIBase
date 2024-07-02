@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import axios, { CanceledError } from 'axios';
 	import { showDock, showLoadingOverlay, uploadQueue, uploadController } from '$globalStore';
 	import logger from '$lib/logger';
@@ -7,8 +7,6 @@
 
 	import SideDock from './SideDock.svelte';
 	import UploadTab from './UploadTab.svelte';
-
-	const { PUBLIC_JAMAI_URL } = env;
 
 	export let data;
 	$: ({ organizationData, userData } = data);
@@ -18,6 +16,7 @@
 	let completedUploads: UploadQueue['queue'] = [];
 	let isUploadingFiles = false;
 	$: uploadFiles($uploadQueue);
+
 	const uploadFiles = async (queue: typeof $uploadQueue) => {
 		if ($uploadQueue.activeFile) return;
 

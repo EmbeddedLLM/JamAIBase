@@ -9,6 +9,8 @@
 	import '@fontsource/roboto';
 	import { showDock, showRightDock, preferredTheme, activeOrganization } from '$globalStore';
 
+	import { Toaster } from '$lib/components/ui/sonner';
+
 	let timeout: NodeJS.Timeout;
 	NProgress.configure({ showSpinner: false });
 	beforeNavigate(() => (timeout = setTimeout(() => NProgress.start(), 250)));
@@ -86,6 +88,8 @@
 		})();
 	</script>
 </svelte:head> -->
+
+<Toaster closeButton richColors />
 
 <slot />
 
