@@ -1,14 +1,17 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { v4 as uuidv4 } from 'uuid';
+	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
 	import autoAnimate from '@formkit/auto-animate';
-	import { pastActionTables } from '../../actionTablesStore';
-	import { actionTableDTypes } from '$lib/constants';
+	import { pastActionTables } from '../../../tablesStore';
+	import { genTableDTypes, idPattern } from '$lib/constants';
 	import logger from '$lib/logger';
-	import type { ActionTableCol } from '$lib/types';
+	import type { GenTableCol } from '$lib/types';
 
+	import InputText from '$lib/components/InputText.svelte';
 	import Checkbox from '$lib/components/Checkbox.svelte';
+	import { toast } from 'svelte-sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Select from '$lib/components/ui/select';
@@ -16,12 +19,10 @@
 	import AddIcon from '$lib/icons/AddIcon.svelte';
 	import HamburgerIcon from '$lib/icons/HamburgerIcon.svelte';
 
-	const { PUBLIC_JAMAI_URL } = env;
-
 	export let isAddingTable: boolean;
 
 	let tableId = '';
-	let columns: (Omit<ActionTableCol, 'vlen' | 'config'> & { drag_id: string })[] = []; //? Added drag_id to keep track of dragging
+	let columns: (Omit<GenTableCol, 'vlen' | 'config'> & { drag_id: string })[] = []; //? Added drag_id to keep track of dragging
 
 	let isLoading = false;
 
@@ -38,7 +39,7 @@
 		startY: number;
 		width: number;
 	} | null = null;
-	let draggingColumn: (Omit<ActionTableCol, 'vlen' | 'config'> & { drag_id: string }) | null = null;
+	let draggingColumn: (Omit<GenTableCol, 'vlen' | 'config'> & { drag_id: string }) | null = null;
 	let draggingColumnIndex: number | null = null;
 	let hoveredColumnIndex: number | null = null;
 
@@ -56,7 +57,13 @@
 	}
 
 	async function handleAddTable() {
-		if (!tableId) return alert('Table ID is required');
+		if (!tableId) return toast.error('Table ID is required');
+		if (columns.find((col) => !col.id)) return toast.error('Column ID cannot be empty');
+
+		if (!idPattern.test(tableId))
+			return toast.error(
+				'Table ID must contain only alphanumeric characters and underscores/hyphens, and start and end with alphanumeric characters'
+			);
 
 		if (isLoading) return;
 		isLoading = true;
@@ -75,7 +82,9 @@
 		if (!response.ok) {
 			const responseBody = await response.json();
 			logger.error('ACTIONTBL_TBL_ADD', responseBody);
-			alert('Failed to add table: ' + (responseBody.message || JSON.stringify(responseBody)));
+			toast.error('Failed to add table', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		} else {
 			//TODO: Consider invalidating fetch request instead
 			$pastActionTables = [
@@ -112,14 +121,10 @@
 				<span
 					class="whitespace-nowrap font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]"
 				>
-					Table ID
+					Table ID*
 				</span>
 
-				<input
-					type="text"
-					bind:value={tableId}
-					class="px-3 py-2 w-full text-sm bg-transparent data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#42464E] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-				/>
+				<InputText bind:value={tableId} placeholder="Required" />
 			</div>
 
 			<div class="px-8 pt-4">
@@ -133,20 +138,20 @@
 					<div class="mt-3 p-2 bg-[#F4F5FA] data-dark:bg-[#42464e] rounded-lg">
 						<div
 							style="grid-template-columns: 30px repeat(2, minmax(0, 1fr)) 50px 40px;"
-							class="grid gap-2"
+							class="grid gap-2 mb-1"
 						>
 							<span></span>
 
-							<span class="font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-								Column ID
+							<span class="ml-1 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
+								Column ID*
 							</span>
 
-							<span class="font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-								Data Type
+							<span class="ml-1 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
+								Data Type*
 							</span>
 
-							<span class="font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-								Output
+							<span class="ml-1 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
+								Output*
 							</span>
 
 							<span></span>
@@ -160,9 +165,7 @@
 										hoveredColumnIndex = index;
 									}}
 									style="grid-template-columns: 30px repeat(2, minmax(0, 1fr)) 50px 40px;"
-									class="grid gap-2 mt-3 {draggingColumn?.drag_id == column.drag_id
-										? 'opacity-0'
-										: ''}"
+									class="grid gap-2 {draggingColumn?.drag_id == column.drag_id ? 'opacity-0' : ''}"
 								>
 									<button
 										on:dragstart={(e) => {
@@ -197,10 +200,10 @@
 									</button>
 
 									<div class="flex flex-col gap-2 py-1 w-full text-center">
-										<input
-											type="text"
+										<InputText
 											bind:value={column.id}
-											class="px-3 py-2 w-full text-sm bg-white data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#2A2A2A] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+											placeholder="Required"
+											class="bg-white data-dark:bg-[#42464e]"
 										/>
 									</div>
 
@@ -220,7 +223,7 @@
 												</Button>
 											</Select.Trigger>
 											<Select.Content side="left" class="max-h-64 overflow-y-auto">
-												{#each actionTableDTypes as dType}
+												{#each genTableDTypes as dType}
 													<Select.Item
 														on:click={() => (column.dtype = dType)}
 														value={dType}
@@ -294,12 +297,15 @@
 
 		<Dialog.Actions>
 			<div class="flex gap-2">
-				<Button variant="link" on:click={() => (isAddingTable = false)} class="grow px-6">
-					Cancel
-				</Button>
+				<DialogPrimitive.Close asChild let:builder>
+					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
+						Cancel
+					</Button>
+				</DialogPrimitive.Close>
 				<Button
-					loading={isLoading}
 					on:click={handleAddTable}
+					type="button"
+					loading={isLoading}
 					class="relative grow px-6 rounded-full"
 				>
 					Create
@@ -312,11 +318,11 @@
 <!-- Dragged item -->
 {#if dragMouseCoords && draggingColumn}
 	<li
-		style="grid-template-columns: 30px repeat(2, minmax(0, 1fr)) 40px; top: {dragMouseCoords.y -
+		style="grid-template-columns: 30px repeat(2, minmax(0, 1fr)) 50px 40px; top: {dragMouseCoords.y -
 			dragMouseCoords.startY -
 			15}px; left: {dragMouseCoords.x -
 			dragMouseCoords.startX -
-			15}px; width: {dragMouseCoords.width}px;"
+			250}px; width: {dragMouseCoords.width}px;"
 		class="absolute z-[9999] grid gap-2 mt-3 bg-[#F4F5FA] data-dark:bg-[#42464e] pointer-events-none"
 	>
 		<button class="flex items-center justify-center cursor-grab">
@@ -324,11 +330,7 @@
 		</button>
 
 		<div class="flex flex-col gap-2 py-1 w-full text-center">
-			<input
-				type="text"
-				bind:value={draggingColumn.id}
-				class="px-3 py-2 w-full text-sm bg-white data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#2A2A2A] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-			/>
+			<InputText bind:value={draggingColumn.id} class="bg-white data-dark:bg-[#42464e]" />
 		</div>
 
 		<div class="flex flex-col gap-2 py-1 w-full text-center">
@@ -347,7 +349,7 @@
 					</Button>
 				</Select.Trigger>
 				<Select.Content side="bottom" class="max-h-96 overflow-y-auto">
-					{#each actionTableDTypes as dType}
+					{#each genTableDTypes as dType}
 						<Select.Item
 							value={dType}
 							label={dType}
@@ -358,6 +360,10 @@
 					{/each}
 				</Select.Content>
 			</Select.Root>
+		</div>
+
+		<div class="flex items-center justify-center">
+			<Checkbox checked={!!draggingColumn.gen_config} class="h-5 w-5" />
 		</div>
 
 		<Button variant="ghost" class="p-0 h-8 w-8 aspect-square rounded-full place-self-center">

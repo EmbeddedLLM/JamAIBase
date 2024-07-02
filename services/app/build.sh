@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+source .env
 # Set the flag variable
 DEV_MODE=1
 
@@ -23,6 +25,12 @@ vite build
 # Copy the build files to the build directory
 rm -rf build
 mv temp build
+
+# Static adapter doesn't generate files for these pages, breaking nav
+if [ "$PUBLIC_IS_SPA" != "false" ]; then
+    cp -r build/project/default/action-table build/project/default/chat-table
+    cp -r build/project/default/action-table build/project/default/knowledge-table
+fi
 
 # Reload PM2 app if not in dev mode
 if [ $DEV_MODE -eq 0 ]; then

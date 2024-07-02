@@ -1,11 +1,9 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_IS_LOCAL } from '$env/static/public';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 
 	import SettingsIcon from '$lib/icons/SettingsIcon.svelte';
-
-	const { PUBLIC_IS_LOCAL } = env;
 
 	const links = [
 		{

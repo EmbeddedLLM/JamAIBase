@@ -1,7 +1,10 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
+	import { Dialog as DialogPrimitive } from 'bits-ui';
 
 	import BreadcrumbsBar from '../BreadcrumbsBar.svelte';
+	import { toast } from 'svelte-sonner';
+	import InputText from '$lib/components/InputText.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import AssignmentIcon from '$lib/icons/AssignmentIcon.svelte';
@@ -13,6 +16,37 @@
 	let isAddingProject = false;
 	let isLoadingAddProject = false;
 	let newProjectForm: HTMLFormElement;
+
+	async function handleNewProject(e: SubmitEvent & { currentTarget: HTMLFormElement }) {
+		if (isLoadingAddProject) return;
+		isLoadingAddProject = true;
+
+		const formData = new FormData(e.currentTarget);
+		const project_name = formData.get('project_name') as string;
+
+		const response = await fetch(`/api/projects`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({
+				project_name
+			})
+		});
+		const responseBody = await response.json();
+
+		if (!response.ok) {
+			toast.error('Failed to create project', {
+				description: responseBody.err_message?.message || JSON.stringify(responseBody)
+			});
+		} else {
+			invalidateAll();
+			newProjectForm.reset();
+			isAddingProject = false;
+		}
+
+		isLoadingAddProject = false;
+	}
 </script>
 
 <svelte:head>
@@ -31,7 +65,7 @@
 		</div>
 	</div>
 
-	<div class="grid grid-cols-[12rem_minmax(0,_auto)] gap-4 p-7 pb-0">
+	<div class="grid grid-cols-[12rem_minmax(0,_auto)] gap-4 p-7 pb-0 min-h-0">
 		<div class="flex">
 			<button
 				on:click={() => (isAddingProject = true)}
@@ -47,7 +81,7 @@
 
 		<div
 			style="grid-auto-rows: 144px;"
-			class="grid grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5 grid-flow-row gap-4 overflow-auto"
+			class="grid grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5 grid-flow-row gap-4 pb-4 overflow-auto"
 		>
 			{#each organizationData?.projects ?? [] as project (project.id)}
 				<a
@@ -91,23 +125,7 @@
 		<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 		<form
 			bind:this={newProjectForm}
-			use:enhance={() => {
-				isLoadingAddProject = true;
-
-				return async ({ result, update }) => {
-					if (result.type !== 'success') {
-						// @ts-ignore
-						alert('Error creating new project: ' + JSON.stringify(result.data));
-					} else {
-						isAddingProject = false;
-					}
-
-					isLoadingAddProject = false;
-					update({ reset: result.type === 'success' });
-				};
-			}}
-			method="POST"
-			action="?/create"
+			on:submit|preventDefault={handleNewProject}
 			class="grow py-3 h-full w-full overflow-auto"
 		>
 			<div class="flex flex-col gap-2 px-6 pl-8 py-2 w-full text-center">
@@ -115,12 +133,7 @@
 					Project name
 				</span>
 
-				<input
-					type="text"
-					name="project_name"
-					placeholder="Enter project name"
-					class="px-3 py-2 w-full text-sm bg-transparent data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#42464E] placeholder:italic focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-				/>
+				<InputText name="project_name" placeholder="Enter project name" />
 			</div>
 
 			<!-- hidden submit -->
@@ -129,14 +142,11 @@
 
 		<Dialog.Actions>
 			<div class="flex gap-2">
-				<Button
-					variant="link"
-					type="button"
-					on:click={() => (isAddingProject = false)}
-					class="grow px-6"
-				>
-					Cancel
-				</Button>
+				<DialogPrimitive.Close asChild let:builder>
+					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
+						Cancel
+					</Button>
+				</DialogPrimitive.Close>
 				<Button
 					on:click={() => newProjectForm.requestSubmit()}
 					loading={isLoadingAddProject}

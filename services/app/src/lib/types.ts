@@ -1,5 +1,6 @@
+import type { ComponentType } from 'svelte';
 import { z } from 'zod';
-import type { actionTableDTypes, userRoles } from './constants';
+import type { genTableDTypes, userRoles } from './constants';
 
 export interface AvailableModel {
 	id: string;
@@ -7,6 +8,25 @@ export interface AvailableModel {
 	languages: string[];
 	owned_by: string;
 }
+
+export type SideDockLink = {
+	type: 'link';
+	title: string;
+	href: string;
+	openNewTab?: boolean;
+	Icon: ComponentType;
+	iconClass?: string;
+	EndIcon?: ComponentType;
+	excludeFromLocal?: boolean;
+};
+
+type SideDockCategory = {
+	type: 'category';
+	title: string;
+	excludeFromLocal?: boolean;
+};
+
+export type SideDockItem = SideDockLink | SideDockCategory;
 
 export interface Timestamp {
 	today: number | null;
@@ -29,9 +49,9 @@ export interface UploadQueue {
 }
 
 // Action Table
-export interface ActionTable {
+export interface GenTable {
 	id: string;
-	cols: ActionTableCol[];
+	cols: GenTableCol[];
 	lock_till: number;
 	updated_at: string;
 	indexed_at_fts: any;
@@ -70,15 +90,15 @@ export type ChatRequest = {
 	user: string;
 };
 
-export interface ActionTableCol {
+export interface GenTableCol {
 	id: string;
-	dtype: (typeof actionTableDTypes)[number];
+	dtype: (typeof genTableDTypes)[number];
 	vlen: number;
 	index: boolean;
 	gen_config: (Partial<ChatRequest> & { embedding_model?: string; source_column?: string }) | null;
 }
 
-export type ActionTableRow = {
+export type GenTableRow = {
 	ID: string;
 	'Updated at': string;
 } & {
@@ -143,6 +163,7 @@ export type Organization = {
 
 export type OrganizationReadRes = {
 	id: string;
+	creator_user_id: string;
 	name: string;
 	tier: string;
 	active: boolean;
@@ -151,6 +172,8 @@ export type OrganizationReadRes = {
 		credit_grant: number;
 		[key: string]: number;
 	};
+	db_storage_gb: number;
+	file_storage_gb: number;
 	stripe_id: string;
 	openmeter_id: string;
 	external_keys?: {
@@ -191,6 +214,7 @@ export type Project = {
 	id: string;
 	created_at: string;
 	updated_at: string;
+	organization: Omit<OrganizationReadRes, 'users' | 'api_keys'>;
 };
 
 export type API_Key = {

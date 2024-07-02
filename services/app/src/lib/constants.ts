@@ -7,7 +7,8 @@ export const timestampsDisplayName: { [key: string]: string } = {
 	last_month: 'Last month',
 	older: 'Older'
 };
-export const actionTableDTypes = ['int', 'float', 'bool', 'str'] as const;
+export const genTableDTypes = ['int', 'float', 'bool', 'str'] as const;
+export const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,98}[a-zA-Z0-9]$/;
 
 //* Non-local
 export const userRoles = ['guest', 'member', 'admin'] as const;

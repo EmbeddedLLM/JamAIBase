@@ -1,18 +1,24 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
+	import toUpper from 'lodash/toUpper';
 	import { page } from '$app/stores';
 	import { goto, invalidate } from '$app/navigation';
 	import { Dialog as DialogPrimitive } from 'bits-ui';
-	import { pastActionTables } from '../../actionTablesStore';
+	import {
+		pastActionTables,
+		pastKnowledgeTables,
+		pastChatAgents,
+		pastChatConversations
+	} from '../tablesStore';
 	import logger from '$lib/logger';
 
+	import { toast } from 'svelte-sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import DialogCloseIcon from '$lib/icons/DialogCloseIcon.svelte';
 	import CloseIcon from '$lib/icons/CloseIcon.svelte';
 
-	const { PUBLIC_JAMAI_URL } = env;
-
+	export let tableType: 'action' | 'knowledge' | 'chat';
 	export let isDeletingTable: string | null;
 	export let isDeletingColumn: string | null;
 	export let isDeletingRow: string[] | null;
@@ -24,19 +30,51 @@
 		isLoading = true;
 
 		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/action/${isDeletingTable}`,
+			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/${isDeletingTable}`,
 			{
 				method: 'DELETE'
 			}
 		);
 		if (!response.ok) {
 			const responseBody = await response.json();
-			logger.error('ACTIONTBL_TBL_DEL', responseBody);
-			alert('Failed to delete table: ' + (responseBody.message || JSON.stringify(responseBody)));
+			logger.error(toUpper(`${tableType}TBL_TBL_DEL`), responseBody);
+			toast.error('Failed to delete table', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		} else {
-			$pastActionTables = $pastActionTables.filter((t) => t.id !== isDeletingTable);
-			if ($page.params.table_id === isDeletingTable) {
-				goto(`/project/${$page.params.project_id}/action-table/${$pastActionTables[0]?.id || ''}`);
+			switch (tableType) {
+				case 'action': {
+					$pastActionTables = $pastActionTables.filter((t) => t.id !== isDeletingTable);
+					if ($page.params.table_id === isDeletingTable) {
+						goto(
+							`/project/${$page.params.project_id}/action-table/${$pastActionTables[0]?.id || ''}`
+						);
+					}
+					break;
+				}
+				case 'knowledge': {
+					$pastKnowledgeTables = $pastKnowledgeTables.filter(
+						(table) => table.id !== isDeletingTable
+					);
+					if ($page.params.table_id === isDeletingTable) {
+						goto(
+							`/project/${$page.params.project_id}/knowledge-table/${$pastKnowledgeTables[0]?.id || ''}`
+						);
+					}
+					break;
+				}
+				case 'chat': {
+					$pastChatAgents = $pastChatAgents.filter((t) => t.id !== isDeletingTable);
+					$pastChatConversations = $pastChatConversations.filter((t) => t.id !== isDeletingTable);
+					if ($page.params.table_id === isDeletingTable) {
+						goto(
+							`/project/${$page.params.project_id}/chat-table/${$pastChatConversations[0]?.id || ''}`
+						);
+					}
+					break;
+				}
+				default:
+					break;
 			}
 			isDeletingTable = null;
 		}
@@ -48,22 +86,27 @@
 		if (isLoading || !isDeletingColumn) return;
 		isLoading = true;
 
-		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/action/columns/drop`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			body: JSON.stringify({
-				table_id: $page.params.table_id,
-				column_names: [isDeletingColumn]
-			})
-		});
+		const response = await fetch(
+			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/columns/drop`,
+			{
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({
+					table_id: $page.params.table_id,
+					column_names: [isDeletingColumn]
+				})
+			}
+		);
 		if (!response.ok) {
 			const responseBody = await response.json();
-			logger.error('ACTIONTBL_COLUMN_DEL', responseBody);
-			alert('Failed to delete column: ' + (responseBody.message || JSON.stringify(responseBody)));
+			logger.error(toUpper(`${tableType}TBL_COLUMN_DEL`), responseBody);
+			toast.error('Failed to delete column', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		} else {
-			invalidate('action-table:slug');
+			invalidate(`${tableType}-table:slug`);
 			isDeletingColumn = null;
 		}
 
@@ -74,7 +117,7 @@
 		if (isLoading || !isDeletingRow) return;
 		isLoading = true;
 
-		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/action/rows/delete`, {
+		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/rows/delete`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -86,10 +129,12 @@
 		});
 		if (!response.ok) {
 			const responseBody = await response.json();
-			logger.error('ACTIONTBL_ROW_DEL', responseBody);
-			alert('Failed to delete row: ' + (responseBody.message || JSON.stringify(responseBody)));
+			logger.error(toUpper(`${tableType}TBL_ROW_DEL`), responseBody);
+			toast.error('Failed to delete row', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		} else {
-			invalidate('action-table:slug');
+			invalidate(`${tableType}-table:slug`);
 			isDeletingRow = null;
 		}
 
@@ -127,13 +172,16 @@
 
 		<Dialog.Actions class="bg-[#f6f6f6] data-dark:bg-[#303338]">
 			<div class="flex gap-2">
-				<Button variant="link" on:click={() => (isDeletingTable = null)} class="grow px-6">
-					Cancel
-				</Button>
+				<DialogPrimitive.Close asChild let:builder>
+					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
+						Cancel
+					</Button>
+				</DialogPrimitive.Close>
 				<Button
-					loading={isLoading}
-					variant="destructive"
 					on:click={handleDeleteTable}
+					variant="destructive"
+					type="button"
+					loading={isLoading}
 					class="grow px-6 rounded-full"
 				>
 					Delete
@@ -173,13 +221,16 @@
 
 		<Dialog.Actions class="bg-[#f6f6f6] data-dark:bg-[#303338]">
 			<div class="flex gap-2">
-				<Button variant="link" on:click={() => (isDeletingColumn = null)} class="grow px-6">
-					Cancel
-				</Button>
+				<DialogPrimitive.Close asChild let:builder>
+					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
+						Cancel
+					</Button>
+				</DialogPrimitive.Close>
 				<Button
-					loading={isLoading}
-					variant="destructive"
 					on:click={handleDeleteColumn}
+					variant="destructive"
+					type="button"
+					loading={isLoading}
 					class="grow px-6 rounded-full"
 				>
 					Delete
@@ -231,13 +282,16 @@
 
 		<Dialog.Actions class="bg-[#f6f6f6] data-dark:bg-[#303338]">
 			<div class="flex gap-2">
-				<Button variant="link" on:click={() => (isDeletingRow = null)} class="grow px-6">
-					Cancel
-				</Button>
+				<DialogPrimitive.Close asChild let:builder>
+					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
+						Cancel
+					</Button>
+				</DialogPrimitive.Close>
 				<Button
-					loading={isLoading}
-					variant="destructive"
 					on:click={handleDeleteRow}
+					variant="destructive"
+					type="button"
+					loading={isLoading}
 					class="grow px-6 rounded-full"
 				>
 					Delete

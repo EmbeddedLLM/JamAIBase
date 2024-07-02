@@ -1,20 +1,19 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { onMount } from 'svelte';
+	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import logger from '$lib/logger';
-	import type { ActionTable } from '$lib/types';
+	import type { GenTable } from '$lib/types';
 
 	import { Button } from '$lib/components/ui/button';
 	import { Skeleton } from '$lib/components/ui/skeleton';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import RowIcon from '$lib/icons/RowIcon.svelte';
 
-	const { PUBLIC_JAMAI_URL } = env;
-
 	export let isSelectingKnowledgeTable: boolean;
 	export let selectedKnowledgeTables: string; //TODO: Add type
 
-	let pastKnowledgeTables: ActionTable[] = [];
+	let pastKnowledgeTables: GenTable[] = [];
 
 	let isLoadingMoreKTables = true; //TODO: Figure out infinite loop / pagination here
 	let moreKTablesFinished = false; //FIXME: Bandaid fix for infinite loop caused by loading circle
@@ -55,7 +54,9 @@
 			}
 		} else {
 			const responseBody = await response.json();
-			logger.error('ACTIONTBL_LIST_KNOWTBL', responseBody);
+			if (response.status !== 404) {
+				logger.error('ACTIONTBL_LIST_KNOWTBL', responseBody);
+			}
 			console.error(responseBody.message);
 		}
 
@@ -121,14 +122,11 @@
 
 		<Dialog.Actions>
 			<div class="flex gap-2">
-				<Button
-					variant="link"
-					type="button"
-					on:click={() => (isSelectingKnowledgeTable = false)}
-					class="grow px-6"
-				>
-					Cancel
-				</Button>
+				<DialogPrimitive.Close asChild let:builder>
+					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
+						Cancel
+					</Button>
+				</DialogPrimitive.Close>
 			</div>
 		</Dialog.Actions>
 	</Dialog.Content>

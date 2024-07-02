@@ -11,9 +11,17 @@ from litellm import Router
 from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from jamaibase.protocol import Chunk, ClipInputData, ModelListConfig
+from jamaibase.protocol import (
+    Chunk,
+    ClipInputData,
+    CompletionUsage,
+    EmbeddingResponse,
+    EmbeddingResponseData,
+    ModelListConfig,
+)
 from jamaibase.utils.io import json_loads
 from owl.config import get_embed_model_info, get_model_json, get_rerank_model_info
+from owl.utils import filter_external_api_key
 
 
 class Config(BaseSettings):
@@ -63,7 +71,6 @@ def get_embedding_router():
 
 
 class CloudBase:
-
     @staticmethod
     def batch(seq, n):
         if n < 1:
@@ -79,11 +86,33 @@ class CloudReranker(CloudBase):
         "jina": CONFIG.jina_api_base,
     }
 
-    def __init__(self, reranker_name: str, api_key: str = ""):
-        """
+    def __init__(
+        self,
+        reranker_name: str,
+        openai_api_key: str = "",
+        anthropic_api_key: str = "",
+        gemini_api_key: str = "",
+        cohere_api_key: str = "",
+        groq_api_key: str = "",
+        together_api_key: str = "",
+        jina_api_key: str = "",
+        voyage_api_key: str = "",
+    ):
+        """Reranker router.
+
         Args:
-            reranker_name (str): Model name for the Reranker (from v1/model_names)
-            api_key (str): api_key for the str of the cloud provider, optional.
+            reranker_name (str): Model name in the form (`provider/name`).
+            openai_api_key (str, optional): OpenAI API key. Defaults to "".
+            anthropic_api_key (str, optional): Anthropic API key. Defaults to "".
+            gemini_api_key (str, optional): Gemini API key. Defaults to "".
+            cohere_api_key (str, optional): Cohere API key. Defaults to "".
+            groq_api_key (str, optional): Groq API key. Defaults to "".
+            together_api_key (str, optional): Together API key. Defaults to "".
+            jina_api_key (str, optional): Jina API key. Defaults to "".
+            voyage_api_key (str, optional): Voyage API key. Defaults to "".
+
+        Raises:
+            ValueError: If provider is not supported.
         """
         # Get embedder_config
         reranker_config = get_rerank_model_info(reranker_name)
@@ -96,11 +125,21 @@ class CloudReranker(CloudBase):
             raise ValueError(
                 f"reranker `provider`: {provider_name} not supported please use only following provider: ellm/cohere/voyage/jina"
             )
-
         api_url = (
             reranker_config["api_base"] + "/rerank"
             if provider_name == "ellm"
             else self.API_MAP[provider_name] + "/rerank"
+        )
+        api_key = filter_external_api_key(
+            reranker_name,
+            openai_api_key=openai_api_key,
+            anthropic_api_key=anthropic_api_key,
+            gemini_api_key=gemini_api_key,
+            cohere_api_key=cohere_api_key,
+            groq_api_key=groq_api_key,
+            together_api_key=together_api_key,
+            jina_api_key=jina_api_key,
+            voyage_api_key=voyage_api_key,
         )
         self.reranking_args = {
             "model": self.model_name,
@@ -183,12 +222,34 @@ class CloudReranker(CloudBase):
         return all_data
 
 
-class CloudEmbedder(CloudBase, Embeddings):
-    def __init__(self, embedder_name: str, api_key: str = ""):
-        """
+class CloudEmbedder(CloudBase):
+    def __init__(
+        self,
+        embedder_name: str,
+        openai_api_key: str = "",
+        anthropic_api_key: str = "",
+        gemini_api_key: str = "",
+        cohere_api_key: str = "",
+        groq_api_key: str = "",
+        together_api_key: str = "",
+        jina_api_key: str = "",
+        voyage_api_key: str = "",
+    ):
+        """Embedder router.
+
         Args:
-            embedder_name (str): Model Name for the Embedder (from v1/model_names)
-            api_key (str): api_key for embedder
+            embedder_name (str): Model name in the form (`provider/name`).
+            openai_api_key (str, optional): OpenAI API key. Defaults to "".
+            anthropic_api_key (str, optional): Anthropic API key. Defaults to "".
+            gemini_api_key (str, optional): Gemini API key. Defaults to "".
+            cohere_api_key (str, optional): Cohere API key. Defaults to "".
+            groq_api_key (str, optional): Groq API key. Defaults to "".
+            together_api_key (str, optional): Together API key. Defaults to "".
+            jina_api_key (str, optional): Jina API key. Defaults to "".
+            voyage_api_key (str, optional): Voyage API key. Defaults to "".
+
+        Raises:
+            ValueError: If provider is not supported.
         """
         # Get embedder_config
         embedder_config = get_embed_model_info(embedder_name)
@@ -199,38 +260,49 @@ class CloudEmbedder(CloudBase, Embeddings):
         self.embedder_config = embedder_config
         if provider_name not in ["ellm", "openai", "cohere", "voyage", "jina"]:
             raise ValueError(
-                f"embedder `provider`: {provider_name} not supported please use only following provider: ellm/openai/cohere/voyage/jina"
+                (
+                    f"Embedder provider {provider_name} not supported, "
+                    "please use only following provider: ellm/openai/cohere/voyage/jina"
+                )
             )
+        api_key = filter_external_api_key(
+            embedder_name,
+            openai_api_key=openai_api_key,
+            anthropic_api_key=anthropic_api_key,
+            gemini_api_key=gemini_api_key,
+            cohere_api_key=cohere_api_key,
+            groq_api_key=groq_api_key,
+            together_api_key=together_api_key,
+            jina_api_key=jina_api_key,
+            voyage_api_key=voyage_api_key,
+        )
         self.embedding_args = {
             "model": embedder_config["litellm_id"],
             "api_key": api_key,
             "dimensions": self.embedder_config.get("dimensions"),
         }
 
-    def _embed(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(self, texts: list[str]) -> EmbeddingResponse:
         if self.provider_name == "jina":
-            embedding_resp = self._embed_jina(texts)
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.embedding_args['api_key']}",
+            }
+            data = {"input": texts, "model": self.embedding_args["model"]}
+            response = HTTP_CLIENT.post(
+                CONFIG.jina_api_base + "/embeddings",
+                headers=headers,
+                json=data,
+            )
+            if response.status_code != 200:
+                raise RuntimeError(response.text)
+            response = EmbeddingResponse.model_validate_json(response.text)
         else:
-            embedding_resp = get_embedding_router().embedding(**self.embedding_args, input=texts)
-        return [x["embedding"] for x in embedding_resp.json()["data"]]
-
-    def _embed_jina(self, texts: list[str]) -> httpx.Response:
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.embedding_args['api_key']}",
-        }
-        data = {"input": texts, "model": self.embedding_args["model"]}
-
-        response = HTTP_CLIENT.post(
-            CONFIG.jina_api_base + "/embeddings",
-            headers=headers,
-            json=data,
-        )
-        if response.status_code != 200:
-            raise RuntimeError(response.text)
+            response = get_embedding_router().embedding(**self.embedding_args, input=texts)
+            response = EmbeddingResponse.model_validate(response.model_dump())
         return response
 
-    def embed_documents(self, texts: list[str], batch_size: int = 2048) -> list[list[float]]:
+    def embed_documents(self, texts: list[str], batch_size: int = 2048) -> EmbeddingResponse:
         """Embed search docs."""
         if not isinstance(texts, list):
             raise TypeError("`texts` must be a list.")
@@ -241,19 +313,28 @@ class CloudEmbedder(CloudBase, Embeddings):
             batch_size = 128  # don't know limit, but too large will timeout
         if self.provider_name == "voyage":
             batch_size = 128  # limit on voyage server
-        embeddings = [self._embed(txt) for txt in self.batch(texts, batch_size)]
-        return list(itertools.chain(*embeddings))
+        responses = [self.embed_texts(txt) for txt in self.batch(texts, batch_size)]
+        embeddings = [e.embedding for e in itertools.chain(*[r.data for r in responses])]
+        usages = CompletionUsage(
+            prompt_tokens=sum(r.usage.prompt_tokens for r in responses),
+            total_tokens=sum(r.usage.total_tokens for r in responses),
+        )
+        embeddings = EmbeddingResponse(
+            data=[EmbeddingResponseData(embedding=e, index=i) for i, e in enumerate(embeddings)],
+            model=responses[0].model,
+            usage=usages,
+        )
+        return embeddings
 
-    def embed_query(self, text: str) -> list[float]:
+    def embed_queries(self, texts: list[str]) -> EmbeddingResponse:
         """Embed query text."""
-        if not isinstance(text, str):
-            raise TypeError("`text` must be a str.")
+        if not isinstance(texts, list):
+            raise TypeError("`texts` must be a list.")
         if self.embedding_args.get("transform_query"):
-            text = self.embedding_args.get("transform_query") + text
+            texts = [self.embedding_args.get("transform_query") + text for text in texts]
         if self.provider_name == "cohere":
             self.embedding_args["input_type"] = "search_query"
-        embeddings = self._embed([text])
-        return embeddings[0]  # should just have 1 elements
+        return self.embed_texts(texts)
 
 
 class CloudImageEmbedder(CloudBase, Embeddings):
@@ -285,7 +366,7 @@ class CloudImageEmbedder(CloudBase, Embeddings):
         )
         if response.status_code != 200:
             raise RuntimeError(response.text)
-        return [x["embedding"] for x in response.json()["data"]]
+        return [x["embedding"] for x in json_loads(response)["data"]]
 
     def _parse_data(self, objects: list[ClipInputData]):
         """

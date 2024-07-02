@@ -44,4 +44,12 @@ export class APIError {
 		this.error = error;
 		this.err_message = err_message ?? { message: error };
 	}
+
+	/** Serializable error object for use in form actions */
+	getSerializable() {
+		return {
+			error: this.error,
+			err_message: this.err_message
+		};
+	}
 }

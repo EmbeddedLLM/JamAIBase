@@ -1,8 +1,5 @@
 import JamAI from "@/index";
-import {
-    GenTableRowsChatCompletionChunksSchema,
-    GetConversationThreadResponseSchema
-} from "@/resources/gen_tables/chat";
+import { GenTableRowsChatCompletionChunksSchema, GetConversationThreadResponseSchema } from "@/resources/gen_tables/chat";
 import {
     ColumnSchema,
     ColumnSchemaCreate,

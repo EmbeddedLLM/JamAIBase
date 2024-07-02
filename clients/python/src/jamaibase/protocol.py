@@ -178,7 +178,7 @@ class RAGParams(BaseModel):
     )
     rerank: bool = Field(
         default=True,
-        description="Flag to perform rerank on the retrieved results. Defaults to False.",
+        description="Flag to perform rerank on the retrieved results. Defaults to True.",
         examples=[True, False],
     )
     concat_reranker_input: bool = Field(
@@ -597,7 +597,8 @@ class ChatCompletionChunk(BaseModel):
     )
     model: str = Field(description="The model used for the chat completion.")
     usage: CompletionUsage | None = Field(
-        description="Usage statistics for the completion request."
+        description="Number of tokens consumed for the completion request.",
+        examples=[CompletionUsage(), None],
     )
     choices: list[ChatCompletionChoice | ChatCompletionChoiceDelta] = Field(
         description="A list of chat completion choices. Can be more than one if `n` is greater than 1."
@@ -623,6 +624,10 @@ class ChatCompletionChunk(BaseModel):
     def text(self) -> str | None:
         """The text of the most recent chat completion."""
         return self.message.content if len(self.choices) > 0 else None
+
+    @property
+    def finish_reason(self) -> str | None:
+        return self.choices[0].finish_reason if len(self.choices) > 0 else None
 
 
 class GenTableStreamChatCompletionChunk(ChatCompletionChunk):
@@ -731,6 +736,81 @@ values like -100 or 100 should result in a ban or exclusive selection of the rel
         default="",
         description="A unique identifier representing your end-user. For monitoring and debugging purposes.",
         examples=[""],
+    )
+
+
+class EmbeddingRequest(BaseModel):
+    input: str | list[str] = Field(
+        description=(
+            "Input text to embed, encoded as a string or array of strings "
+            "(to embed multiple inputs in a single request). "
+            "The input must not exceed the max input tokens for the model, and cannot contain empty string."
+        ),
+        examples=["What is a llama?", ["What is a llama?", "What is an alpaca?"]],
+    )
+    model: str = Field(
+        description=(
+            "The ID of the model to use. "
+            "You can use the List models API to see all of your available models."
+        ),
+        examples=["openai/text-embedding-3-small-512"],
+    )
+    type: Literal["query", "document"] = Field(
+        default="document",
+        description=(
+            'Whether the input text is a "query" (used to retrieve) or a "document" (to be retrieved).'
+        ),
+        examples=["query", "document"],
+    )
+    encoding_format: Literal["float", "base64"] = Field(
+        default="float",
+        description=(
+            '_Optional_. The format to return the embeddings in. Can be either "float" or "base64". '
+            "`base64` string should be decoded as a `float32` array. "
+            "Example: `np.frombuffer(base64.b64decode(response), dtype=np.float32)`"
+        ),
+        examples=["float", "base64"],
+    )
+
+
+class EmbeddingResponseData(BaseModel):
+    object: str = Field(
+        default="embedding",
+        description="The object type, which is always `embedding`.",
+        examples=["embedding"],
+    )
+    embedding: list[float] | str = Field(
+        description=(
+            "The embedding vector, which is a list of floats or a base64-encoded string. "
+            "The length of vector depends on the model."
+        ),
+        examples=[[0.0, 1.0, 2.0], []],
+    )
+    index: int = Field(
+        default=0,
+        description="The index of the embedding in the list of embeddings.",
+        examples=[0, 1],
+    )
+
+
+class EmbeddingResponse(BaseModel):
+    object: str = Field(
+        default="list",
+        description="The object type, which is always `list`.",
+        examples=["list"],
+    )
+    data: list[EmbeddingResponseData] = Field(
+        description="List of `EmbeddingResponseData`.",
+        examples=[[EmbeddingResponseData(embedding=[0.0, 1.0, 2.0])]],
+    )
+    model: str = Field(
+        description="The ID of the model used.",
+        examples=["openai/text-embedding-3-small-512"],
+    )
+    usage: CompletionUsage = Field(
+        default=CompletionUsage(),
+        description="The number of tokens consumed.",
+        examples=[CompletionUsage()],
     )
 
 
@@ -865,11 +945,17 @@ class ColumnSchema(BaseModel):
     )
     vlen: PositiveInt = Field(  # type: ignore
         default=0,
-        description="_Optional_. Vector length. If this is larger than zero, then `dtype` must be one of the floating data types. Defaults to zero.",
+        description=(
+            "_Optional_. Vector length. "
+            "If this is larger than zero, then `dtype` must be one of the floating data types. Defaults to zero."
+        ),
     )
     index: bool = Field(
         default=True,
-        description="_Optional_. Whether to build full-text-search (FTS) or vector index for this column. Only applies to string and vector columns. Defaults to True.",
+        description=(
+            "_Optional_. Whether to build full-text-search (FTS) or vector index for this column. "
+            "Only applies to string and vector columns. Defaults to True."
+        ),
     )
     gen_config: dict | None = Field(
         default=None,
@@ -889,7 +975,10 @@ class ColumnSchema(BaseModel):
     def validate_gen_config(self) -> Self:
         if self.gen_config is not None:
             # Validate
-            ChatRequest.model_validate(self.gen_config)
+            if "embedding_model" in self.gen_config:
+                self.gen_config = EmbedGenConfig.model_validate(self.gen_config).model_dump()
+            else:
+                self.gen_config = ChatRequest.model_validate(self.gen_config).model_dump()
         return self
 
 
@@ -1169,6 +1258,26 @@ class RowAddData(BaseModel):
     data: list[dict[Name, Any]] = Field(
         description="List of row data to add or update. Each list item is a mapping of column ID to its value."
     )
+    errors: list[list[str]] | None = Field(
+        default=None,
+        description=(
+            "List of row columns that encountered errors (perhaps LLM generation failed mid-stream). "
+            "Each list item is a list of column IDs."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def check_errors(self) -> Self:
+        if self.errors is None:
+            return self
+        if len(self.errors) != len(self.data):
+            raise ValueError(
+                (
+                    "`errors` must contain same number of items as `data`, "
+                    f"received: len(errors)={len(self.errors)}   len(data)={len(self.data)}"
+                )
+            )
+        return self
 
     @model_validator(mode="after")
     def check_data(self) -> Self:
@@ -1178,17 +1287,29 @@ class RowAddData(BaseModel):
 
     @model_validator(mode="after")
     def handle_nulls_and_validate(self) -> Self:
-        cols = {c.id: c for c in self.table_meta.cols_schema}
+        return self._handle_nulls_and_validate()
+
+    def _handle_nulls_and_validate(self, check_missing_cols: bool = True) -> Self:
+        cols = {
+            c.id: c
+            for c in self.table_meta.cols_schema
+            if not (c.id.lower() in ("id", "updated at") or c.id.endswith("_"))
+        }
+        # Create the row schema for validation
         PydanticSchema: Type[BaseModel] = create_model(
             f"{self.__class__.__name__}Schema",
             __config__=ConfigDict(arbitrary_types_allowed=True),
-            **{
-                c.id: (str_to_py_type(c.dtype.value, c.vlen) | None, None)
-                for c in cols.values()
-                if not (c.id.lower() in ("id", "updated at") or c.id.endswith("_"))
-            },
+            **{c.id: (str_to_py_type(c.dtype.value, c.vlen) | None, None) for c in cols.values()},
         )
-        for d in self.data:
+        self.errors = [[] for _ in self.data]
+
+        # Validate
+        for d, err in zip(self.data, self.errors):
+            # Fill in missing cols
+            if check_missing_cols:
+                for k in cols:
+                    if k not in d:
+                        d[k] = None
             try:
                 PydanticSchema.model_validate(d)
             except ValidationError as e:
@@ -1199,12 +1320,15 @@ class RowAddData(BaseModel):
             else:
                 failed_cols = {}
             for k in list(d.keys()):
-                if k.lower() in ("id", "updated at"):
+                if k not in cols:
                     continue
                 col = cols[k]
                 state = {}
                 if k in failed_cols:
                     d[k], state["original"] = None, d[k]
+                if k in err:
+                    d[k] = None
+                    # state["error"] = True
                 if d[k] is None:
                     if col.dtype == DtypeEnum.int_:
                         d[k] = 0
@@ -1257,6 +1381,10 @@ class RowUpdateData(RowAddData):
         if sum(n.lower() in ("id", "updated at") for d in self.data for n in d) > 0:
             raise ValueError("`data` cannot contain keys: 'ID' or 'Updated at'.")
         return self
+
+    @model_validator(mode="after")
+    def handle_nulls_and_validate(self) -> Self:
+        return self._handle_nulls_and_validate(check_missing_cols=False)
 
 
 class EmbedGenConfig(BaseModel):
@@ -1345,7 +1473,8 @@ class RowAddRequest(BaseModel):
     data: list[dict[Name, Any]] = Field(
         description=(
             "List of mapping of column names to its value. "
-            "In other words, each item in the list is a row, and each item is a mapping."
+            "In other words, each item in the list is a row, and each item is a mapping. "
+            "Minimum 1 row, maximum 100 rows."
         ),
     )
     stream: bool = Field(
@@ -1363,6 +1492,34 @@ class RowAddRequest(BaseModel):
         default=True,
         description="_Optional_. Whether or not to concurrently generate the output rows and columns.",
     )
+
+    @model_validator(mode="after")
+    def check_data(self) -> Self:
+        if len(self.data) == 0:
+            raise ValueError("You must add at least one row.")
+        if len(self.data) > 100:
+            raise ValueError(
+                f"You can add at most 100 rows per request, received {len(self.data):,d} rows."
+            )
+        return self
+
+    def __repr__(self):
+        _data = [
+            {
+                k: (
+                    {"type": type(v), "shape": v.shape, "dtype": v.dtype}
+                    if isinstance(v, np.ndarray)
+                    else v
+                )
+            }
+            for k, v in self.data.items()
+        ]
+        return (
+            f"{self.__class__.__name__}("
+            f"table_id={self.table_id}  stream={self.stream}  reindex={self.reindex}"
+            f"concurrent={self.concurrent}  data={_data}"
+            ")"
+        )
 
 
 class RowUpdateRequest(BaseModel):
@@ -1412,7 +1569,7 @@ class RowRegenRequest(BaseModel):
         description="Table name or ID.",
     )
     row_ids: list[str] = Field(
-        description="List of ID of the row to regenerate.",
+        description="List of ID of the row to regenerate. Minimum 1 row, maximum 100 rows.",
     )
     stream: bool = Field(
         description="Whether or not to stream the LLM generation.",
@@ -1428,6 +1585,16 @@ class RowRegenRequest(BaseModel):
         default=True,
         description="_Optional_. Whether or not to concurrently generate the output rows and columns.",
     )
+
+    @model_validator(mode="after")
+    def check_data(self) -> Self:
+        if len(self.row_ids) == 0:
+            raise ValueError("You must regenerate at least one row.")
+        if len(self.row_ids) > 100:
+            raise ValueError(
+                f"You can regenerate at most 100 rows per request, received {len(self.data):,d} rows."
+            )
+        return self
 
 
 class RowDeleteRequest(BaseModel):
@@ -1473,8 +1640,8 @@ class SearchRequest(BaseModel):
         default=100, description="_Optional_. Min 1, max 100. Number of rows to return."
     )
     metric: str = Field(
-        default="dot",
-        description='_Optional_. Vector search similarity metric. Defaults to "dot".',
+        default="cosine",
+        description='_Optional_. Vector search similarity metric. Defaults to "cosine".',
     )
     nprobes: Annotated[int, Field(gt=0, le=1000)] = Field(
         default=50,
@@ -1488,7 +1655,7 @@ class SearchRequest(BaseModel):
         ),
     )
     refine_factor: Annotated[int, Field(gt=0, le=1000)] = Field(
-        default=50,
+        default=20,
         description=(
             "_Optional_. A multiplier to control how many additional rows are taken during the refine step. "
             "This argument is only used when the vector column has an IVF PQ index. "

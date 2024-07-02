@@ -42,5 +42,8 @@ class BillingManager:
     def check_file_storage_quota(self) -> None:
         return
 
+    def get_storage_usage(self):
+        return
+
     async def process_storage_usage(self):
         return

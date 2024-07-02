@@ -7,23 +7,24 @@ $ JAMAI_API_BASE=http://localhost:6969/api TZ=Asia/Singapore python -m owl.entry
 ```
 """
 
+from asyncio import sleep
 from collections import defaultdict
 from os import makedirs
 from os.path import exists
 from time import perf_counter
 
-import redis
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
-from filelock import Timeout
+from filelock import FileLock, Timeout
 from loguru import logger
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.background import BackgroundTasks
 from uuid_utils import uuid7
 
+from owl.cache import CACHE
 from owl.routers import gen_table, llm
 from owl.utils.exceptions import (
     ContextOverflowError,
@@ -33,8 +34,13 @@ from owl.utils.exceptions import (
     TableSchemaFixedError,
     UpgradeTierError,
 )
-from owl.utils.logging import replace_logging_handlers, setup_logger_sinks
+from owl.utils.logging import (
+    replace_logging_handlers,
+    setup_logger_sinks,
+    suppress_logging_handlers,
+)
 from owl.utils.openapi import custom_generate_unique_id
+from owl.utils.tasks import repeat_every
 
 try:
     from owl.cloud_client import OwlAsync
@@ -62,8 +68,8 @@ except ImportError as e:
 
 class Config(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-    owl_redis_purge: bool = False
-    owl_redis_host: str = "dragonfly"
+    owl_compute_storage_period_min: float = 1
+    owl_cache_purge: bool = False
     owl_db_dir: str = "db"
     owl_port: int = 7770
     owl_host: str = "0.0.0.0"
@@ -123,12 +129,11 @@ setup_logger_sinks()
 # We purposely don't intercept uvicorn logs since it is typically not useful
 # We also don't intercept transformers logs
 replace_logging_handlers(["uvicorn.access"], False)
+suppress_logging_handlers(["litellm", "openmeter", "azure"], True)
 
 # Maybe purge Redis data
-REDIS = redis.Redis(host=CONFIG.owl_redis_host, port=6379, db=0)
-if CONFIG.owl_redis_purge:
-    for key in REDIS.scan_iter("<owl>*"):
-        REDIS.delete(key)
+if CONFIG.owl_cache_purge:
+    CACHE.purge()
 
 # Cloud client
 if OwlAsync is None or CONFIG.service_key_plain == "":
@@ -191,6 +196,62 @@ async def startup():
         makedirs(CONFIG.owl_db_dir, exist_ok=True)
 
 
+@router.on_event("startup")
+@repeat_every(seconds=CONFIG.owl_compute_storage_period_min * 60, wait_first=True)
+async def periodic_storage_update():
+    if OwlAsync is None:
+        return
+    # Only let one worker perform this task
+    lock = FileLock(f"{CONFIG.owl_db_dir}/periodic_storage_update.lock", blocking=False)
+    try:
+        t0 = perf_counter()
+        with lock:
+            usages = BillingManager.get_storage_usage()
+            if usages is None:
+                return
+            db_usages, file_usages = usages
+            num_ok = num_failed = 0
+            for org_id in db_usages:
+                if org_id == "default":
+                    continue
+                try:
+                    org_info = await owl_client.get_organization(org_id)
+                    manager = BillingManager(
+                        request=None,
+                        openmeter_id=org_info.openmeter_id,
+                        quotas=org_info.quotas,
+                        quota_reset_at=org_info.quota_reset_at,
+                        organization_tier=org_info.tier,
+                        organization_id=org_id,
+                        project_id="",
+                        api_key="",
+                    )
+                    await manager.process_storage_usage(
+                        db_usage=db_usages[org_id],
+                        file_usage=file_usages[org_id],
+                        last_db_usage=org_info.db_storage_gb,
+                        last_file_usage=org_info.file_storage_gb,
+                        min_wait_mins=max(5.0, CONFIG.owl_compute_storage_period_min),
+                    )
+                    num_ok += 1
+                except Exception as e:
+                    logger.warning(f"Storage usage update failed for {org_id}: {e}")
+                    num_failed += 1
+            t = perf_counter() - t0
+            # Hold the lock for a while to block other workers
+            await sleep(max(0.0, (CONFIG.owl_compute_storage_period_min * 60 - t) * 0.5))
+            logger.info(
+                (
+                    f"Periodic storage usage update completed (t={t:,.3f} s, "
+                    f"{num_ok:,d} OK, {num_failed:,d} failed)."
+                )
+            )
+    except Timeout:
+        pass
+    except Exception:
+        logger.exception("Periodic storage usage update encountered an error.")
+
+
 NO_AUTH_ROUTES = {"health", "docs", "openapi.json", "favicon.ico"}
 ERROR_MESSAGE_URL = "https://cloud.jamaibase.com"
 INTERNAL_ERROR_MESSAGE = "Opss sorry we ran into an unexpected error. Please try again later."
@@ -229,7 +290,6 @@ async def authenticate(request: Request, call_next):
     project_id, org_id, org_tier = CONFIG.default_project, CONFIG.default_org, "free"
     token, openmeter_id = "", "default"
     quotas, quota_reset_at = defaultdict(lambda: 1.0), ""
-    db_storage_gb = file_storage_gb = 0.0
 
     # --- OSS Mode --- #
     if CONFIG.service_key_plain == "":
@@ -252,6 +312,7 @@ async def authenticate(request: Request, call_next):
             return ORJSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={
+                    "object": "error",
                     "error": "unauthorized",
                     "message": (
                         "You didn't provide an API key. "
@@ -272,6 +333,7 @@ async def authenticate(request: Request, call_next):
                 return ORJSONResponse(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     content={
+                        "object": "error",
                         "error": "unauthorized",
                         "message": _err_mssg,
                         "detail": _err_mssg,
@@ -289,6 +351,7 @@ async def authenticate(request: Request, call_next):
                 return ORJSONResponse(
                     status_code=status.HTTP_404_NOT_FOUND,
                     content={
+                        "object": "error",
                         "error": "resource_not_found",
                         "message": _err_mssg,
                         "detail": _err_mssg,
@@ -307,6 +370,7 @@ async def authenticate(request: Request, call_next):
                     return ORJSONResponse(
                         status_code=status.HTTP_404_NOT_FOUND,
                         content={
+                            "object": "error",
                             "error": "resource_not_found",
                             "message": _err_mssg,
                             "detail": f"{_err_mssg} Org data: {org_info}",
@@ -319,6 +383,7 @@ async def authenticate(request: Request, call_next):
                     return ORJSONResponse(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         content={
+                            "object": "error",
                             "error": "unexpected_error",
                             "message": INTERNAL_ERROR_MESSAGE,
                             "detail": str(e),
@@ -335,6 +400,7 @@ async def authenticate(request: Request, call_next):
                     return ORJSONResponse(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         content={
+                            "object": "error",
                             "error": "unauthorized",
                             "message": f"{_err_mssg} You can find your API key at {ERROR_MESSAGE_URL}.",
                             "detail": _err_mssg,
@@ -349,6 +415,7 @@ async def authenticate(request: Request, call_next):
                     return ORJSONResponse(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         content={
+                            "object": "error",
                             "error": "unexpected_error",
                             "message": INTERNAL_ERROR_MESSAGE,
                             "detail": str(e),
@@ -360,6 +427,7 @@ async def authenticate(request: Request, call_next):
                     return ORJSONResponse(
                         status_code=status.HTTP_403_FORBIDDEN,
                         content={
+                            "object": "error",
                             "error": "upgrade_tier",
                             "message": "Please activate your organization.",
                             "detail": f"Organization not active. Org data: {org_info}",
@@ -373,6 +441,7 @@ async def authenticate(request: Request, call_next):
                     return ORJSONResponse(
                         status_code=status.HTTP_404_NOT_FOUND,
                         content={
+                            "object": "error",
                             "error": "resource_not_found",
                             "message": _err_mssg,
                             "detail": f"{_err_mssg} Org data: {org_info}",
@@ -385,8 +454,6 @@ async def authenticate(request: Request, call_next):
             org_tier = org_info.tier
             quotas = org_info.quotas
             quota_reset_at = org_info.quota_reset_at
-            db_storage_gb = org_info.db_storage_gb
-            file_storage_gb = org_info.file_storage_gb
             if openmeter_id is None:
                 logger.warning(
                     f"{request.state.id} - Organization {org_id} does not have OpenMeter ID."
@@ -408,8 +475,6 @@ async def authenticate(request: Request, call_next):
         openmeter_id=openmeter_id,
         quotas=quotas,
         quota_reset_at=quota_reset_at,
-        db_storage_gb=db_storage_gb,
-        file_storage_gb=file_storage_gb,
         organization_tier=org_tier,
         organization_id=org_id,
         project_id=project_id,
@@ -463,9 +528,11 @@ async def health() -> Response:
 
 @app.exception_handler(Timeout)
 async def write_lock_timeout_exc_handler(request: Request, exc: Timeout):
+    logger.warning(f"{request.state.id} - {exc}")
     return ORJSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={
+            "object": "error",
             "error": "write_lock_timeout",
             "message": "This table is currently busy. Please try again later.",
             "detail": str(exc),
@@ -478,9 +545,11 @@ async def write_lock_timeout_exc_handler(request: Request, exc: Timeout):
 
 @app.exception_handler(UpgradeTierError)
 async def upgrade_tier_exc_handler(request: Request, exc: UpgradeTierError):
+    logger.info(f"{request.state.id} - {exc}")
     return ORJSONResponse(
         status_code=status.HTTP_403_FORBIDDEN,
         content={
+            "object": "error",
             "error": "upgrade_tier",
             "message": str(exc),
             "detail": str(exc),
@@ -492,9 +561,11 @@ async def upgrade_tier_exc_handler(request: Request, exc: UpgradeTierError):
 
 @app.exception_handler(InsufficientCreditsError)
 async def insufficient_credits_exc_handler(request: Request, exc: InsufficientCreditsError):
+    logger.info(f"{request.state.id} - {exc}")
     return ORJSONResponse(
         status_code=status.HTTP_403_FORBIDDEN,
         content={
+            "object": "error",
             "error": "insufficient_credits",
             "message": str(exc),
             "detail": str(exc),
@@ -506,9 +577,11 @@ async def insufficient_credits_exc_handler(request: Request, exc: InsufficientCr
 
 @app.exception_handler(PermissionError)
 async def permission_error_exc_handler(request: Request, exc: PermissionError):
+    logger.info(f"{request.state.id} - {exc}")
     return ORJSONResponse(
         status_code=status.HTTP_403_FORBIDDEN,
         content={
+            "object": "error",
             "error": "resource_protected",
             "message": str(exc),
             "detail": str(exc),
@@ -520,9 +593,11 @@ async def permission_error_exc_handler(request: Request, exc: PermissionError):
 
 @app.exception_handler(FileExistsError)
 async def file_exists_exc_handler(request: Request, exc: FileExistsError):
+    logger.info(f"{request.state.id} - {exc}")
     return ORJSONResponse(
         status_code=status.HTTP_409_CONFLICT,
         content={
+            "object": "error",
             "error": "resource_exists",
             "message": str(exc),
             "detail": str(exc),
@@ -534,9 +609,11 @@ async def file_exists_exc_handler(request: Request, exc: FileExistsError):
 
 @app.exception_handler(ResourceExistsError)
 async def resource_exists_exc_handler(request: Request, exc: ResourceExistsError):
+    logger.info(f"{request.state.id} - {exc}")
     return ORJSONResponse(
         status_code=status.HTTP_409_CONFLICT,
         content={
+            "object": "error",
             "error": "resource_exists",
             "message": str(exc),
             "detail": str(exc),
@@ -548,9 +625,11 @@ async def resource_exists_exc_handler(request: Request, exc: ResourceExistsError
 
 @app.exception_handler(FileNotFoundError)
 async def file_not_found_exc_handler(request: Request, exc: FileNotFoundError):
+    logger.info(f"{request.state.id} - {exc}")
     return ORJSONResponse(
         status_code=status.HTTP_404_NOT_FOUND,
         content={
+            "object": "error",
             "error": "resource_not_found",
             "message": str(exc),
             "detail": str(exc),
@@ -562,9 +641,11 @@ async def file_not_found_exc_handler(request: Request, exc: FileNotFoundError):
 
 @app.exception_handler(ResourceNotFoundError)
 async def resource_not_found_exc_handler(request: Request, exc: ResourceNotFoundError):
+    logger.info(f"{request.state.id} - {exc}")
     return ORJSONResponse(
         status_code=status.HTTP_404_NOT_FOUND,
         content={
+            "object": "error",
             "error": "resource_not_found",
             "message": str(exc),
             "detail": str(exc),
@@ -576,9 +657,11 @@ async def resource_not_found_exc_handler(request: Request, exc: ResourceNotFound
 
 @app.exception_handler(TableSchemaFixedError)
 async def table_fixed_exc_handler(request: Request, exc: TableSchemaFixedError):
+    logger.info(f"{request.state.id} - {exc}")
     return ORJSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
+            "object": "error",
             "error": "table_schema_fixed",
             "message": str(exc),
             "detail": str(exc),
@@ -590,9 +673,11 @@ async def table_fixed_exc_handler(request: Request, exc: TableSchemaFixedError):
 
 @app.exception_handler(ContextOverflowError)
 async def context_overflow_exc_handler(request: Request, exc: ContextOverflowError):
+    logger.info(f"{request.state.id} - {exc}")
     return ORJSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
+            "object": "error",
             "error": "context_overflow",
             "message": str(exc),
             "detail": str(exc),
@@ -604,12 +689,14 @@ async def context_overflow_exc_handler(request: Request, exc: ContextOverflowErr
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_exc_handler(request: Request, exc: RequestValidationError):
+    logger.info(f"{request.state.id} - RequestValidationError: {exc.errors()}")
     return ORJSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
+            "object": "error",
             "error": "validation_error",
             "message": "Your request contains errors and cannot be processed at this time.",
-            "detail": str(exc),
+            "detail": str(exc.errors()),
             "request_id": request.state.id,
             "body": exc.body,
             "exception": exc.__class__.__name__,
@@ -619,9 +706,11 @@ async def request_validation_exc_handler(request: Request, exc: RequestValidatio
 
 @app.exception_handler(Exception)
 async def exception_handler(request: Request, exc: Exception):
+    logger.warning(f"{request.state.id} - {exc}")
     return ORJSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
+            "object": "error",
             "error": "unexpected_error",
             "message": INTERNAL_ERROR_MESSAGE,
             "detail": str(exc),

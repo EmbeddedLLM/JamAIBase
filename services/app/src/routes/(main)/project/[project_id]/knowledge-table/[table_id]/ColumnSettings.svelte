@@ -1,14 +1,16 @@
 <script lang="ts">
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { page } from '$app/stores';
 	import { invalidate } from '$app/navigation';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
 	import { modelsAvailable } from '$globalStore';
 	import { insertAtCursor } from '$lib/utils';
 	import logger from '$lib/logger';
-	import type { ActionTableCol } from '$lib/types';
+	import type { GenTableCol } from '$lib/types';
 
 	import SelectKnowledgeTableDialog from '../../SelectKnowledgeTableDialog.svelte';
 	import ModelSelect from '$lib/components/preset/ModelSelect.svelte';
+	import { toast } from 'svelte-sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as Select from '$lib/components/ui/select';
 	import Checkbox from '$lib/components/Checkbox.svelte';
@@ -18,15 +20,15 @@
 	import RowSearchIcon from '$lib/icons/RowSearchIcon.svelte';
 	import MessageSquareIcon from '$lib/icons/MessageSquareIcon.svelte';
 
-	export let isColumnSettingsOpen: { column: ActionTableCol | null; showMenu: boolean };
+	export let isColumnSettingsOpen: { column: GenTableCol | null; showMenu: boolean };
 	export let isDeletingColumn: string | null;
-	let usableColumns: ActionTableCol[] = [];
+	let usableColumns: GenTableCol[] = [];
 	$: if ($page.data.table && $page.data.table.tableData && $page.data.table.tableData.cols) {
 		usableColumns =
-			($page.data.table.tableData.cols as ActionTableCol[])
+			($page.data.table.tableData.cols as GenTableCol[])
 				?.slice(
 					0,
-					($page.data.table.tableData.cols as ActionTableCol[]).findIndex(
+					($page.data.table.tableData.cols as GenTableCol[]).findIndex(
 						(col) => col.id == isColumnSettingsOpen.column?.id
 					)
 				)
@@ -82,12 +84,14 @@
 		selectedKnowledgeTables = isColumnSettingsOpen.column?.gen_config?.rag_params?.table_id ?? '';
 	}
 
-	async function saveColumnTitle(
-		e: KeyboardEvent & { currentTarget: EventTarget & HTMLInputElement }
-	) {
-		if (!isColumnSettingsOpen.column) return;
-		if (e.key === 'Enter') {
-			const response = await fetch(`/api/v1/gen_tables/knowledge/columns/rename`, {
+	async function saveColumnSettings() {
+		if (!isColumnSettingsOpen.column || isLoading) return;
+
+		isLoading = true;
+
+		const response = await fetch(
+			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/knowledge/gen_config/update`,
+			{
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
@@ -95,61 +99,33 @@
 				body: JSON.stringify({
 					table_id: $page.params.table_id,
 					column_map: {
-						[isColumnSettingsOpen.column.id]: e.currentTarget.value
+						[isColumnSettingsOpen.column.id]: isColumnSettingsOpen.column.id.includes('Embed')
+							? {
+									embedding_model: selectedEmbedModel,
+									source_column: selectedSourceColumn
+								}
+							: {
+									model: selectedModel,
+									messages: [
+										{ role: 'system', content: editSystemPrompt },
+										{ role: 'user', content: editPrompt }
+									],
+									temperature: parseFloat(editTemperature),
+									max_tokens: parseInt(editMaxTokens),
+									top_p: parseFloat(editTopP),
+									rag_params: isRAGEnabled
+										? {
+												k: parseInt(editRAGk),
+												// fetch_k: parseInt(editRAGFetchk),
+												table_id: selectedKnowledgeTables,
+												reranking_model: selectedRerankModel || null
+											}
+										: undefined
+								}
 					}
 				})
-			});
-
-			if (response.ok) {
-				isColumnSettingsOpen = { ...isColumnSettingsOpen, showMenu: false };
-				invalidate('knowledge-table:slug');
-			} else {
-				const responseBody = await response.json();
-				logger.error('KNOWTBL_COLUMN_RENAME', responseBody);
-				alert('Failed to rename column: ' + (responseBody.message || JSON.stringify(responseBody)));
 			}
-		}
-	}
-
-	async function saveColumnSettings() {
-		if (!isColumnSettingsOpen.column || isLoading) return;
-
-		isLoading = true;
-
-		const response = await fetch(`/api/v1/gen_tables/knowledge/gen_config/update`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			body: JSON.stringify({
-				table_id: $page.params.table_id,
-				column_map: {
-					[isColumnSettingsOpen.column.id]: isColumnSettingsOpen.column.id.includes('Embed')
-						? {
-								embedding_model: selectedEmbedModel,
-								source_column: selectedSourceColumn
-							}
-						: {
-								model: selectedModel,
-								messages: [
-									{ role: 'system', content: editSystemPrompt },
-									{ role: 'user', content: editPrompt }
-								],
-								temperature: parseFloat(editTemperature),
-								max_tokens: parseInt(editMaxTokens),
-								top_p: parseFloat(editTopP),
-								rag_params: isRAGEnabled
-									? {
-											k: parseInt(editRAGk),
-											// fetch_k: parseInt(editRAGFetchk),
-											table_id: selectedKnowledgeTables,
-											reranking_model: selectedRerankModel || null
-										}
-									: undefined
-							}
-				}
-			})
-		});
+		);
 
 		if (response.ok) {
 			isColumnSettingsOpen = { ...isColumnSettingsOpen, showMenu: false };
@@ -157,10 +133,9 @@
 		} else {
 			const responseBody = await response.json();
 			logger.error('KNOWTBL_COLUMN_UPDATESETTINGS', responseBody);
-			alert(
-				'Failed to update column settings: ' +
-					(responseBody.message || JSON.stringify(responseBody))
-			);
+			toast.error('Failed to update column settings', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		}
 
 		isLoading = false;
@@ -254,15 +229,9 @@
 				>
 					{!isColumnSettingsOpen.column?.gen_config ? 'input' : 'output'}
 				</span>
-				<input
-					type="text"
-					on:input={(e) =>
-						e.currentTarget.setAttribute('size', `${e.currentTarget.value.length * 1.2}`)}
-					on:keydown={saveColumnTitle}
-					size={(isColumnSettingsOpen.column?.id.length ?? 0) * 1.2}
-					value={isColumnSettingsOpen.column?.id}
-					class="bg-transparent"
-				/>
+				<span>
+					{isColumnSettingsOpen.column?.id}
+				</span>
 			</div>
 		</div>
 

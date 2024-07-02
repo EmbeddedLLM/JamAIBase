@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from time import sleep
-from typing import Type
+from typing import Any, Type
 
 import pytest
 from flaky import flaky
@@ -133,7 +133,21 @@ def _add_row(
         table_type,
         p.RowAddRequest(table_id=table_name, data=[data], stream=stream),
     )
-    return response if stream else response.rows[0]
+    if stream:
+        return response
+    assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+    assert len(response.rows) == 1
+    return response.rows[0]
+
+
+def _assert_is_vector(x: Any):
+    assert isinstance(x, list), f"Not a list: {x}"
+    assert len(x) > 0, f"Not a non-empty list: {x}"
+    assert all(isinstance(v, float) for v in x), f"Not a list of floats: {x}"
+
+
+def _collect_text(responses: list[p.GenTableStreamChatCompletionChunk], col: str):
+    return "".join(r.text for r in responses if r.output_column_name == col)
 
 
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
@@ -151,6 +165,200 @@ def test_create_delete_table(client_cls: Type[JamAI], table_type: p.TableType):
         jamai.delete_table(table_type, TABLE_ID_B)
         with pytest.raises(RuntimeError):
             jamai.get_table(table_type, TABLE_ID_B)
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("table_type", [p.TableType.action, p.TableType.chat])
+def test_create_table_with_valid_knowledge_table(client_cls: Type[JamAI], table_type: p.TableType):
+    jamai = client_cls()
+    knowledge_table_id = "test_knowledge_table"
+
+    try:
+        # Create Knowledge Table
+        with _create_table(
+            jamai, p.TableType.knowledge, name=knowledge_table_id
+        ) as knowledge_table:
+            assert isinstance(knowledge_table, p.TableMetaResponse)
+
+            # Define schema for Action/Chat Table with a valid Knowledge Table reference
+            schema = p.TableSchemaCreate(
+                id=TABLE_ID_A,
+                cols=[
+                    p.ColumnSchemaCreate(id="User", dtype=p.DtypeCreateEnum.str_),
+                    p.ColumnSchemaCreate(
+                        id="AI",
+                        dtype=p.DtypeCreateEnum.str_,
+                        gen_config=p.ChatRequest(
+                            model=_get_chat_model(),
+                            messages=[
+                                p.ChatEntry.system("You are a concise assistant."),
+                                p.ChatEntry.user("Summarize: ${User}"),
+                            ],
+                            temperature=0.001,
+                            top_p=0.001,
+                            max_tokens=10,
+                            rag_params=p.RAGParams(table_id=knowledge_table_id),  # Valid reference
+                        ).model_dump(),
+                    ),
+                ],
+            )
+            schema_dict = schema.model_dump()
+
+            if table_type == p.TableType.action:
+                table = jamai.create_action_table(p.ActionTableSchemaCreate(**schema_dict))
+            elif table_type == p.TableType.chat:
+                table = jamai.create_chat_table(p.ChatTableSchemaCreate(**schema_dict))
+            else:
+                raise ValueError(f"Invalid table type: {table_type}")
+
+            assert isinstance(table, p.TableMetaResponse)
+            assert table.id == TABLE_ID_A
+    except Exception:
+        raise
+    finally:
+        jamai.delete_table(p.TableType.knowledge, knowledge_table_id)
+        jamai.delete_table(table_type, TABLE_ID_A)
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("table_type", [p.TableType.action, p.TableType.chat])
+def test_create_table_with_invalid_knowledge_table(
+    client_cls: Type[JamAI], table_type: p.TableType
+):
+    jamai = client_cls()
+    invalid_knowledge_table_id = "nonexistent_table"
+
+    try:
+        # Define Schema for Action/Chat Table with an INVALID Knowledge Table reference
+        schema = p.TableSchemaCreate(
+            id=TABLE_ID_A,
+            cols=[
+                p.ColumnSchemaCreate(id="User", dtype=p.DtypeCreateEnum.str_),
+                p.ColumnSchemaCreate(
+                    id="AI",
+                    dtype=p.DtypeCreateEnum.str_,
+                    gen_config=p.ChatRequest(
+                        model=_get_chat_model(),
+                        messages=[
+                            p.ChatEntry.system("You are a concise assistant."),
+                            p.ChatEntry.user("Summarize: ${User}"),
+                        ],
+                        temperature=0.001,
+                        top_p=0.001,
+                        max_tokens=10,
+                        rag_params=p.RAGParams(
+                            table_id=invalid_knowledge_table_id
+                        ),  # Invalid reference
+                    ).model_dump(),
+                ),
+            ],
+        )
+        schema_dict = schema.model_dump()
+
+        # Expect a RuntimeError (server-side ResourceNotFoundError)
+        with pytest.raises(RuntimeError):
+            if table_type == p.TableType.action:
+                jamai.create_action_table(p.ActionTableSchemaCreate(**schema_dict))
+            elif table_type == p.TableType.chat:
+                jamai.create_chat_table(p.ChatTableSchemaCreate(**schema_dict))
+            else:
+                raise ValueError(f"Invalid table type: {table_type}")
+    except Exception:
+        raise
+    finally:
+        jamai.delete_table(p.TableType.knowledge, invalid_knowledge_table_id)
+        jamai.delete_table(table_type, TABLE_ID_A)
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("table_type", TABLE_TYPES)
+@pytest.mark.parametrize("stream", [True, False])
+def test_create_table_without_llm_model(
+    client_cls: Type[JamAI], table_type: p.TableType, stream: bool
+):
+    jamai = client_cls()
+    try:
+        kwargs = dict(
+            id=TABLE_ID_A,
+            cols=[
+                p.ColumnSchemaCreate(id="inputs", dtype=p.DtypeCreateEnum.str_),
+                p.ColumnSchemaCreate(
+                    id="summary",
+                    dtype=p.DtypeCreateEnum.str_,
+                    gen_config=p.ChatRequest(
+                        model="",
+                        messages=[
+                            p.ChatEntry.system("You are a concise assistant."),
+                            # Interpolate string and non-string input columns
+                            p.ChatEntry.user("Summarise ${inputs}"),
+                        ],
+                        temperature=0.001,
+                        top_p=0.001,
+                        max_tokens=10,
+                    ).model_dump(),
+                ),
+            ],
+        )
+        if table_type == p.TableType.action:
+            table = jamai.create_action_table(p.ActionTableSchemaCreate(**kwargs))
+        elif table_type == p.TableType.knowledge:
+            table = jamai.create_knowledge_table(
+                p.KnowledgeTableSchemaCreate(embedding_model=_get_embedding_model(), **kwargs)
+            )
+        elif table_type == p.TableType.chat:
+            kwargs["cols"] = [
+                p.ColumnSchemaCreate(id="User", dtype=p.DtypeCreateEnum.str_),
+                p.ColumnSchemaCreate(
+                    id="AI",
+                    dtype=p.DtypeCreateEnum.str_,
+                    gen_config=p.ChatRequest(
+                        model=_get_chat_model(),
+                        messages=[p.ChatEntry.system("You are a wacky assistant.")],
+                        temperature=0.001,
+                        top_p=0.001,
+                        max_tokens=5,
+                    ).model_dump(),
+                ),
+            ] + kwargs["cols"]
+            table = jamai.create_chat_table(p.ChatTableSchemaCreate(**kwargs))
+        assert isinstance(table, p.TableMetaResponse)
+        assert table.id == TABLE_ID_A
+        summary_col = [c for c in table.cols if c.id == "summary"][0]
+        assert summary_col.gen_config["model"] is not None
+        assert len(summary_col.gen_config["model"]) > 0
+
+        # Try adding row
+        data = dict(
+            inputs="LanceDB is an open-source vector database for AI that's designed to store, manage, query and retrieve embeddings on large-scale multi-modal data."
+        )
+        if table_type == p.TableType.knowledge:
+            data["Title"] = "Dune: Part Two."
+            data["Text"] = "Dune: Part Two is a 2024 American epic science fiction film."
+        response = jamai.add_table_rows(
+            table_type,
+            p.RowAddRequest(table_id=TABLE_ID_A, data=[data], stream=stream),
+        )
+        if stream:
+            responses = [r for r in response]
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+            assert all(r.object == "gen_table.completion.chunk" for r in responses)
+            if table_type == p.TableType.chat:
+                assert all(r.output_column_name in ("summary", "AI") for r in responses)
+            else:
+                assert all(r.output_column_name == "summary" for r in responses)
+        else:
+            assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+            assert len(response.rows) == 1
+            row = response.rows[0]
+            assert isinstance(row, p.GenTableChatCompletionChunks)
+            assert "summary" in row.columns
+    except Exception:
+        raise
+    finally:
+        jamai.delete_table(table_type, TABLE_ID_A)
 
 
 @flaky(max_runs=3, min_passes=1)
@@ -212,27 +420,28 @@ def test_add_drop_columns(client_cls: Type[JamAI], table_type: p.TableType):
         row = rows.items[0]
         for col in ["add_bool", "add_int", "add_float", "add_str"]:
             assert row[col]["value"] is None
-        # Test adding new row
-        _add_row(
-            jamai,
-            table_type,
-            False,
-            data=dict(
-                good=True,
-                words=5,
-                stars=9.9,
-                inputs=TEXT,
-                summary="<dummy>",
-                add_bool=False,
-                add_int=0,
-                add_float=1.0,
-                add_str="pretty",
-            ),
-        )
+        # Test adding new rows
+        for i in range(5):
+            _add_row(
+                jamai,
+                table_type,
+                False,
+                data=dict(
+                    good=True,
+                    words=5 + i,
+                    stars=9.9,
+                    inputs=TEXT,
+                    summary="<dummy>",
+                    add_bool=False,
+                    add_int=0,
+                    add_float=1.0,
+                    add_str="pretty",
+                ),
+            )
         rows = jamai.list_table_rows(table_type, TABLE_ID_A)
         assert isinstance(rows.items, list)
         assert all(set(r.keys()) == expected_cols for r in rows.items)
-        assert len(rows.items) == 2
+        assert len(rows.items) == 6
         row = rows.items[0]  # Should retrieve the latest row
         for col in ["add_bool", "add_int", "add_float", "add_str"]:
             assert row[col]["value"] is not None
@@ -267,15 +476,16 @@ def test_add_drop_columns(client_cls: Type[JamAI], table_type: p.TableType):
         assert cols == expected_cols, cols
         rows = jamai.list_table_rows(table_type, TABLE_ID_A)
         assert isinstance(rows.items, list)
-        assert len(rows.items) == 2
+        assert len(rows.items) == 6
         assert all(set(r.keys()) == expected_cols for r in rows.items)
         # Test adding a few rows
-        _add_row(
-            jamai,
-            table_type,
-            False,
-            data=dict(words=5, inputs=TEXT, add_float=0.0),
-        )
+        for i in range(5):
+            _add_row(
+                jamai,
+                table_type,
+                False,
+                data=dict(words=5 + i, inputs=TEXT, add_float=0.0),
+            )
         _add_row(
             jamai,
             table_type,
@@ -290,7 +500,7 @@ def test_add_drop_columns(client_cls: Type[JamAI], table_type: p.TableType):
         )
         rows = jamai.list_table_rows(table_type, TABLE_ID_A)
         assert isinstance(rows.items, list)
-        assert len(rows.items) == 5
+        assert len(rows.items) == 13
         assert all(set(r.keys()) == expected_cols for r in rows.items), [
             list(r.keys()) for r in rows.items
         ]
@@ -425,54 +635,256 @@ def test_reorder_columns(client_cls: Type[JamAI], table_type: p.TableType):
         summary = _collect_text(list(response), "summary")
         assert len(summary) > 0
 
-
-def _update_gen_config(
-    jamai: JamAI,
-    table_type: p.TableType,
-    table_id: str = TABLE_ID_A,
-) -> p.TableMetaResponse:
-    table = jamai.update_gen_config(
-        table_type,
-        p.GenConfigUpdateRequest(
-            table_id=table_id,
-            column_map=dict(
-                summary=p.ChatRequest(
-                    model=_get_chat_model(),
-                    messages=[
-                        p.ChatEntry.system("You are a concise assistant."),
-                        p.ChatEntry.user('Say "I am a unicorn.".'),
-                    ],
-                    temperature=0.001,
-                    top_p=0.001,
-                    max_tokens=10,
-                ).model_dump()
-            ),
-        ),
-    )
-    assert isinstance(table, p.TableMetaResponse)
-    return table
+        # --- Test validation --- #
+        column_names = ["inputs", "good", "stars", "summary", "words"]
+        if table_type == p.TableType.action:
+            pass
+        elif table_type == p.TableType.knowledge:
+            column_names += ["Title", "Title Embed", "Text", "Text Embed", "File ID"]
+        elif table_type == p.TableType.chat:
+            column_names += ["User", "AI"]
+        else:
+            raise ValueError(f"Invalid table type: {table_type}")
+        with pytest.raises(RuntimeError, match="validation_error"):
+            jamai.reorder_columns(
+                table_type,
+                p.ColumnReorderRequest(table_id=TABLE_ID_A, column_names=column_names),
+            )
 
 
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
-def test_update_gen_config(client_cls: Type[JamAI], table_type: p.TableType):
+@pytest.mark.parametrize("stream", [True, False])
+def test_update_gen_config(client_cls: Type[JamAI], table_type: p.TableType, stream: bool):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
         assert isinstance(table, p.TableMetaResponse)
-        _update_gen_config(jamai, table_type)
-
+        table = jamai.update_gen_config(
+            table_type,
+            p.GenConfigUpdateRequest(
+                table_id=TABLE_ID_A,
+                column_map=dict(
+                    summary=p.ChatRequest(
+                        model=_get_chat_model(),
+                        messages=[
+                            p.ChatEntry.system("You are a concise assistant."),
+                            p.ChatEntry.user('Say "I am a unicorn.".'),
+                        ],
+                        temperature=0.001,
+                        top_p=0.001,
+                        max_tokens=10,
+                    ).model_dump()
+                ),
+            ),
+        )
+        assert isinstance(table, p.TableMetaResponse)
+        # Check gen config
         table = jamai.get_table(table_type, TABLE_ID_A)
         assert isinstance(table, p.TableMetaResponse)
         assert table.cols[-1].id == "summary"
         assert table.cols[-1].gen_config is not None
         assert "unicorn" in table.cols[-1].gen_config["messages"][-1]["content"]
+        # Test adding row
+        data = dict(good=True, words=5, stars=7.9, inputs=TEXT)
+        if table_type == p.TableType.action:
+            pass
+        elif table_type == p.TableType.knowledge:
+            data["Title"] = "Dune: Part Two."
+            data["Text"] = "Dune: Part Two is a 2024 American epic science fiction film."
+        elif table_type == p.TableType.chat:
+            data["User"] = "Tell me a joke."
+        else:
+            raise ValueError(f"Invalid table type: {table_type}")
+        response = jamai.add_table_rows(
+            table_type,
+            p.RowAddRequest(table_id=TABLE_ID_A, data=[data], stream=stream),
+        )
+        if stream:
+            responses = [r for r in response]
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+            assert all(r.object == "gen_table.completion.chunk" for r in responses)
+            if table_type == p.TableType.chat:
+                assert all(r.output_column_name in ("summary", "AI") for r in responses)
+            else:
+                assert all(r.output_column_name == "summary" for r in responses)
+            assert "unicorn" in "".join(r.text for r in responses)
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+            assert all(isinstance(r.usage, p.CompletionUsage) for r in responses)
+            assert all(isinstance(r.prompt_tokens, int) for r in responses)
+            assert all(isinstance(r.completion_tokens, int) for r in responses)
+        else:
+            assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+            assert len(response.rows) == 1
+            row = response.rows[0]
+            assert isinstance(row, p.GenTableChatCompletionChunks)
+            assert row.object == "gen_table.completion.chunks"
+            assert "unicorn" in row.columns["summary"].text
+            assert isinstance(row.columns["summary"].usage, p.CompletionUsage)
+            assert isinstance(row.columns["summary"].prompt_tokens, int)
+            assert isinstance(row.columns["summary"].completion_tokens, int)
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("table_type", [p.TableType.action, p.TableType.chat])
+def test_update_gen_config_with_valid_knowledge_table(
+    client_cls: Type[JamAI], table_type: p.TableType
+):
+    jamai = client_cls()
+    current_table_id = TABLE_ID_A
+    knowledge_table_id = "test_knowledge_table"
+
+    try:
+        # Create a Knowledge Table
+        with _create_table(
+            jamai, p.TableType.knowledge, name=knowledge_table_id
+        ) as knowledge_table:
+            assert isinstance(knowledge_table, p.TableMetaResponse)
+
+            jamai.delete_table(table_type, current_table_id)
+            # Create a Action/Chat Table
+            schema = p.TableSchemaCreate(
+                id=current_table_id,
+                cols=[
+                    p.ColumnSchemaCreate(id="User", dtype=p.DtypeCreateEnum.str_),
+                    p.ColumnSchemaCreate(
+                        id="AI",
+                        dtype=p.DtypeCreateEnum.str_,
+                        gen_config=p.ChatRequest(
+                            model=_get_chat_model(),
+                            messages=[
+                                p.ChatEntry.system("You are a concise assistant."),
+                                p.ChatEntry.user("Summarize: ${User}"),
+                            ],
+                            temperature=0.001,
+                            top_p=0.001,
+                            max_tokens=10,
+                        ).model_dump(),
+                    ),
+                ],
+            )
+            schema_dict = schema.model_dump()
+
+            if table_type == p.TableType.action:
+                table = jamai.create_action_table(p.ActionTableSchemaCreate(**schema_dict))
+            elif table_type == p.TableType.chat:
+                table = jamai.create_chat_table(p.ChatTableSchemaCreate(**schema_dict))
+            else:
+                raise ValueError(f"Invalid table type: {table_type}")
+
+            # Update gen_config with valid Knowledge Table reference in RAGParams
+            updated_config = p.ChatRequest(
+                model=_get_chat_model(),
+                messages=[
+                    p.ChatEntry.system("You are a concise assistant."),
+                    p.ChatEntry.user('Say "Hello, world!"'),
+                ],
+                temperature=0.001,
+                top_p=0.001,
+                max_tokens=10,
+                rag_params=p.RAGParams(table_id=knowledge_table_id),  # Reference Knowledge Table
+            ).model_dump()
+
+            table = jamai.update_gen_config(
+                table_type,
+                p.GenConfigUpdateRequest(
+                    table_id=current_table_id,
+                    column_map=dict(AI=updated_config),
+                ),
+            )
+
+            assert isinstance(table, p.TableMetaResponse)
+            assert table.cols[-1].id == "AI"
+            assert table.cols[-1].gen_config is not None
+            assert table.cols[-1].gen_config["rag_params"]["table_id"] == knowledge_table_id
+
+            jamai.delete_table(table_type, current_table_id)
+    except Exception:
+        raise
+    finally:
+        jamai.delete_table(p.TableType.knowledge, knowledge_table_id)
+        jamai.delete_table(table_type, current_table_id)
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("table_type", [p.TableType.action, p.TableType.chat])
+def test_update_gen_config_with_invalid_knowledge_table(
+    client_cls: Type[JamAI], table_type: p.TableType
+):
+    jamai = client_cls()
+    current_table_id = TABLE_ID_A
+    invalid_knowledge_table_id = "nonexistent_table"
+
+    try:
+        with _create_table(jamai, table_type) as action_table:
+            assert isinstance(action_table, p.TableMetaResponse)
+
+            jamai.delete_table(table_type, current_table_id)
+            # Create a Action/Chat Table
+            schema = p.TableSchemaCreate(
+                id=current_table_id,
+                cols=[
+                    p.ColumnSchemaCreate(id="User", dtype=p.DtypeCreateEnum.str_),
+                    p.ColumnSchemaCreate(
+                        id="AI",
+                        dtype=p.DtypeCreateEnum.str_,
+                        gen_config=p.ChatRequest(
+                            model=_get_chat_model(),
+                            messages=[
+                                p.ChatEntry.system("You are a concise assistant."),
+                                p.ChatEntry.user("Summarize: ${User}"),
+                            ],
+                            temperature=0.001,
+                            top_p=0.001,
+                            max_tokens=10,
+                        ).model_dump(),
+                    ),
+                ],
+            )
+            schema_dict = schema.model_dump()
+
+            if table_type == p.TableType.action:
+                jamai.create_action_table(p.ActionTableSchemaCreate(**schema_dict))
+            elif table_type == p.TableType.chat:
+                jamai.create_chat_table(p.ChatTableSchemaCreate(**schema_dict))
+            else:
+                raise ValueError(f"Invalid table type: {table_type}")
+
+            # Update gen_config with an INVALID Knowledge Table reference in RAGParams
+            updated_config = p.ChatRequest(
+                model=_get_chat_model(),
+                messages=[
+                    p.ChatEntry.system("You are a concise assistant."),
+                    p.ChatEntry.user('Say "Hello, world!"'),
+                ],
+                temperature=0.001,
+                top_p=0.001,
+                max_tokens=10,
+                rag_params=p.RAGParams(table_id=invalid_knowledge_table_id),  # Invalid reference!
+            ).model_dump()
+
+            # Expect a RuntimeError (server-side ResourceNotFoundError)
+            with pytest.raises(RuntimeError):
+                jamai.update_gen_config(
+                    table_type,
+                    p.GenConfigUpdateRequest(
+                        table_id=current_table_id,
+                        column_map=dict(summary=updated_config),
+                    ),
+                )
+    except Exception:
+        raise
+    finally:
+        jamai.delete_table(p.TableType.knowledge, invalid_knowledge_table_id)
+        jamai.delete_table(table_type, current_table_id)
 
 
 @flaky(max_runs=3, min_passes=1)
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 @pytest.mark.parametrize("stream", [True, False])
-def test_empty_gen_config(client_cls: Type[JamAI], table_type: p.TableType, stream: bool):
+def test_null_gen_config(client_cls: Type[JamAI], table_type: p.TableType, stream: bool):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
         assert isinstance(table, p.TableMetaResponse)
@@ -500,7 +912,447 @@ def test_empty_gen_config(client_cls: Type[JamAI], table_type: p.TableType, stre
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 @pytest.mark.parametrize("stream", [True, False])
+def test_empty_prompts(
+    client_cls: Type[JamAI],
+    table_type: p.TableType,
+    stream: bool,
+):
+    jamai = client_cls()
+    table_name = TABLE_ID_A
+    jamai.delete_table(table_type, table_name)
+    try:
+        kwargs = dict(
+            id=table_name,
+            cols=[
+                p.ColumnSchemaCreate(id="words", dtype=p.DtypeCreateEnum.int_),
+                p.ColumnSchemaCreate(
+                    id="summary",
+                    dtype=p.DtypeCreateEnum.str_,
+                    gen_config=p.ChatRequest(
+                        model=_get_chat_model(),
+                        messages=[p.ChatEntry.system(""), p.ChatEntry.user("")],
+                        temperature=0.001,
+                        top_p=0.001,
+                        max_tokens=10,
+                    ).model_dump(),
+                ),
+            ],
+        )
+        if table_type == p.TableType.action:
+            table = jamai.create_action_table(p.ActionTableSchemaCreate(**kwargs))
+        elif table_type == p.TableType.knowledge:
+            table = jamai.create_knowledge_table(
+                p.KnowledgeTableSchemaCreate(embedding_model=_get_embedding_model(), **kwargs)
+            )
+        elif table_type == p.TableType.chat:
+            kwargs["cols"] = [
+                p.ColumnSchemaCreate(id="User", dtype=p.DtypeCreateEnum.str_),
+                p.ColumnSchemaCreate(
+                    id="AI",
+                    dtype=p.DtypeCreateEnum.str_,
+                    gen_config=p.ChatRequest(
+                        model=_get_chat_model(),
+                        messages=[p.ChatEntry.system("")],
+                        temperature=0.001,
+                        top_p=0.001,
+                        max_tokens=5,
+                    ).model_dump(),
+                ),
+            ] + kwargs["cols"]
+            table = jamai.create_chat_table(p.ChatTableSchemaCreate(**kwargs))
+
+        assert isinstance(table, p.TableMetaResponse)
+        data = dict(words=5)
+        if table_type == p.TableType.knowledge:
+            data["Title"] = "Dune: Part Two."
+            data["Text"] = "Dune: Part Two is a 2024 American epic science fiction film."
+        response = jamai.add_table_rows(
+            table_type,
+            p.RowAddRequest(table_id=table_name, data=[data], stream=stream),
+        )
+        if stream:
+            # Must wait until stream ends
+            responses = [r for r in response]
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+            summary = "".join(r.text for r in responses if r.output_column_name == "summary")
+            assert len(summary) > 0
+            if table_type == p.TableType.chat:
+                ai = "".join(r.text for r in responses if r.output_column_name == "AI")
+                assert len(ai) > 0
+        else:
+            assert isinstance(response.rows[0], p.GenTableChatCompletionChunks)
+    except Exception:
+        raise
+    finally:
+        jamai.delete_table(table_type, table_name)
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("stream", [True, False])
+def test_knowledge_table_embedding(client_cls: Type[JamAI], stream: bool):
+    jamai = client_cls()
+    try:
+        # Create Knowledge Table and add some rows
+        knowledge_table_id = TABLE_ID_A
+        table_type = p.TableType.knowledge
+        jamai.delete_table(table_type, knowledge_table_id)
+        table = jamai.create_knowledge_table(
+            p.KnowledgeTableSchemaCreate(
+                id=knowledge_table_id, cols=[], embedding_model=_get_embedding_model()
+            )
+        )
+        assert isinstance(table, p.TableMetaResponse)
+        # Don't include embeddings
+        data = [
+            dict(
+                Title="Six-spot burnet",
+                Text="The six-spot burnet is a day-flying moth of the family Zygaenidae.",
+            ),
+            # Test missing Title
+            dict(
+                Text="In machine learning, a neural network is a model inspired by biological neural networks in animal brains.",
+            ),
+            # Test missing Text
+            dict(
+                Title="A supercomputer is a type of computer with a high level of performance as compared to a general-purpose computer.",
+            ),
+        ]
+        response = jamai.add_table_rows(
+            table_type,
+            p.RowAddRequest(table_id=knowledge_table_id, data=data, stream=stream),
+        )
+        if stream:
+            responses = [r for r in response]
+            assert len(responses) == 0  # We currently dont return anything if LLM is not called
+        else:
+            assert isinstance(response.rows[0], p.GenTableChatCompletionChunks)
+        # Check embeddings
+        rows = jamai.list_table_rows(table_type, knowledge_table_id)
+        assert isinstance(rows.items, list)
+        assert len(rows.items) == 3
+        row = rows.items[2]
+        assert row["Title"]["value"] == data[0]["Title"], row
+        assert row["Text"]["value"] == data[0]["Text"], row
+        _assert_is_vector(row["Title Embed"]["value"])
+        _assert_is_vector(row["Text Embed"]["value"])
+        row = rows.items[1]
+        assert row["Title"]["value"] is None, row
+        assert row["Text"]["value"] == data[1]["Text"], row
+        _assert_is_vector(row["Text Embed"]["value"])
+        row = rows.items[0]
+        assert row["Title"]["value"] == data[2]["Title"], row
+        assert row["Text"]["value"] is None, row
+        _assert_is_vector(row["Title Embed"]["value"])
+    except Exception:
+        raise
+    finally:
+        jamai.delete_table(table_type, TABLE_ID_A)
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("table_type", TABLE_TYPES)
+@pytest.mark.parametrize("stream", [True, False])
+def test_rag(client_cls: Type[JamAI], table_type: p.TableType, stream: bool):
+    jamai = client_cls()
+    try:
+        # Create Knowledge Table and add some rows
+        knowledge_table_id = TABLE_ID_A
+        jamai.delete_table(p.TableType.knowledge, knowledge_table_id)
+        table = jamai.create_knowledge_table(
+            p.KnowledgeTableSchemaCreate(
+                id=knowledge_table_id, cols=[], embedding_model=_get_embedding_model()
+            )
+        )
+        assert isinstance(table, p.TableMetaResponse)
+        response = jamai.add_table_rows(
+            p.TableType.knowledge,
+            p.RowAddRequest(
+                table_id=knowledge_table_id,
+                data=[
+                    dict(
+                        Title="Six-spot burnet",
+                        Text="The six-spot burnet is a day-flying moth of the family Zygaenidae.",
+                    ),
+                    # Test missing Title
+                    dict(
+                        Text="In machine learning, a neural network is a model inspired by biological neural networks in animal brains.",
+                    ),
+                    # Test missing Text
+                    dict(
+                        Title="A supercomputer is a type of computer with a high level of performance as compared to a general-purpose computer.",
+                    ),
+                ],
+                stream=False,
+            ),
+        )
+        assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+        assert isinstance(response.rows[0], p.GenTableChatCompletionChunks)
+        rows = jamai.list_table_rows(p.TableType.knowledge, knowledge_table_id)
+        assert isinstance(rows.items, list)
+        assert len(rows.items) == 3
+
+        # Create the other table
+        name = TABLE_ID_B
+        jamai.delete_table(table_type, name)
+        kwargs = dict(
+            id=name,
+            cols=[
+                p.ColumnSchemaCreate(id="question", dtype=p.DtypeCreateEnum.str_),
+                p.ColumnSchemaCreate(id="words", dtype=p.DtypeCreateEnum.int_),
+                p.ColumnSchemaCreate(
+                    id="rag",
+                    dtype=p.DtypeCreateEnum.str_,
+                    gen_config=p.ChatRequest(
+                        model=_get_chat_model(),
+                        messages=[
+                            p.ChatEntry.system("You are a concise assistant."),
+                            p.ChatEntry.user("${question}? Summarise in ${words} words"),
+                        ],
+                        temperature=0.001,
+                        top_p=0.001,
+                        max_tokens=10,
+                        rag_params=p.RAGParams(
+                            table_id=knowledge_table_id,
+                            reranking_model=_get_reranking_model(),
+                            search_query="",  # Generate using LM
+                            rerank=True,
+                        ),
+                    ).model_dump(),
+                ),
+            ],
+        )
+        if table_type == p.TableType.action:
+            table = jamai.create_action_table(p.ActionTableSchemaCreate(**kwargs))
+        elif table_type == p.TableType.knowledge:
+            table = jamai.create_knowledge_table(
+                p.KnowledgeTableSchemaCreate(embedding_model=_get_embedding_model(), **kwargs)
+            )
+        elif table_type == p.TableType.chat:
+            kwargs["cols"] = [
+                p.ColumnSchemaCreate(id="User", dtype=p.DtypeCreateEnum.str_),
+                p.ColumnSchemaCreate(
+                    id="AI",
+                    dtype=p.DtypeCreateEnum.str_,
+                    gen_config=p.ChatRequest(
+                        model=_get_chat_model(),
+                        messages=[p.ChatEntry.system("You are a wacky assistant.")],
+                        temperature=0.001,
+                        top_p=0.001,
+                        max_tokens=5,
+                    ).model_dump(),
+                ),
+            ] + kwargs["cols"]
+            table = jamai.create_chat_table(p.ChatTableSchemaCreate(**kwargs))
+        assert isinstance(table, p.TableMetaResponse)
+        # Perform RAG
+        data = dict(question="What is a burnet?", words=5)
+        response = jamai.add_table_rows(
+            table_type,
+            p.RowAddRequest(table_id=name, data=[data], stream=stream),
+        )
+        if stream:
+            responses = [r for r in response]
+            assert len(responses) > 0
+            if table_type == p.TableType.chat:
+                responses = [r for r in responses if r.output_column_name == "rag"]
+            assert isinstance(responses[0], p.GenTableStreamReferences)
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses[1:])
+        else:
+            assert len(response.rows) > 0
+            for row in response.rows:
+                assert isinstance(row, p.GenTableChatCompletionChunks)
+                assert len(row.columns) > 0
+                if table_type == p.TableType.chat:
+                    assert "AI" in row.columns
+                assert "rag" in row.columns
+                assert isinstance(row.columns["rag"], p.ChatCompletionChunk)
+                assert isinstance(row.columns["rag"].references, p.References)
+
+    except Exception:
+        raise
+    finally:
+        jamai.delete_table(p.TableType.knowledge, TABLE_ID_A)
+        jamai.delete_table(table_type, TABLE_ID_B)
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("stream", [True, False])
+def test_knowledge_table_null_source(
+    client_cls: Type[JamAI],
+    stream: bool,
+):
+    jamai = client_cls()
+    table_name = TABLE_ID_A
+    table_type = p.TableType.knowledge
+    jamai.delete_table(table_type, table_name)
+    try:
+        kwargs = dict(
+            id=table_name,
+            cols=[
+                p.ColumnSchemaCreate(id="words", dtype=p.DtypeCreateEnum.int_),
+                p.ColumnSchemaCreate(
+                    id="summary",
+                    dtype=p.DtypeCreateEnum.str_,
+                    gen_config=p.ChatRequest(
+                        model=_get_chat_model(),
+                        messages=[p.ChatEntry.system(""), p.ChatEntry.user("")],
+                        temperature=0.001,
+                        top_p=0.001,
+                        max_tokens=10,
+                    ).model_dump(),
+                ),
+            ],
+        )
+        table = jamai.create_knowledge_table(
+            p.KnowledgeTableSchemaCreate(embedding_model=_get_embedding_model(), **kwargs)
+        )
+        assert isinstance(table, p.TableMetaResponse)
+        # Purposely leave out Title and Text
+        data = dict(words=5)
+        response = jamai.add_table_rows(
+            table_type,
+            p.RowAddRequest(table_id=table_name, data=[data], stream=stream),
+        )
+        if stream:
+            # Must wait until stream ends
+            responses = [r for r in response]
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+            summary = "".join(r.text for r in responses if r.output_column_name == "summary")
+            assert len(summary) > 0
+            if table_type == p.TableType.chat:
+                ai = "".join(r.text for r in responses if r.output_column_name == "AI")
+                assert len(ai) > 0
+        else:
+            assert isinstance(response.rows[0], p.GenTableChatCompletionChunks)
+    except Exception:
+        raise
+    finally:
+        jamai.delete_table(table_type, table_name)
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("stream", [True, False])
+def test_conversation_starter(client_cls: Type[JamAI], stream: bool):
+    jamai = client_cls()
+    table_name = TABLE_ID_A
+    table_type = p.TableType.chat
+    jamai.delete_table(table_type, table_name)
+    try:
+        table = jamai.create_chat_table(
+            p.ChatTableSchemaCreate(
+                id=table_name,
+                cols=[
+                    p.ColumnSchemaCreate(id="User", dtype=p.DtypeCreateEnum.str_),
+                    p.ColumnSchemaCreate(
+                        id="AI",
+                        dtype=p.DtypeCreateEnum.str_,
+                        gen_config=p.ChatRequest(
+                            model=_get_chat_model(),
+                            messages=[p.ChatEntry.system("You help remember facts.")],
+                            temperature=0.001,
+                            top_p=0.001,
+                            max_tokens=10,
+                        ).model_dump(),
+                    ),
+                    p.ColumnSchemaCreate(id="words", dtype=p.DtypeCreateEnum.int_),
+                    p.ColumnSchemaCreate(
+                        id="summary",
+                        dtype=p.DtypeCreateEnum.str_,
+                        gen_config=p.ChatRequest(
+                            model=_get_chat_model(),
+                            messages=[p.ChatEntry.system("You are an assistant")],
+                            temperature=0.001,
+                            top_p=0.001,
+                            max_tokens=5,
+                        ).model_dump(),
+                    ),
+                ],
+            )
+        )
+        assert isinstance(table, p.TableMetaResponse)
+        # Add the starter
+        response = jamai.add_table_rows(
+            table_type,
+            p.RowAddRequest(table_id=table_name, data=[dict(AI="x = 5")], stream=stream),
+        )
+        if stream:
+            # Must wait until stream ends
+            responses = [r for r in response]
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+        else:
+            assert isinstance(response.rows[0], p.GenTableChatCompletionChunks)
+        # Chat with it
+        response = jamai.add_table_rows(
+            table_type,
+            p.RowAddRequest(
+                table_id=table_name,
+                data=[dict(User="x = ")],
+                stream=stream,
+            ),
+        )
+        if stream:
+            # Must wait until stream ends
+            responses = [r for r in response]
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+            answer = "".join(r.text for r in responses if r.output_column_name == "AI")
+            assert "5" in answer
+            summary = "".join(r.text for r in responses if r.output_column_name == "summary")
+            assert len(summary) > 0
+        else:
+            assert isinstance(response.rows[0], p.GenTableChatCompletionChunks)
+    except Exception:
+        raise
+    finally:
+        jamai.delete_table(table_type, table_name)
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("table_type", TABLE_TYPES)
+@pytest.mark.parametrize("stream", [True, False])
 def test_add_row(client_cls: Type[JamAI], table_type: p.TableType, stream: bool):
+    jamai = client_cls()
+    with _create_table(jamai, table_type) as table:
+        assert isinstance(table, p.TableMetaResponse)
+        response = _add_row(jamai, table_type, stream)
+        if stream:
+            responses = [r for r in response]
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+            assert all(r.object == "gen_table.completion.chunk" for r in responses)
+            if table_type == p.TableType.chat:
+                assert all(r.output_column_name in ("summary", "AI") for r in responses)
+            else:
+                assert all(r.output_column_name == "summary" for r in responses)
+            assert len("".join(r.text for r in responses)) > 0
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+            assert all(isinstance(r.usage, p.CompletionUsage) for r in responses)
+            assert all(isinstance(r.prompt_tokens, int) for r in responses)
+            assert all(isinstance(r.completion_tokens, int) for r in responses)
+        else:
+            assert isinstance(response, p.GenTableChatCompletionChunks)
+            assert response.object == "gen_table.completion.chunks"
+            assert len(response.columns["summary"].text) > 0
+            assert isinstance(response.columns["summary"].usage, p.CompletionUsage)
+            assert isinstance(response.columns["summary"].prompt_tokens, int)
+            assert isinstance(response.columns["summary"].completion_tokens, int)
+        rows = jamai.list_table_rows(table_type, TABLE_ID_A)
+        assert isinstance(rows.items, list)
+        assert len(rows.items) == 1
+        row = rows.items[0]
+        assert row["good"]["value"] is True, row["good"]
+        assert row["words"]["value"] == 5, row["words"]
+        assert row["stars"]["value"] == 7.9, row["stars"]
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("table_type", TABLE_TYPES)
+@pytest.mark.parametrize("stream", [True, False])
+def test_add_row_wrong_dtype(client_cls: Type[JamAI], table_type: p.TableType, stream: bool):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
         assert isinstance(table, p.TableMetaResponse)
@@ -518,13 +1370,6 @@ def test_add_row(client_cls: Type[JamAI], table_type: p.TableType, stream: bool)
             assert isinstance(response, p.GenTableChatCompletionChunks)
             assert response.object == "gen_table.completion.chunks"
             assert len(response.columns["summary"].text) > 0
-        rows = jamai.list_table_rows(table_type, TABLE_ID_A)
-        assert isinstance(rows.items, list)
-        assert len(rows.items) == 1
-        row = rows.items[0]
-        assert row["good"]["value"] is True, row["good"]
-        assert row["words"]["value"] == 5, row["words"]
-        assert row["stars"]["value"] == 7.9, row["stars"]
 
         # Test adding data with wrong dtype
         response = _add_row(
@@ -549,6 +1394,54 @@ def test_add_row(client_cls: Type[JamAI], table_type: p.TableType, stream: bool)
         assert row["words"]["original"] == "dummy2", row["words"]
         assert row["stars"]["value"] is None, row["stars"]
         assert row["stars"]["original"] == "dummy3", row["stars"]
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("table_type", TABLE_TYPES)
+@pytest.mark.parametrize("stream", [True, False])
+def test_add_row_missing_columns(client_cls: Type[JamAI], table_type: p.TableType, stream: bool):
+    jamai = client_cls()
+    with _create_table(jamai, table_type) as table:
+        assert isinstance(table, p.TableMetaResponse)
+        response = _add_row(jamai, table_type, stream)
+        if stream:
+            responses = [r for r in response]
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+            assert all(r.object == "gen_table.completion.chunk" for r in responses)
+            if table_type == p.TableType.chat:
+                assert all(r.output_column_name in ("summary", "AI") for r in responses)
+            else:
+                assert all(r.output_column_name == "summary" for r in responses)
+            assert len("".join(r.text for r in responses)) > 0
+        else:
+            assert isinstance(response, p.GenTableChatCompletionChunks)
+            assert response.object == "gen_table.completion.chunks"
+            assert len(response.columns["summary"].text) > 0
+
+        # Test adding data with missing column
+        response = _add_row(
+            jamai,
+            table_type,
+            stream,
+            TABLE_ID_A,
+            data=dict(good="dummy1", inputs=TEXT),
+        )
+        if stream:
+            responses = [r for r in response]
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+        else:
+            assert isinstance(response, p.GenTableChatCompletionChunks)
+        rows = jamai.list_table_rows(table_type, TABLE_ID_A)
+        assert isinstance(rows.items, list)
+        assert len(rows.items) == 2
+        row = rows.items[0]
+        assert row["good"]["value"] is None, row["good"]
+        assert row["good"]["original"] == "dummy1", row["good"]
+        assert row["words"]["value"] is None, row["words"]
+        assert "original" not in row["words"], row["words"]
+        assert row["stars"]["value"] is None, row["stars"]
+        assert "original" not in row["stars"], row["stars"]
 
 
 @flaky(max_runs=3, min_passes=1)
@@ -950,10 +1843,6 @@ def test_rename_table(client_cls: Type[JamAI], table_type: p.TableType):
         jamai.delete_table(table_type, TABLE_ID_B)
 
 
-def _collect_text(responses: list[p.GenTableStreamChatCompletionChunk], col: str):
-    return "".join(r.text for r in responses if r.output_column_name == col)
-
-
 @flaky(max_runs=3, min_passes=1)
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
@@ -1276,20 +2165,38 @@ def test_hybrid_search(client_cls: Type[JamAI]):
         )
         assert len(rows) == 2
         assert "2013" in rows[0]["Title"]["value"], rows
+        # hybrid_search without reranker (RRF only)
+        rows = jamai.hybrid_search(
+            table_type,
+            p.SearchRequest(
+                table_id=TABLE_ID_A,
+                query="language",
+                reranking_model=None,
+                limit=2,
+            ),
+        )
+        assert len(rows) == 2
+        assert "BPE" in rows[0]["Text"]["value"], rows
 
 
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
-def test_upload_file(client_cls: Type[JamAI]):
+@pytest.mark.parametrize(
+    "file_path",
+    [
+        "clients/python/tests/txt/weather.txt",
+        "clients/python/tests/pdf/salary 总结.pdf",
+        "clients/python/tests/docx/Recommendation Letter.docx",
+        "clients/python/tests/pptx/(2017.06.30) Neural Machine Translation in Linear Time (ByteNet).pptx",
+        "clients/python/tests/xlsx/Claims Form.xlsx",
+    ],
+)
+def test_upload_file(client_cls: Type[JamAI], file_path: str):
     jamai = client_cls()
     table_type = p.TableType.knowledge
     with _create_table(jamai, table_type) as table:
         assert isinstance(table, p.TableMetaResponse)
         assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
-        response = jamai.upload_file(
-            p.FileUploadRequest(
-                file_path="clients/python/tests/pdf/salary 总结.pdf", table_id=TABLE_ID_A
-            )
-        )
+        response = jamai.upload_file(p.FileUploadRequest(file_path=file_path, table_id=TABLE_ID_A))
         assert isinstance(response, p.OkResponse)
         rows = jamai.list_table_rows(table_type, TABLE_ID_A)
         assert isinstance(rows.items, list)
@@ -1305,4 +2212,4 @@ def test_upload_file(client_cls: Type[JamAI]):
 
 
 if __name__ == "__main__":
-    test_upload_file(JamAI)
+    test_add_row(JamAI, p.TableType.action, False)

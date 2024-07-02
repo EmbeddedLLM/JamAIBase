@@ -17,20 +17,21 @@ from fastapi import (
     Request,
     UploadFile,
 )
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
 from filelock import FileLock, Timeout
 from loguru import logger
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from jamaibase import protocol as p
 from owl.db.file import FileTable
 from owl.db.gen_executor import MultiRowsGenExecutor
 from owl.db.gen_table import ActionTable, ChatTable, GenerativeTable, KnowledgeTable
-from owl.llm import model_names, predict
+from owl.llm import LLMEngine
 from owl.loaders import load_file, split_chunks
 from owl.models import CloudEmbedder
-from owl.utils import get_api_key
-from owl.utils.exceptions import OwlException, TableSchemaFixedError
+from owl.utils.exceptions import OwlException, ResourceNotFoundError, TableSchemaFixedError
 from owl.utils.tasks import repeat_every
 
 
@@ -40,7 +41,7 @@ class Config(BaseSettings):
     owl_reindex_period_sec: int = 60
     owl_immediate_reindex_max_rows: int = 2000
     owl_optimize_period_sec: int = 60
-    owl_remove_version_older_than_days: int = 7
+    owl_remove_version_older_than_mins: float = 5.0
     owl_concurrent_rows_batch_size: int = 3
     owl_concurrent_cols_batch_size: int = 5
 
@@ -134,6 +135,9 @@ async def periodic_reindex():
                         num_ok += 1
                     else:
                         num_skipped += 1
+                except Timeout:
+                    logger.warning(f"Periodic Lance re-indexing skipped for table: {table_path}")
+                    num_skipped += 1
                 except Exception:
                     logger.exception(f"Periodic Lance re-indexing failed for table: {table_path}")
                     num_failed += 1
@@ -147,7 +151,6 @@ async def periodic_reindex():
             )
         )
     except Timeout:
-        # logger.info("Periodic Lance re-indexing skipped.")
         pass
     except Exception:
         logger.exception("Periodic Lance re-indexing encountered an error.")
@@ -167,18 +170,25 @@ async def periodic_optimize():
                     if meta is None:
                         done = done and table.compact_files()
                         done = done and table.cleanup_old_versions(
-                            older_than=timedelta(days=config.owl_remove_version_older_than_days),
+                            older_than=timedelta(
+                                minutes=config.owl_remove_version_older_than_mins
+                            ),
                         )
                     else:
                         done = done and table.compact_files(meta.id)
                         done = done and table.cleanup_old_versions(
                             meta.id,
-                            older_than=timedelta(days=config.owl_remove_version_older_than_days),
+                            older_than=timedelta(
+                                minutes=config.owl_remove_version_older_than_mins
+                            ),
                         )
                     if done:
                         num_ok += 1
                     else:
                         num_skipped += 1
+                except Timeout:
+                    logger.warning(f"Periodic Lance optimization skipped for table: {table_path}")
+                    num_skipped += 1
                 except Exception:
                     logger.exception(f"Periodic Lance optimization failed for table: {table_path}")
                     num_failed += 1
@@ -192,7 +202,6 @@ async def periodic_optimize():
             )
         )
     except Timeout:
-        # logger.info("Periodic Lance optimization skipped.")
         pass
     except Exception:
         logger.exception("Periodic Lance optimization encountered an error.")
@@ -202,7 +211,57 @@ def _create_table(
     request: Request,
     table_type: p.TableType,
     schema: p.TableSchemaCreate,
+    openai_api_key: str = "",
+    anthropic_api_key: str = "",
+    gemini_api_key: str = "",
+    cohere_api_key: str = "",
+    groq_api_key: str = "",
+    together_api_key: str = "",
+    jina_api_key: str = "",
+    voyage_api_key: str = "",
 ) -> p.TableMetaResponse:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Creating table: "
+            f"table_type={table_type}  table_id={schema.id}  cols={[c.id for c in schema.cols]}"
+        )
+    )
+    # Validate
+    for col in schema.cols:
+        if col.gen_config is None:
+            continue
+        if "embedding_model" in col.gen_config:
+            pass
+        else:
+            # Assign a LLM model if not specified
+            gen_config = p.ChatRequest.model_validate(col.gen_config)
+            if gen_config.model == "":
+                llm = LLMEngine(
+                    openai_api_key=openai_api_key,
+                    anthropic_api_key=anthropic_api_key,
+                    gemini_api_key=gemini_api_key,
+                    cohere_api_key=cohere_api_key,
+                    groq_api_key=groq_api_key,
+                    together_api_key=together_api_key,
+                    jina_api_key=jina_api_key,
+                    voyage_api_key=voyage_api_key,
+                )
+                models = llm.model_names(capabilities=["chat"])
+                if len(models) > 0:
+                    col.gen_config["model"] = models[0]
+
+        # Check Knowledge Table existence
+        rag_params = col.gen_config.get("rag_params", None)
+        if rag_params is None:
+            continue
+        ref_table_id = rag_params["table_id"]
+        try:
+            get_table(request, p.TableType.knowledge, ref_table_id)
+        except ResourceNotFoundError:
+            raise ResourceNotFoundError(
+                f"Column {col.id} referred to a Knowledge Table '{ref_table_id}' that does not exist."
+            )
+
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         # Check quota
@@ -214,32 +273,103 @@ def _create_table(
                 meta, update={"num_rows": table.count_rows(schema.id)}
             )
             return meta
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
         logger.exception(
-            f"[{request.state.org_id}/{request.state.project_id}] Failed to create table: {schema}"
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to create table: table_type={table_type}  "
+                f"schema={schema}"
+            )
         )
         raise
 
 
 @router.post("/v1/gen_tables/action")
 def create_action_table(
-    request: Request, schema: p.ActionTableSchemaCreate
+    request: Request,
+    schema: p.ActionTableSchemaCreate,
+    openai_api_key: Annotated[str, Header(description="OpenAI API key.")] = "",
+    anthropic_api_key: Annotated[str, Header(description="Anthropic API key.")] = "",
+    gemini_api_key: Annotated[str, Header(description="Google Gemini API key.")] = "",
+    cohere_api_key: Annotated[str, Header(description="Cohere API key.")] = "",
+    groq_api_key: Annotated[str, Header(description="Groq API key.")] = "",
+    together_api_key: Annotated[str, Header(description="Together AI API key.")] = "",
+    jina_api_key: Annotated[str, Header(description="Jina API key.")] = "",
+    voyage_api_key: Annotated[str, Header(description="Voyage API key.")] = "",
 ) -> p.TableMetaResponse:
-    return _create_table(request, p.TableType.action, schema)
+    return _create_table(
+        request,
+        p.TableType.action,
+        schema,
+        openai_api_key=openai_api_key,
+        anthropic_api_key=anthropic_api_key,
+        gemini_api_key=gemini_api_key,
+        cohere_api_key=cohere_api_key,
+        groq_api_key=groq_api_key,
+        together_api_key=together_api_key,
+        jina_api_key=jina_api_key,
+        voyage_api_key=voyage_api_key,
+    )
 
 
 @router.post("/v1/gen_tables/knowledge")
 def create_knowledge_table(
-    request: Request, schema: p.KnowledgeTableSchemaCreate
+    request: Request,
+    schema: p.KnowledgeTableSchemaCreate,
+    openai_api_key: Annotated[str, Header(description="OpenAI API key.")] = "",
+    anthropic_api_key: Annotated[str, Header(description="Anthropic API key.")] = "",
+    gemini_api_key: Annotated[str, Header(description="Google Gemini API key.")] = "",
+    cohere_api_key: Annotated[str, Header(description="Cohere API key.")] = "",
+    groq_api_key: Annotated[str, Header(description="Groq API key.")] = "",
+    together_api_key: Annotated[str, Header(description="Together AI API key.")] = "",
+    jina_api_key: Annotated[str, Header(description="Jina API key.")] = "",
+    voyage_api_key: Annotated[str, Header(description="Voyage API key.")] = "",
 ) -> p.TableMetaResponse:
-    return _create_table(request, p.TableType.knowledge, schema)
+    return _create_table(
+        request,
+        p.TableType.knowledge,
+        schema,
+        openai_api_key=openai_api_key,
+        anthropic_api_key=anthropic_api_key,
+        gemini_api_key=gemini_api_key,
+        cohere_api_key=cohere_api_key,
+        groq_api_key=groq_api_key,
+        together_api_key=together_api_key,
+        jina_api_key=jina_api_key,
+        voyage_api_key=voyage_api_key,
+    )
 
 
 @router.post("/v1/gen_tables/chat")
-def create_chat_table(request: Request, schema: p.ChatTableSchemaCreate) -> p.TableMetaResponse:
-    return _create_table(request, p.TableType.chat, schema)
+def create_chat_table(
+    request: Request,
+    schema: p.ChatTableSchemaCreate,
+    openai_api_key: Annotated[str, Header(description="OpenAI API key.")] = "",
+    anthropic_api_key: Annotated[str, Header(description="Anthropic API key.")] = "",
+    gemini_api_key: Annotated[str, Header(description="Google Gemini API key.")] = "",
+    cohere_api_key: Annotated[str, Header(description="Cohere API key.")] = "",
+    groq_api_key: Annotated[str, Header(description="Groq API key.")] = "",
+    together_api_key: Annotated[str, Header(description="Together AI API key.")] = "",
+    jina_api_key: Annotated[str, Header(description="Jina API key.")] = "",
+    voyage_api_key: Annotated[str, Header(description="Voyage API key.")] = "",
+) -> p.TableMetaResponse:
+    return _create_table(
+        request,
+        p.TableType.chat,
+        schema,
+        openai_api_key=openai_api_key,
+        anthropic_api_key=anthropic_api_key,
+        gemini_api_key=gemini_api_key,
+        cohere_api_key=cohere_api_key,
+        groq_api_key=groq_api_key,
+        together_api_key=together_api_key,
+        jina_api_key=jina_api_key,
+        voyage_api_key=voyage_api_key,
+    )
 
 
 @router.post("/v1/gen_tables/{table_type}/duplicate/{table_id_src}/{table_id_dst}")
@@ -260,6 +390,12 @@ def duplicate_table(
         description="_Optional_. Whether to deploy the duplicated table. Defaults to `False`.",
     ),
 ) -> p.TableMetaResponse:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Duplicating table: "
+            f"table_type={table_type}  table_id_src={table_id_src}  table_id_dst={table_id_dst}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         # Check quota
@@ -271,13 +407,24 @@ def duplicate_table(
                 meta, update={"num_rows": table.count_rows(table_id_dst)}
             )
             return meta
+    except Timeout:
+        logger.warning(
+            (
+                "Could not acquire lock for table: "
+                f"{config.owl_db_dir}/{request.state.org_id}/{request.state.project_id}/{table_type.value}"
+            )
+        )
+        raise
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
         logger.exception(
             (
-                f"Failed to duplicate table: {table_id_src} -> {table_id_dst} "
-                f"include_data={include_data}"
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to duplicate table: table_type={table_type}  "
+                f"table_id_src={table_id_src}  table_id_dst={table_id_dst}  include_data={include_data}"
             )
         )
         raise
@@ -296,6 +443,12 @@ def rename_table(
         ),
     ],
 ) -> p.TableMetaResponse:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Renaming table: "
+            f"table_type={table_type}  table_id_src={table_id_src}  table_id_dst={table_id_dst}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         with table.create_session() as session:
@@ -304,10 +457,26 @@ def rename_table(
                 meta, update={"num_rows": table.count_rows(table_id_dst)}
             )
             return meta
+    except Timeout:
+        logger.warning(
+            (
+                "Could not acquire lock for table: "
+                f"{config.owl_db_dir}/{request.state.org_id}/{request.state.project_id}/{table_type.value}"
+            )
+        )
+        raise
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to rename table: {table_id_src} -> {table_id_dst}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to rename table: table_type={table_type}  "
+                f"table_id_src={table_id_src}  table_id_dst={table_id_dst}"
+            )
+        )
         raise
 
 
@@ -317,15 +486,37 @@ def delete_table(
     table_type: p.TableType,
     table_id: Annotated[str, Path(description="The ID of the table to delete.")],  # Don't validate
 ) -> p.OkResponse:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Deleting table: "
+            f"table_type={table_type}  table_id={table_id}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         with table.create_session() as session:
             table.delete_table(session, table_id)
             return p.OkResponse()
+    except Timeout:
+        logger.warning(
+            (
+                "Could not acquire lock for table: "
+                f"{config.owl_db_dir}/{request.state.org_id}/{request.state.project_id}/{table_type.value}"
+            )
+        )
+        raise
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to create table: {table_id}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to delete table: table_type={table_type}  "
+                f"table_id={table_id}"
+            )
+        )
         raise
 
 
@@ -356,8 +547,8 @@ def list_tables(
 ) -> p.Page[p.TableMetaResponse]:
     logger.info(
         (
-            f"{request.state.id} - Listing gen tables "
-            f"(table_type={table_type}  offset={offset}  limit={limit}  parent_id={parent_id})"
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Listing tables: "
+            f"table_type={table_type}  offset={offset}  limit={limit}  parent_id={parent_id}"
         )
     )
     try:
@@ -379,10 +570,18 @@ def list_tables(
                 limit=limit,
                 total=total,
             )
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to list tables")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to list tables: table_type={table_type}  "
+                f"offset={offset}  limit={limit}  parent_id={parent_id}"
+            )
+        )
         raise
 
 
@@ -394,6 +593,12 @@ def get_table(
         pattern=p.TABLE_NAME_PATTERN, description="The ID of the table to fetch."
     ),
 ) -> p.TableMetaResponse:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Fetch table: "
+            f"table_type={table_type}  table_id={table_id}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         with table.create_session() as session:
@@ -402,10 +607,18 @@ def get_table(
                 meta, update={"num_rows": table.count_rows(table_id)}
             )
             return meta
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to get table: {table_id}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to fetch table: table_type={table_type}  "
+                f"table_id={table_id}"
+            )
+        )
         raise
 
 
@@ -415,6 +628,28 @@ def update_gen_config(
     table_type: p.TableType,
     updates: p.GenConfigUpdateRequest,
 ) -> p.TableMetaResponse:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Updating gen config: "
+            f"table_type={table_type}  table_id={updates.table_id}  "
+            f"column_map_keys={list(updates.column_map.keys())}"
+        )
+    )
+    # Validate Knowledge Table existence if RAGParams is used
+    for col_id, gen_config in updates.column_map.items():
+        if gen_config is None:
+            continue
+        rag_params = gen_config.get("rag_params", None)
+        if rag_params is None:
+            continue
+        ref_table_id = rag_params["table_id"]
+        try:
+            get_table(request, p.TableType.knowledge, ref_table_id)
+        except ResourceNotFoundError:
+            raise ResourceNotFoundError(
+                f"Column {col_id} referred to a Knowledge Table '{ref_table_id}' that does not exist."
+            )
+
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         with table.create_session() as session:
@@ -423,10 +658,18 @@ def update_gen_config(
                 meta, update={"num_rows": table.count_rows(updates.table_id)}
             )
             return meta
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to update generation config: {updates}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to update generation config: table_type={table_type}  "
+                f"updates={updates}"
+            )
+        )
         raise
 
 
@@ -435,6 +678,12 @@ def _add_columns(
     table_type: p.TableType,
     schema: p.TableSchemaCreate,
 ) -> p.TableMetaResponse:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Adding columns: "
+            f"table_type={table_type}  table_id={schema.id}  cols={[c.id for c in schema.cols]}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         # Check quota
@@ -446,10 +695,26 @@ def _add_columns(
                 meta, update={"num_rows": table.count_rows(schema.id)}
             )
             return meta
+    except Timeout:
+        logger.warning(
+            (
+                "Could not acquire lock for table: "
+                f"{config.owl_db_dir}/{request.state.org_id}/{request.state.project_id}/{table_type.value}"
+            )
+        )
+        raise
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to add columns to table: {schema}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to add columns to table: table_type={table_type}  "
+                f"schema={schema}"
+            )
+        )
         raise
 
 
@@ -477,6 +742,12 @@ def drop_columns(
     table_type: p.TableType,
     body: p.ColumnDropRequest,
 ) -> p.TableMetaResponse:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Dropping columns: "
+            f"table_type={table_type}  body={body}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         with table.create_session() as session:
@@ -486,10 +757,26 @@ def drop_columns(
             )
             bg_tasks.add_task(table.create_indexes, session, body.table_id)
             return meta
+    except Timeout:
+        logger.warning(
+            (
+                "Could not acquire lock for table: "
+                f"{config.owl_db_dir}/{request.state.org_id}/{request.state.project_id}/{table_type.value}"
+            )
+        )
+        raise
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to drop columns from table: {body}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to drop columns from table: table_type={table_type}  "
+                f"body={body}"
+            )
+        )
         raise
 
 
@@ -499,6 +786,12 @@ def rename_columns(
     table_type: p.TableType,
     body: p.ColumnRenameRequest,
 ) -> p.TableMetaResponse:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Renaming columns: "
+            f"table_type={table_type}  body={body}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         with table.create_session() as session:
@@ -507,10 +800,26 @@ def rename_columns(
                 meta, update={"num_rows": table.count_rows(body.table_id)}
             )
             return meta
+    except Timeout:
+        logger.warning(
+            (
+                "Could not acquire lock for table: "
+                f"{config.owl_db_dir}/{request.state.org_id}/{request.state.project_id}/{table_type.value}"
+            )
+        )
+        raise
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to rename columns of table: {body}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to rename columns of table: table_type={table_type}  "
+                f"body={body}"
+            )
+        )
         raise
 
 
@@ -520,6 +829,12 @@ def reorder_columns(
     table_type: p.TableType,
     body: p.ColumnReorderRequest,
 ) -> p.TableMetaResponse:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Reordering columns: "
+            f"table_type={table_type}  body={body}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         with table.create_session() as session:
@@ -528,10 +843,18 @@ def reorder_columns(
                 meta, update={"num_rows": table.count_rows(body.table_id)}
             )
         return meta
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to reorder columns of table: {body}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to reorder columns of table: table_type={table_type}  "
+                f"body={body}"
+            )
+        )
         raise
 
 
@@ -557,6 +880,12 @@ def list_rows(
         description="_Optional_. A list of column names to include in the response. If not provided, all columns will be returned.",
     ),
 ) -> p.Page[dict[p.Name, Any]]:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Listing rows: "
+            f"table_type={table_type}  table_id={table_id}  columns={columns}  offset={offset}  limit={limit}"
+        )
+    )
     try:
         # Check quota
         request.state.billing_manager.check_egress_quota()
@@ -573,10 +902,18 @@ def list_rows(
             include_original=True,
         )
         return p.Page[dict[p.Name, Any]](items=rows, offset=offset, limit=limit, total=total)
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to get rows from table: {table_id}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to list rows of table: table_type={table_type}  "
+                f"table_id={table_id}  offset={offset}  limit={limit}  columns={columns}"
+            )
+        )
         raise
 
 
@@ -592,6 +929,12 @@ def get_row(
         description="_Optional_. A list of column names to include in the response. If not provided, all columns will be returned.",
     ),
 ) -> dict[p.Name, Any]:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Fetch row: "
+            f"table_type={table_type}  table_id={table_id}  row_id={row_id}  columns={columns}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         row = table.get_row(
@@ -604,10 +947,18 @@ def get_row(
             include_original=True,
         )
         return row
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to get row '{row_id}' from table: {table_id}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to fetch row from table: table_type={table_type}  "
+                f"table_id={table_id}  row_id={row_id}  columns={columns}"
+            )
+        )
         raise
 
 
@@ -626,6 +977,14 @@ async def add_rows(
     jina_api_key: Annotated[str, Header(description="Jina API key.")] = "",
     voyage_api_key: Annotated[str, Header(description="Voyage API key.")] = "",
 ):
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Adding rows: "
+            f"table_type={table_type}  table_id={body.table_id}  stream={body.stream}  "
+            f"reindex={body.reindex}  concurrent={body.concurrent}  "
+            f"data_keys={[list(d.keys()) for d in body.data]}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         # Check quota
@@ -668,10 +1027,26 @@ async def add_rows(
             )
         else:
             return await executor.gen_rows()
+    except Timeout:
+        logger.warning(
+            (
+                "Could not acquire lock for table: "
+                f"{config.owl_db_dir}/{request.state.org_id}/{request.state.project_id}/{table_type.value}"
+            )
+        )
+        raise
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to add row to table: {body}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to add rows to table: table_type={table_type}  "
+                f"body={body}"
+            )
+        )
         raise
 
 
@@ -690,6 +1065,12 @@ async def regen_rows(
     jina_api_key: Annotated[str, Header(description="Jina API key.")] = "",
     voyage_api_key: Annotated[str, Header(description="Voyage API key.")] = "",
 ):
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Regenerating rows: "
+            f"table_type={table_type}  body={body}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         # Check quota
@@ -732,10 +1113,26 @@ async def regen_rows(
             )
         else:
             return await executor.gen_rows()
+    except Timeout:
+        logger.warning(
+            (
+                "Could not acquire lock for table: "
+                f"{config.owl_db_dir}/{request.state.org_id}/{request.state.project_id}/{table_type.value}"
+            )
+        )
+        raise
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to regen row of table: {body}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to regen rows of table: table_type={table_type}  "
+                f"body={body}"
+            )
+        )
         raise
 
 
@@ -746,6 +1143,13 @@ def update_row(
     table_type: p.TableType,
     body: p.RowUpdateRequest,
 ) -> p.OkResponse:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Updating row: "
+            f"table_type={table_type}  table_id={body.table_id}  row_id={body.row_id}  "
+            f"reindex={body.reindex}  data_keys={list(body.data.keys())}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         # Check quota
@@ -760,7 +1164,7 @@ def update_row(
             table.update_rows(
                 session,
                 body.table_id,
-                f"`ID` = '{body.row_id}'",
+                where=f"`ID` = '{body.row_id}'",
                 values=body.data,
             )
             if body.reindex or (
@@ -769,10 +1173,26 @@ def update_row(
             ):
                 bg_tasks.add_task(table.create_indexes, session, body.table_id)
         return p.OkResponse()
+    except Timeout:
+        logger.warning(
+            (
+                "Could not acquire lock for table: "
+                f"{config.owl_db_dir}/{request.state.org_id}/{request.state.project_id}/{table_type.value}"
+            )
+        )
+        raise
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to update rows (by ID) of table: {body}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to update rows of table: table_type={table_type}  "
+                f"body={body}"
+            )
+        )
         raise
 
 
@@ -783,6 +1203,12 @@ def delete_rows(
     table_type: p.TableType,
     body: p.RowDeleteRequest,
 ) -> p.OkResponse:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Deleting rows: "
+            f"table_type={table_type}  body={body}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         with table.create_session() as session:
@@ -793,10 +1219,26 @@ def delete_rows(
             ):
                 bg_tasks.add_task(table.create_indexes, session, body.table_id)
         return p.OkResponse()
+    except Timeout:
+        logger.warning(
+            (
+                "Could not acquire lock for table: "
+                f"{config.owl_db_dir}/{request.state.org_id}/{request.state.project_id}/{table_type.value}"
+            )
+        )
+        raise
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to delete rows from table: {body}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to delete rows from table: table_type={table_type}  "
+                f"body={body}"
+            )
+        )
         raise
 
 
@@ -809,6 +1251,12 @@ def delete_row(
     row_id: str = Path(description="The ID of the specific row to delete."),
     reindex: Annotated[bool, Query(description="Whether to reindex immediately.")] = True,
 ) -> p.OkResponse:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Deleting row: "
+            f"table_type={table_type}  table_id={table_id}  row_id={row_id}  reindex={reindex}"
+        )
+    )
     try:
         table = _get_gen_table(request.state.org_id, request.state.project_id, table_type)
         with table.create_session() as session:
@@ -816,10 +1264,26 @@ def delete_row(
             if reindex:
                 bg_tasks.add_task(table.create_indexes, session, table_id)
         return p.OkResponse()
+    except Timeout:
+        logger.warning(
+            (
+                "Could not acquire lock for table: "
+                f"{config.owl_db_dir}/{request.state.org_id}/{request.state.project_id}/{table_type.value}"
+            )
+        )
+        raise
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to delete row '{row_id}' from table: {table_id}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to delete row from table: table_type={table_type}  "
+                f"table_id={table_id}  row_id={row_id}  reindex={reindex}"
+            )
+        )
         raise
 
 
@@ -837,6 +1301,12 @@ def hybrid_search(
     jina_api_key: Annotated[str, Header(description="Jina API key.")] = "",
     voyage_api_key: Annotated[str, Header(description="Voyage API key.")] = "",
 ) -> list[dict[p.Name, Any]]:
+    logger.info(
+        (
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Hybrid search: "
+            f"table_type={table_type}  body={body}"
+        )
+    )
     try:
         # Check quota
         request.state.billing_manager.check_egress_quota()
@@ -867,10 +1337,18 @@ def hybrid_search(
                 voyage_api_key=voyage_api_key,
             )
         return rows
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to search table: {body}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to search table: table_type={table_type}  "
+                f"body={body}"
+            )
+        )
         raise
 
 
@@ -880,7 +1358,7 @@ def list_files():
 
 def _embed(embedder: CloudEmbedder, texts: list[str], embed_dtype: str) -> np.ndarray:
     embeddings = embedder.embed_documents(texts=texts)
-    embeddings = np.asarray(embeddings, dtype=embed_dtype)
+    embeddings = np.asarray([d.embedding for d in embeddings.data], dtype=embed_dtype)
     embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
     return embeddings
 
@@ -917,9 +1395,7 @@ async def _add_file(
 
     # --- Extract title --- #
     excerpt = "".join(d.text for d in chunks[:8])
-    model = await model_names(
-        prefer=p.DEFAULT_CHAT_MODEL,
-        capabilities=["chat"],
+    llm = LLMEngine(
         openai_api_key=openai_api_key,
         anthropic_api_key=anthropic_api_key,
         gemini_api_key=gemini_api_key,
@@ -929,10 +1405,14 @@ async def _add_file(
         jina_api_key=jina_api_key,
         voyage_api_key=voyage_api_key,
     )
+    model = llm.model_names(
+        prefer=p.DEFAULT_CHAT_MODEL,
+        capabilities=["chat"],
+    )
     model = model[0]
     logger.debug(f"{request_id} - Performing title extraction using: {model}")
     try:
-        response: p.ChatCompletionChunk = await predict(
+        response = await llm.generate(
             request=request,
             model=model,
             messages=[
@@ -949,14 +1429,6 @@ async def _add_file(
             temperature=0.01,
             top_p=0.01,
             stream=False,
-            openai_api_key=openai_api_key,
-            anthropic_api_key=anthropic_api_key,
-            gemini_api_key=gemini_api_key,
-            cohere_api_key=cohere_api_key,
-            groq_api_key=groq_api_key,
-            together_api_key=together_api_key,
-            jina_api_key=jina_api_key,
-            voyage_api_key=voyage_api_key,
         )
         title = response.text.strip()
         if title.startswith('"') and title.endswith('"'):
@@ -981,9 +1453,8 @@ async def _add_file(
             if col["vlen"] == 0:
                 continue
             gen_config = p.EmbedGenConfig.model_validate(col["gen_config"])
-            embedding_model = gen_config.embedding_model
-            api_key = get_api_key(
-                embedding_model,
+            embedder = CloudEmbedder(
+                embedder_name=gen_config.embedding_model,
                 openai_api_key=openai_api_key,
                 anthropic_api_key=anthropic_api_key,
                 gemini_api_key=gemini_api_key,
@@ -992,10 +1463,6 @@ async def _add_file(
                 together_api_key=together_api_key,
                 jina_api_key=jina_api_key,
                 voyage_api_key=voyage_api_key,
-            )
-            embedder = CloudEmbedder(
-                embedder_name=embedding_model,
-                api_key=api_key,
             )
             if col["id"] == "Title Embed":
                 title_embed = _embed(embedder, [title], col["dtype"])[0]
@@ -1065,9 +1532,9 @@ async def upload_file(
 ) -> p.OkResponse:
     logger.info(
         (
-            f"{request.state.id} - Uploading file "
-            f"(file_name={file_name}  table_id={table_id}  "
-            f"chunk_size={chunk_size}  chunk_overlap={chunk_overlap})"
+            f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] Uploading file: "
+            f"file_name={file_name}  table_id={table_id}  "
+            f"chunk_size={chunk_size}  chunk_overlap={chunk_overlap}"
         )
     )
     try:
@@ -1102,13 +1569,17 @@ async def upload_file(
             jina_api_key=jina_api_key,
             voyage_api_key=voyage_api_key,
         )
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
         logger.exception(
             (
-                f"[{request.state.org_id}/{request.state.project_id}] "
-                f"Failed to upload file into Knowledge Table: {file_name}"
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to upload file into Knowledge Table:  "
+                f"file_name={file_name}  table_id={table_id}  "
+                f"chunk_size={chunk_size}  chunk_overlap={chunk_overlap}"
             )
         )
         raise
@@ -1127,8 +1598,15 @@ def get_conversation_thread(
             request.state.org_id, request.state.project_id, p.TableType.chat
         )
         return table.get_conversation_thread(table_id)
+    except ValidationError as e:
+        raise RequestValidationError(errors=e.errors())
     except OwlException:
         raise
     except Exception:
-        logger.exception(f"Failed to get conversation thread from table: {table_id}")
+        logger.exception(
+            (
+                f"{request.state.id} - [{request.state.org_id}/{request.state.project_id}] "
+                f"Failed to fetch conversation thread from table: table_id={table_id}"
+            )
+        )
         raise

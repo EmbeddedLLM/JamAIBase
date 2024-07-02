@@ -3,8 +3,7 @@ from typing import Any, AsyncGenerator, Generator, Type
 from urllib.parse import quote
 
 import httpx
-from loguru import logger
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from jamaibase import protocol as p
@@ -23,8 +22,7 @@ class Config(BaseSettings):
 
 CONFIG = Config()
 GenTableChatResponseType = (
-    p.GenTableChatCompletionChunks
-    | p.GenTableRowsChatCompletionChunks
+    p.GenTableRowsChatCompletionChunks
     | Generator[p.GenTableStreamReferences | p.GenTableStreamChatCompletionChunk, None, None]
 )
 
@@ -163,10 +161,6 @@ class JamAI:
                 chunk = chunk.strip()
                 if chunk == "" or chunk == "data: [DONE]":
                     continue
-                if chunk.startswith('{"error":'):
-                    raise RuntimeError(
-                        f"Endpoint {response.url} returned {response.status_code} error: {chunk}"
-                    )
                 yield chunk
 
     def _delete(
@@ -224,25 +218,24 @@ class JamAI:
         if request.stream:
 
             def gen():
-                references = None
-                for chunk in self._stream(self.api_base, "/v1/chat/completions", request):
-                    if request.rag_params is not None and references is None:
-                        try:
-                            references = p.References.model_validate_json(chunk[5:])
-                            yield references
-                        except ValidationError:
-                            pass
-                    try:
-                        yield p.ChatCompletionChunk.model_validate_json(chunk[5:])
-                        continue
-                    except ValidationError:
-                        pass
+                gen_stream = self._stream(self.api_base, "/v1/chat/completions", request)
+                for chunk in gen_stream:
+                    chunk = json_loads(chunk[5:])
+                    if chunk["object"] == "chat.references":
+                        yield p.References.model_validate(chunk)
+                    elif chunk["object"] == "chat.completion.chunk":
+                        yield p.ChatCompletionChunk.model_validate(chunk)
+                    else:
+                        raise RuntimeError(f"Unexpected SSE chunk: {chunk}")
 
             return gen()
         else:
             return self._post(
                 self.api_base, "/v1/chat/completions", request, p.ChatCompletionChunk
             )
+
+    def generate_embeddings(self, request: p.EmbeddingRequest) -> p.EmbeddingResponse:
+        return self._post(self.api_base, "/v1/embeddings", request, p.EmbeddingResponse)
 
     # --- Gen Table --- #
     def create_action_table(self, request: p.ActionTableSchemaCreate) -> p.TableMetaResponse:
@@ -409,24 +402,18 @@ class JamAI:
         if request.stream:
 
             def gen():
-                references = None
                 for chunk in self._stream(
                     self.api_base,
                     f"/v1/gen_tables/{table_type.value}/rows/add",
                     request,
                 ):
-                    if references is None:
-                        try:
-                            references = p.GenTableStreamReferences.model_validate_json(chunk[5:])
-                            yield references
-                        except ValidationError:
-                            pass
-                    try:
-                        chunk_ = p.GenTableStreamChatCompletionChunk.model_validate_json(chunk[5:])
-                        yield chunk_
-                        continue
-                    except ValidationError:
-                        pass
+                    chunk = json_loads(chunk[5:])
+                    if chunk["object"] == "gen_table.references":
+                        yield p.GenTableStreamReferences.model_validate(chunk)
+                    elif chunk["object"] == "gen_table.completion.chunk":
+                        yield p.GenTableStreamChatCompletionChunk.model_validate(chunk)
+                    else:
+                        raise RuntimeError(f"Unexpected SSE chunk: {chunk}")
 
             return gen()
         else:
@@ -443,24 +430,18 @@ class JamAI:
         if request.stream:
 
             def gen():
-                references = None
                 for chunk in self._stream(
                     self.api_base,
                     f"/v1/gen_tables/{table_type.value}/rows/regen",
                     request,
                 ):
-                    if references is None:
-                        try:
-                            references = p.GenTableStreamReferences.model_validate_json(chunk[5:])
-                            yield references
-                        except ValidationError:
-                            pass
-                    try:
-                        chunk_ = p.GenTableStreamChatCompletionChunk.model_validate_json(chunk[5:])
-                        yield chunk_
-                        continue
-                    except ValidationError:
-                        pass
+                    chunk = json_loads(chunk[5:])
+                    if chunk["object"] == "gen_table.references":
+                        yield p.GenTableStreamReferences.model_validate(chunk)
+                    elif chunk["object"] == "gen_table.completion.chunk":
+                        yield p.GenTableStreamChatCompletionChunk.model_validate(chunk)
+                    else:
+                        raise RuntimeError(f"Unexpected SSE chunk: {chunk}")
 
             return gen()
         else:
@@ -663,10 +644,6 @@ class JamAIAsync(JamAI):
                 chunk = chunk.strip()
                 if chunk == "" or chunk == "data: [DONE]":
                     continue
-                if chunk.startswith('{"error":'):
-                    raise RuntimeError(
-                        f"Endpoint {response.url} returned {response.status_code} error: {chunk}"
-                    )
                 yield chunk
 
     async def _delete(
@@ -724,25 +701,22 @@ class JamAIAsync(JamAI):
         if request.stream:
 
             async def gen():
-                references = None
-                async for chunk in self._stream(self.api_base, "/v1/chat/completions", request):
-                    if request.rag_params is not None and references is None:
-                        try:
-                            references = p.References.model_validate_json(chunk[5:])
-                            yield references
-                        except ValidationError:
-                            pass
-                    try:
-                        yield p.ChatCompletionChunk.model_validate_json(chunk[5:])
-                        continue
-                    except ValidationError:
-                        pass
+                gen_stream = self._stream(self.api_base, "/v1/chat/completions", request)
+                async for chunk in gen_stream:
+                    chunk = json_loads(chunk[5:])
+                    if chunk["object"] == "chat.references":
+                        yield p.References.model_validate(chunk)
+                    elif chunk["object"] == "chat.completion.chunk":
+                        yield p.ChatCompletionChunk.model_validate(chunk)
 
             return gen()
         else:
             return await self._post(
                 self.api_base, "/v1/chat/completions", request, p.ChatCompletionChunk
             )
+
+    async def generate_embeddings(self, request: p.EmbeddingRequest) -> p.EmbeddingResponse:
+        return await self._post(self.api_base, "/v1/embeddings", request, p.EmbeddingResponse)
 
     # --- Gen Table --- #
     async def create_action_table(self, request: p.ActionTableSchemaCreate) -> p.TableMetaResponse:
@@ -916,30 +890,22 @@ class JamAIAsync(JamAI):
     async def add_table_rows(
         self, table_type: p.TableType, request: p.RowAddRequest
     ) -> (
-        p.GenTableChatCompletionChunks
+        p.GenTableRowsChatCompletionChunks
         | AsyncGenerator[p.GenTableStreamReferences | p.GenTableStreamChatCompletionChunk, None]
     ):
         if request.stream:
 
             async def gen():
-                references = None
                 async for chunk in self._stream(
                     self.api_base,
                     f"/v1/gen_tables/{table_type.value}/rows/add",
                     request,
                 ):
-                    if references is None:
-                        try:
-                            references = p.GenTableStreamReferences.model_validate_json(chunk[5:])
-                            yield references
-                        except ValidationError:
-                            pass
-                    try:
-                        chunk_ = p.GenTableStreamChatCompletionChunk.model_validate_json(chunk[5:])
-                        yield chunk_
-                        continue
-                    except ValidationError:
-                        pass
+                    chunk = json_loads(chunk[5:])
+                    if chunk["object"] == "gen_table.references":
+                        yield p.GenTableStreamReferences.model_validate(chunk)
+                    elif chunk["object"] == "gen_table.completion.chunk":
+                        yield p.GenTableStreamChatCompletionChunk.model_validate(chunk)
 
             return gen()
         else:
@@ -953,30 +919,22 @@ class JamAIAsync(JamAI):
     async def regen_table_rows(
         self, table_type: p.TableType, request: p.RowRegenRequest
     ) -> (
-        p.GenTableChatCompletionChunks
+        p.GenTableRowsChatCompletionChunks
         | AsyncGenerator[p.GenTableStreamReferences | p.GenTableStreamChatCompletionChunk, None]
     ):
         if request.stream:
 
             async def gen():
-                references = None
                 async for chunk in self._stream(
                     self.api_base,
                     f"/v1/gen_tables/{table_type.value}/rows/regen",
                     request,
                 ):
-                    if references is None:
-                        try:
-                            references = p.GenTableStreamReferences.model_validate_json(chunk[5:])
-                            yield references
-                        except ValidationError:
-                            pass
-                    try:
-                        chunk_ = p.GenTableStreamChatCompletionChunk.model_validate_json(chunk[5:])
-                        yield chunk_
-                        continue
-                    except ValidationError:
-                        pass
+                    chunk = json_loads(chunk[5:])
+                    if chunk["object"] == "gen_table.references":
+                        yield p.GenTableStreamReferences.model_validate(chunk)
+                    elif chunk["object"] == "gen_table.completion.chunk":
+                        yield p.GenTableStreamChatCompletionChunk.model_validate(chunk)
 
             return gen()
         else:

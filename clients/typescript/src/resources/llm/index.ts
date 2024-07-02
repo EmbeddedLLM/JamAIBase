@@ -3,8 +3,12 @@ import {
     ChatCompletionChunk,
     ChatCompletionChunkSchema,
     ChatRequest,
-    StreamChatCompletionChunk
+    References,
+    ReferencesSchema,
+    StreamChatCompletionChunk,
+    StreamChatCompletionChunkSchema
 } from "@/resources/llm/chat";
+import { EmbeddingRequest, EmbeddingRequestSchema, EmbeddingResponse, EmbeddingResponseSchema } from "@/resources/llm/embedding";
 import {
     ModelInfoRequest,
     ModelInfoResponse,
@@ -13,6 +17,8 @@ import {
     ModelNamesResponse,
     ModelNamesResponseSchema
 } from "@/resources/llm/model";
+import { ChunkError } from "@/resources/shared/error";
+import { z } from "zod";
 
 export class LLM extends Base {
     public async modelInfo(params?: ModelInfoRequest): Promise<ModelInfoResponse> {
@@ -55,7 +61,7 @@ export class LLM extends Base {
         });
     }
 
-    public async generateChatCompletionsStream(params: ChatRequest): Promise<ReadableStream<StreamChatCompletionChunk>> {
+    public async generateChatCompletionsStream(params: ChatRequest): Promise<ReadableStream<StreamChatCompletionChunk | References>> {
         const apiURL = "/api/v1/chat/completions";
         const response = await this.httpClient.post(
             apiURL,
@@ -68,8 +74,8 @@ export class LLM extends Base {
             }
         );
 
-        const stream = new ReadableStream<StreamChatCompletionChunk>({
-            async start(controller: ReadableStreamDefaultController<StreamChatCompletionChunk>) {
+        const stream = new ReadableStream<StreamChatCompletionChunk | References>({
+            async start(controller: ReadableStreamDefaultController<StreamChatCompletionChunk | References>) {
                 response.data.on("data", (data: any) => {
                     data = data.toString();
                     if (data.endsWith("\n\n")) {
@@ -88,9 +94,17 @@ export class LLM extends Base {
 
                             try {
                                 const parsedValue = JSON.parse(chunk);
-                                controller.enqueue(parsedValue);
+                                if (parsedValue["object"] === "chat.completion.chunk") {
+                                    controller.enqueue(StreamChatCompletionChunkSchema.parse(parsedValue));
+                                } else if (parsedValue["object"] === "chat.references") {
+                                    controller.enqueue(ReferencesSchema.parse(parsedValue));
+                                } else {
+                                    throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
+                                }
                             } catch (err) {
-                                console.error("Error parsing:", chunk);
+                                if (err instanceof ChunkError) {
+                                    controller.error(new ChunkError(err.message));
+                                }
                                 continue;
                             }
                         }
@@ -104,19 +118,29 @@ export class LLM extends Base {
 
                         try {
                             const parsedValue = JSON.parse(chunk);
-                            controller.enqueue(parsedValue);
-                        } catch (err) {
-                            console.error("Error parsing:", chunk);
+                            if (parsedValue["object"] === "chat.completion.chunk") {
+                                controller.enqueue(StreamChatCompletionChunkSchema.parse(parsedValue));
+                            } else if (parsedValue["object"] === "chat.references") {
+                                controller.enqueue(ReferencesSchema.parse(parsedValue));
+                            } else {
+                                throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
+                            }
+                        } catch (err: any) {
+                            if (err instanceof ChunkError) {
+                                controller.error(new ChunkError(err.message));
+                            }
                         }
                     }
                 });
 
                 response.data.on("error", (data: any) => {
-                    console.error("error: ", data);
+                    controller.error("Unexpected Error");
                 });
 
                 response.data.on("end", () => {
-                    controller.close();
+                    if (controller.desiredSize !== null) {
+                        controller.close();
+                    }
                 });
             }
         });
@@ -139,6 +163,25 @@ export class LLM extends Base {
         return new Promise((resolve, reject) => {
             if (response.status == 200) {
                 const parsedData = ChatCompletionChunkSchema.parse(response.data);
+                resolve(parsedData);
+            } else {
+                console.error("Received Error Status: ", response.status);
+            }
+        });
+    }
+
+    public async generateEmbeddings(params: z.input<typeof EmbeddingRequestSchema>): Promise<EmbeddingResponse> {
+        const apiURL = "/api/v1/embeddings";
+
+        const parsedParams = EmbeddingRequestSchema.parse(params);
+
+        const response = await this.httpClient.post<EmbeddingRequest>(apiURL, {
+            ...parsedParams
+        });
+
+        return new Promise((resolve, reject) => {
+            if (response.status == 200) {
+                const parsedData = EmbeddingResponseSchema.parse(response.data);
                 resolve(parsedData);
             } else {
                 console.error("Received Error Status: ", response.status);

@@ -19,15 +19,6 @@
       "owned_by": "openai"
     },
     {
-      "id": "openai/gpt-4-vision-preview",
-      "object": "model",
-      "name": "OpenAI GPT-4 Vision Preview",
-      "context_length": 128000,
-      "languages": ["en", "cn"],
-      "capabilities": ["chat", "image"],
-      "owned_by": "openai"
-    },
-    {
       "id": "anthropic/claude-3-haiku-20240307",
       "object": "model",
       "name": "Claude 3 Haiku",
@@ -55,15 +46,6 @@
       "owned_by": "anthropic"
     },
     {
-      "id": "together_ai/mistralai/Mixtral-8x22B-Instruct-v0.1",
-      "object": "model",
-      "name": "Mixtral Instruct v0.1 (8x22B / 141B)",
-      "context_length": 65536,
-      "languages": ["en"],
-      "capabilities": ["chat"],
-      "owned_by": "together_ai"
-    },
-    {
       "id": "together_ai/Qwen/Qwen1.5-14B-Chat",
       "object": "model",
       "name": "Qwen 1.5 Chat (14B)",
@@ -78,6 +60,15 @@
       "name": "Qwen 1.5 Chat (72B)",
       "context_length": 4096,
       "languages": ["en", "cn"],
+      "capabilities": ["chat"],
+      "owned_by": "together_ai"
+    },
+    {
+      "id": "together_ai/mistralai/Mixtral-8x22B-Instruct-v0.1",
+      "object": "model",
+      "name": "Mixtral Instruct v0.1 (8x22B / 141B)",
+      "context_length": 65536,
+      "languages": ["en"],
       "capabilities": ["chat"],
       "owned_by": "together_ai"
     }

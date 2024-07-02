@@ -1,13 +1,15 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
-	import { pastKnowledgeTables } from '../../knowledgeTablesStore';
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
+	import { Dialog as DialogPrimitive } from 'bits-ui';
+	import { pastKnowledgeTables } from '../../../tablesStore';
+	import { idPattern } from '$lib/constants';
 	import logger from '$lib/logger';
 
+	import ModelSelect from '$lib/components/preset/ModelSelect.svelte';
+	import InputText from '$lib/components/InputText.svelte';
+	import { toast } from 'svelte-sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
-	import ModelSelect from '$lib/components/preset/ModelSelect.svelte';
-
-	const { PUBLIC_JAMAI_URL } = env;
 
 	export let isAddingTable: boolean;
 
@@ -21,7 +23,13 @@
 	}
 
 	async function handleAddTable() {
-		if (!tableId) return alert('Table ID is required');
+		if (!tableId) return toast.error('Table ID is required');
+		if (!selectedModel) return toast.error('Model not selected');
+
+		if (!idPattern.test(tableId))
+			return toast.error(
+				'Table ID must contain only alphanumeric characters and underscores/hyphens, and start and end with alphanumeric characters'
+			);
 
 		if (isLoading) return;
 		isLoading = true;
@@ -41,7 +49,9 @@
 		if (!response.ok) {
 			const responseBody = await response.json();
 			logger.error('KNOWTBL_TBL_ADD', responseBody);
-			alert('Failed to add table: ' + (responseBody.message || JSON.stringify(responseBody)));
+			toast.error('Failed to add table', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		} else {
 			//TODO: Consider invalidating fetch request instead
 			$pastKnowledgeTables = [
@@ -73,19 +83,15 @@
 		<div class="grow py-3 w-full overflow-auto">
 			<div class="flex flex-col gap-2 px-6 pl-8 py-2 w-full text-center">
 				<span class="font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-					Table ID
+					Table ID*
 				</span>
 
-				<input
-					type="text"
-					bind:value={tableId}
-					class="px-3 py-2 w-full text-sm bg-transparent data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#42464E] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-				/>
+				<InputText bind:value={tableId} placeholder="Required" />
 			</div>
 
 			<div class="flex flex-col gap-1 px-6 pl-8 py-2">
 				<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-					Embedding Model
+					Embedding Model*
 				</span>
 
 				<ModelSelect
@@ -93,18 +99,22 @@
 					sameWidth={true}
 					bind:selectedModel
 					buttonText={selectedModel || 'Select model'}
+					class={!selectedModel ? 'italic text-muted-foreground' : ''}
 				/>
 			</div>
 		</div>
 
 		<Dialog.Actions>
 			<div class="flex gap-2">
-				<Button variant="link" on:click={() => (isAddingTable = false)} class="grow px-6">
-					Cancel
-				</Button>
+				<DialogPrimitive.Close asChild let:builder>
+					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
+						Cancel
+					</Button>
+				</DialogPrimitive.Close>
 				<Button
-					loading={isLoading}
 					on:click={handleAddTable}
+					type="button"
+					loading={isLoading}
 					class="relative grow px-6 rounded-full"
 				>
 					Add

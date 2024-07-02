@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { onMount } from 'svelte';
 	import { beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/stores';
@@ -7,12 +7,13 @@
 	import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
 	import autoAnimate from '@formkit/auto-animate';
 	import { showRightDock } from '$globalStore';
-	import { pastKnowledgeTables } from '../knowledgeTablesStore';
+	import { pastKnowledgeTables } from '../../tablesStore';
 	import { timestampsDisplayName } from '$lib/constants';
 	import logger from '$lib/logger';
-	import type { ActionTable, Timestamp } from '$lib/types';
+	import type { GenTable, Timestamp } from '$lib/types';
 
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
+	import { toast } from 'svelte-sonner';
 	import CloseIcon from '$lib/icons/CloseIcon.svelte';
 	import SearchIcon from '$lib/icons/SearchIcon.svelte';
 	import RowIcon from '$lib/icons/RowIcon.svelte';
@@ -20,11 +21,9 @@
 	import EditIcon from '$lib/icons/EditIcon.svelte';
 	import CheckIcon from '$lib/icons/CheckIcon.svelte';
 
-	const { PUBLIC_JAMAI_URL } = env;
-
 	export let isDeletingTable: string | null;
 
-	let searchResults: ActionTable[] = [];
+	let searchResults: GenTable[] = [];
 	let searchQuery: string;
 	let isNoResults = false;
 
@@ -72,8 +71,13 @@
 			}
 		} else {
 			const responseBody = await response.json();
-			logger.error('KNOWTBL_LIST_TBL', responseBody);
+			if (response.status !== 404) {
+				logger.error('KNOWTBL_LIST_TBL', responseBody);
+			}
 			console.error(responseBody.message);
+			toast.error('Failed to fetch knowledge tables', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		}
 
 		isLoadingMoreKTables = false;
@@ -138,7 +142,7 @@
 		const editedTableID = (e.currentTarget.childNodes[0] as HTMLTextAreaElement).value.trim();
 
 		const response = await fetch(
-			`/api/v1/gen_tables/knowledge/rename/${isEditingTableID}/${editedTableID}`,
+			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/knowledge/rename/${isEditingTableID}/${editedTableID}`,
 			{
 				method: 'POST'
 			}
@@ -179,9 +183,9 @@
 		} else {
 			const responseBody = await response.json();
 			logger.error('KNOWTBL_RENAME_TBL', responseBody);
-			alert(
-				'Error while renaming table: ' + (responseBody.message || JSON.stringify(responseBody))
-			);
+			toast.error('Failed to rename row', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		}
 	}
 
@@ -214,10 +218,9 @@
 		} else {
 			const responseBody = await response.json();
 			logger.error('KNOWTBL_SEARCH_TABLE', responseBody);
-			alert(
-				'Error while retrieving search results: ' +
-					(responseBody.message || JSON.stringify(responseBody))
-			);
+			toast.error('Errow while retrieving search results', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		}
 	}
 
@@ -235,7 +238,9 @@
 
 <span class="flex items-center gap-2 mx-6 text-sm text-[#999999]">Table history</span>
 
-<div inert={!$showRightDock || null} class="relative mx-6">
+<hr class="border-[#DDD] data-dark:border-[#2A2A2A]" />
+
+<!-- <div inert={!$showRightDock || null} class="relative mx-6">
 	<SearchIcon class="absolute top-1/2 left-3 -translate-y-1/2 h-6 w-6" />
 	<input
 		name="search-knowledge-tables"
@@ -255,7 +260,7 @@
 			<CloseIcon class="h-5" />
 		</button>
 	{/if}
-</div>
+</div> -->
 
 {#if searchResults.length || isNoResults}
 	{#if isNoResults}
@@ -363,7 +368,7 @@
 						} group-hover/item:block`}
 					>
 						<EditIcon
-							class="h-6 group-hover/button:[&>*]:fill-text/50 [&>*]:transition-[fill] [&>*]:duration-75"
+							class="h-4 group-hover/button:[&>*]:text-text/50 [&>*]:transition-[color] [&>*]:duration-75"
 						/>
 					</button>
 					<button

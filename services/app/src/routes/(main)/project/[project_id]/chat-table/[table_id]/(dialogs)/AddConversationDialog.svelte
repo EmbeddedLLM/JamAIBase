@@ -1,16 +1,18 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { onMount } from 'svelte';
 	import throttle from 'lodash/throttle';
+	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
-	import { pastChatAgents, pastChatConversations } from '../../chatTablesStore';
+	import { pastChatAgents, pastChatConversations } from '../../../tablesStore';
+	import { idPattern } from '$lib/constants';
 	import logger from '$lib/logger';
 
+	import { toast } from 'svelte-sonner';
+	import InputText from '$lib/components/InputText.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Select from '$lib/components/ui/select';
-
-	const { PUBLIC_JAMAI_URL } = env;
 
 	export let isAddingConversation: boolean;
 	export let selectedAgent = '';
@@ -44,21 +46,30 @@
 			}
 		} else {
 			const responseBody = await response.json();
-			logger.error('CHATTBL_LIST_AGENTS', responseBody);
-			console.error(responseBody.message);
+			if (response.status !== 404) {
+				logger.error('CHATTBL_LIST_AGENTS', responseBody);
+			}
+			console.error(responseBody);
+			toast.error('Failed to fetch chat agents', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		}
 	}
 	const throttledInvalidateAgents = throttle(getChatAgents, 5000);
 
 	async function handleAddConversation() {
-		if (!conversationName || !selectedAgent) {
-			return alert('Please fill in all fields');
-		}
+		if (!conversationName) return toast.error('Conversation ID is required');
+		if (!selectedAgent) return toast.error('Agent not selected');
+
+		if (!idPattern.test(conversationName))
+			return toast.error(
+				'Conversation ID must contain only alphanumeric characters and underscores/hyphens, and start and end with alphanumeric characters'
+			);
 
 		isLoading = true;
 
 		const response = await fetch(
-			`/api/v1/gen_tables/chat/duplicate/${selectedAgent}/${conversationName}?` +
+			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat/duplicate/${selectedAgent}/${conversationName}?` +
 				new URLSearchParams({
 					deploy: 'true'
 				}),
@@ -73,9 +84,9 @@
 		if (!response.ok) {
 			const responseBody = await response.json();
 			logger.error('CHATTBL_CONV_ADD', responseBody);
-			alert(
-				'Failed to add conversation: ' + (responseBody.message || JSON.stringify(responseBody))
-			);
+			toast.error('Failed to add conversation', {
+				description: responseBody.message || JSON.stringify(responseBody)
+			});
 		} else {
 			$pastChatConversations = [
 				{
@@ -122,19 +133,15 @@
 		<div class="grow py-3 w-full overflow-auto">
 			<div class="flex flex-col gap-2 px-6 pl-8 py-2 w-full text-center">
 				<span class="font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-					Conversation ID
+					Conversation ID*
 				</span>
 
-				<input
-					type="text"
-					bind:value={conversationName}
-					class="px-3 py-2 w-full text-sm bg-transparent data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#42464E] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-				/>
+				<InputText bind:value={conversationName} placeholder="Required" />
 			</div>
 
 			<div class="flex flex-col gap-1 px-6 pl-8 py-2">
 				<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-					Agent
+					Agent*
 				</span>
 
 				<Select.Root>
@@ -144,9 +151,11 @@
 							<Button
 								builders={[builder]}
 								variant="outline"
-								class="flex items-center justify-between gap-8 pl-3 pr-2 h-10 min-w-full bg-white data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1]"
+								class="flex items-center justify-between gap-8 pl-3 pr-2 h-10 min-w-full bg-white data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1] {!selectedAgent
+									? 'italic text-muted-foreground'
+									: ''}"
 							>
-								<span class="whitespace-nowrap line-clamp-1 font-normal text-left">
+								<span class="w-full whitespace-nowrap line-clamp-1 font-normal text-left">
 									{selectedAgent || 'Select Chat Agent'}
 								</span>
 
@@ -172,12 +181,15 @@
 
 		<Dialog.Actions>
 			<div class="flex gap-2">
-				<Button variant="link" on:click={() => (isAddingConversation = false)} class="grow px-6">
-					Cancel
-				</Button>
+				<DialogPrimitive.Close asChild let:builder>
+					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
+						Cancel
+					</Button>
+				</DialogPrimitive.Close>
 				<Button
-					loading={isLoading}
 					on:click={handleAddConversation}
+					type="button"
+					loading={isLoading}
 					class="relative grow px-6 rounded-full"
 				>
 					Add

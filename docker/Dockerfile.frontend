@@ -1,10 +1,16 @@
 FROM node:20-alpine
 
+ARG CHECK_ORIGIN=false
+ARG JAMAI_URL=http://owl:6969
+ARG JAMAI_SERVICE_KEY=
+
 WORKDIR /app
 COPY ./services/app .
 RUN npm ci
 
-RUN npx vite build
+RUN PUBLIC_IS_LOCAL=true PUBLIC_IS_SPA=false JAMAI_URL=${JAMAI_URL} PUBLIC_JAMAI_URL= JAMAI_SERVICE_KEY=${JAMAI_SERVICE_KEY} CHECK_ORIGIN=${CHECK_ORIGIN} npx vite build
 RUN mv temp build
+
+RUN apk --no-cache add curl
 
 CMD ["node", "server"]

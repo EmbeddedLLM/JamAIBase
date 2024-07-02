@@ -1,9 +1,6 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { env } from '$env/dynamic/public';
+import { PUBLIC_JAMAI_URL } from '$env/static/public';
 import logger from '$lib/logger.js';
-import type { ActionTable, ActionTableRow } from '$lib/types.js';
-
-const { PUBLIC_JAMAI_URL } = env;
+import type { GenTable, GenTableRow } from '$lib/types.js';
 
 export const load = async ({ depends, fetch, params, parent, url }) => {
 	depends('knowledge-table:slug');
@@ -34,11 +31,11 @@ export const load = async ({ depends, fetch, params, parent, url }) => {
 			if (responseTableData.status !== 404 && responseTableData.status !== 422) {
 				logger.error('KNOWTBL_TBL_GET', { tableData, rows });
 			}
-			return { error: responseTableData.status, message: JSON.stringify({ tableData, rows }) };
+			return { error: responseTableData.status, message: { tableData, rows } };
 		} else {
 			return {
-				tableData: tableData as ActionTable,
-				rows: rows.items as ActionTableRow[],
+				tableData: tableData as GenTable,
+				rows: rows.items as GenTableRow[],
 				total_rows: rows.total
 			};
 		}

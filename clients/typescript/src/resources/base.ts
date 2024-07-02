@@ -21,21 +21,21 @@ type BaseConfig = {
     maxRetries?: number;
     httpClient?: AxiosInstance;
     timeout?: number;
-    dangerouslyAllowBrowser?: boolean
+    dangerouslyAllowBrowser?: boolean;
 };
 
 type ConfigWithBaseURL = BaseConfig & {
     baseURL: string;
     apiKey?: string;
     projectId?: string;
-    dangerouslyAllowBrowser?: boolean
+    dangerouslyAllowBrowser?: boolean;
 };
 
 type ConfigWithoutBaseURL = BaseConfig & {
     baseURL?: string;
     apiKey: string;
     projectId: string;
-    dangerouslyAllowBrowser?: boolean
+    dangerouslyAllowBrowser?: boolean;
 };
 
 type Config = ConfigWithBaseURL | ConfigWithoutBaseURL;
@@ -47,16 +47,14 @@ export abstract class Base {
 
     /**
      * Creates an instance of APIClient.
-     * @param {string} baseURL Base URL for the API requests. Default url is - https://app.jamaibase.com
+     * @param {string} baseURL Base URL for the API requests. Default url is - https://api.jamaibase.com
      * @param {string} apiKey apiKey.
      * @param {string} projectId Project ID.
      * @param {number=} [maxRetries=0] Maximum number of retries for failed requests. Defaults value is 0.
      * @param {AxiosInstance} [httpClient] Axios instance for making HTTP requests. If not provided, a default instance will be created.
      * @param {number} [timeout] Timeout (ms) for the requests. Default value is none.
      */
-    constructor({ baseURL, apiKey, projectId, maxRetries = 0, httpClient, timeout,
-        dangerouslyAllowBrowser = false 
-     }: Config) {
+    constructor({ baseURL, apiKey, projectId, maxRetries = 0, httpClient, timeout, dangerouslyAllowBrowser = false }: Config) {
         this.maxRetries = maxRetries;
         this.httpClient = httpClient || axios.create({});
         this.timeout = timeout;
@@ -66,9 +64,9 @@ export abstract class Base {
                 "It looks like you're running in a browser-like environment.\n\nThis is disabled by default, as it risks exposing your secret API credentials to attackers.\nIf you understand the risks and have appropriate mitigations in place,\nyou can set the `dangerouslyAllowBrowser` option to `true`, e.g.,\n\nnew JamAI({ apiKey, dangerouslyAllowBrowser: true });"
             );
         }
-        
+
         // add baseurl to axios instance
-        this.httpClient.defaults.baseURL = baseURL || "https://app.jamaibase.com";
+        this.httpClient.defaults.baseURL = baseURL || "https://api.jamaibase.com";
 
         // add apikey and project id to header if provided
         if (apiKey && projectId) {

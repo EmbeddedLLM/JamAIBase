@@ -1,11 +1,9 @@
 <script lang="ts">
-	import { env } from '$env/dynamic/public';
+	import { PUBLIC_IS_LOCAL } from '$env/static/public';
 	import { page } from '$app/stores';
 	import { showDock } from '$globalStore';
 
 	import UserRole from '$lib/components/UserRole.svelte';
-
-	const { PUBLIC_IS_LOCAL } = env;
 
 	let settingsBtnHasFocus = false;
 </script>

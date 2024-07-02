@@ -1,8 +1,8 @@
 import asyncio
 import re
-import time
 from copy import deepcopy
 from dataclasses import dataclass
+from time import time
 from typing import Any, AsyncGenerator
 
 import numpy as np
@@ -12,8 +12,8 @@ from uuid_extensions import uuid7str
 
 from jamaibase.protocol import (
     GEN_CONFIG_VAR_PATTERN,
+    ChatCompletionChoiceDelta,
     ChatEntry,
-    ChatRequest,
     GenTableChatCompletionChunks,
     GenTableRowsChatCompletionChunks,
     GenTableStreamChatCompletionChunk,
@@ -25,10 +25,9 @@ from jamaibase.protocol import (
     TableMeta,
 )
 from owl.db.gen_table import ChatTable, GenerativeTable
-from owl.llm import predict, predict_stream
+from owl.llm import LLMEngine
 from owl.models import CloudEmbedder
-from owl.routers.llm import _preprocess_completion
-from owl.utils import get_api_key
+from owl.utils import mask_string
 from owl.utils.exceptions import ResourceNotFoundError
 
 
@@ -113,10 +112,10 @@ class MultiRowsGenExecutor:
         self._create_executor(body_)
         if self.body.stream:
             try:
-                async for row in await self.executor.gen_row():
-                    await self.queue.put(row)
+                async for chunk in await self.executor.gen_row():
+                    await self.queue.put(chunk)
             except Exception:
-                logger.exception(f"Error executing task {tmp_id}")
+                logger.exception(f"Error executing task {tmp_id}: {body_}")
         else:
             return await self.executor.gen_row()
 
@@ -128,11 +127,11 @@ class MultiRowsGenExecutor:
             for i, body_ in enumerate(batch_bodies):
                 asyncio.create_task(self._execute(body_, i))
 
-            done_count = 0
-            while done_count < len(batch_bodies):
+            done_row_count = 0
+            while done_row_count < len(batch_bodies):
                 chunk = await self.queue.get()
                 if chunk == "data: [DONE]\n\n":
-                    done_count += 1
+                    done_row_count += 1
                 content_length += len(chunk.encode("utf-8"))
                 yield chunk
         self.request.state.billing_manager.create_egress_events(content_length / (1024**3))
@@ -182,6 +181,16 @@ class GenExecutor:
             self.row_id = body.row_id
         self.is_chat = isinstance(self.table, ChatTable)
         self.cols_batch_size = cols_batch_size
+        self.llm = LLMEngine(
+            openai_api_key=openai_api_key,
+            anthropic_api_key=anthropic_api_key,
+            gemini_api_key=gemini_api_key,
+            cohere_api_key=cohere_api_key,
+            groq_api_key=groq_api_key,
+            together_api_key=together_api_key,
+            jina_api_key=jina_api_key,
+            voyage_api_key=voyage_api_key,
+        )
         self.openai_api_key = openai_api_key
         self.anthropic_api_key = anthropic_api_key
         self.gemini_api_key = gemini_api_key
@@ -190,6 +199,7 @@ class GenExecutor:
         self.together_api_key = together_api_key
         self.jina_api_key = jina_api_key
         self.voyage_api_key = voyage_api_key
+        self.error_columns = []
 
     async def gen_row(self) -> Any | GenTableChatCompletionChunks:
         with self.table.create_session() as session:
@@ -219,7 +229,8 @@ class GenExecutor:
                 continue
             if self.is_chat and col_id.lower() == "ai":
                 messages = self.table.get_conversation_thread(self.table_id).thread
-                messages.append(ChatEntry.user(content=self.column_dict["User"]))
+                user_message = self.column_dict["User"]
+                messages.append(ChatEntry.user(content=user_message if user_message else "."))
                 if len(messages) == 0:
                     continue
                 gen_config["messages"] = [m.model_dump() for m in messages]
@@ -254,8 +265,8 @@ class GenExecutor:
             output_column_name = task.output_column_name
             body = task.body
             embedding_model = body["embedding_model"]
-            api_key = get_api_key(
-                embedding_model,
+            embedder = CloudEmbedder(
+                embedder_name=embedding_model,
                 openai_api_key=self.openai_api_key,
                 anthropic_api_key=self.anthropic_api_key,
                 gemini_api_key=self.gemini_api_key,
@@ -265,12 +276,21 @@ class GenExecutor:
                 jina_api_key=self.jina_api_key,
                 voyage_api_key=self.voyage_api_key,
             )
-            embedder = CloudEmbedder(embedder_name=embedding_model, api_key=api_key)
-            embedding = embedder.embed_documents(texts=[self.column_dict[body["source_column"]]])
-            embedding = np.asarray(embedding[0], dtype=task.dtype)
+            source = self.column_dict[body["source_column"]]
+            embedding = embedder.embed_documents(texts=["." if source is None else source])
+            embedding = np.asarray(embedding.data[0].embedding, dtype=task.dtype)
             embedding = embedding / np.linalg.norm(embedding)
             self.column_dict[output_column_name] = embedding
             self.regen_column_dict[output_column_name] = embedding
+
+    @staticmethod
+    def _log_item(x: Any) -> str:
+        if isinstance(x, np.ndarray):
+            return f"array(shape={x.shape}, dtype={x.dtype})"
+        elif isinstance(x, str):
+            return mask_string(x)
+        else:
+            return f"type={type(x)}"
 
     def _write_to_table(self):
         """
@@ -278,42 +298,47 @@ class GenExecutor:
         """
         with self.table.create_session() as session:
             if self.is_row_add:
-                _data = {
-                    k: (
-                        f"array(shape={v.shape}, dtype={v.dtype})"
-                        if isinstance(v, np.ndarray)
-                        else v
-                    )
-                    for k, v in self.column_dict.items()
-                }
+                _data = {k: self._log_item(v) for k, v in self.column_dict.items()}
                 logger.info(
                     (
                         f"{self.request.state.id} - Writing row to table '{self.table_id}': "
                         f"{_data}"
                     )
                 )
-                self.table.add_rows(session, self.table_id, [self.column_dict])
+                try:
+                    self.table.add_rows(session, self.table_id, [self.column_dict])
+                except Exception:
+                    _data = [
+                        {
+                            k: (
+                                {"type": type(v), "shape": v.shape, "dtype": v.dtype}
+                                if isinstance(v, np.ndarray)
+                                else v
+                            )
+                        }
+                        for k, v in self.column_dict.items()
+                    ]
+                    logger.exception((f"{self.request.state.id} - Error adding rows {[_data]}"))
             else:
-                _data = {
-                    k: (
-                        f"array(shape={v.shape}, dtype={v.dtype})"
-                        if isinstance(v, np.ndarray)
-                        else v
-                    )
-                    for k, v in self.regen_column_dict.items()
-                }
+                _data = {k: self._log_item(v) for k, v in self.regen_column_dict.items()}
                 logger.info(
                     (
                         f"{self.request.state.id} - Updating row of table '{self.table_id}': "
                         f"{_data}"
                     )
                 )
-                self.table.update_rows(
-                    session,
-                    self.table_id,
-                    f"`ID` = '{self.body.row_id}'",
-                    values=self.regen_column_dict,
-                )
+                try:
+                    self.table.update_rows(
+                        session,
+                        self.table_id,
+                        where=f"`ID` = '{self.body.row_id}'",
+                        values=self.regen_column_dict,
+                    )
+                except Exception:
+                    logger.exception(
+                        f"{self.request.state.id} - Error update rows, where `ID` = '{self.body.row_id}', "
+                        f"values: {self.regen_column_dict}"
+                    )
 
     def _extract_upstream_columns(self, text: str) -> list[str]:
         matches = re.findall(GEN_CONFIG_VAR_PATTERN, text)
@@ -331,16 +356,6 @@ class GenExecutor:
             dict[str, Any]: The content with placeholders replaced.
         """
 
-        """
-        Substitutes placeholders in the content with actual column values.
-
-        Args:
-            content (str): The content with placeholders.
-
-        Returns:
-            dict[str, Any]: The content with placeholders replaced.
-        """
-
         def replace_match(match):
             key = match.group(1)  # Extract the key from the match
             try:
@@ -348,8 +363,15 @@ class GenExecutor:
             except KeyError:
                 raise KeyError(f"Requested column '{key}' not found.")
 
-        updated_content = re.sub(GEN_CONFIG_VAR_PATTERN, replace_match, content)
-        return updated_content
+        return re.sub(GEN_CONFIG_VAR_PATTERN, replace_match, content)
+
+    def _check_upstream_error_chunk(self, content: str) -> Exception:
+        matches = re.findall(GEN_CONFIG_VAR_PATTERN, content)
+
+        if any([match in self.error_columns for match in matches]):
+            raise Exception
+        else:
+            pass
 
     async def _execute_task_stream(self, task: Task) -> AsyncGenerator[str, None]:
         """
@@ -360,73 +382,71 @@ class GenExecutor:
         body["id"] = self.request.state.id
 
         try:
+            logger.debug(f"Processing column: {output_column_name}")
+            self._check_upstream_error_chunk(body["messages"][-1]["content"])
+
             body["messages"][-1]["content"] = self._substitute_data(
                 body["messages"][-1]["content"]
             )
-        except (IndexError, KeyError):
-            pass
-
-        llm_request, request_dict, references = await _preprocess_completion(
-            request=self.request,
-            body=ChatRequest.model_validate(body),
-            openai_api_key=self.openai_api_key,
-            anthropic_api_key=self.anthropic_api_key,
-            gemini_api_key=self.gemini_api_key,
-            cohere_api_key=self.cohere_api_key,
-            groq_api_key=self.groq_api_key,
-            together_api_key=self.together_api_key,
-            jina_api_key=self.jina_api_key,
-            voyage_api_key=self.voyage_api_key,
-        )
-
-        try:
             new_column_value = ""
-            i = 0
-            async for chunk in predict_stream(
+            messages, references = await self.llm.retrieve_references(
                 request=self.request,
-                messages=llm_request.messages,
-                openai_api_key=self.openai_api_key,
-                anthropic_api_key=self.anthropic_api_key,
-                gemini_api_key=self.gemini_api_key,
-                cohere_api_key=self.cohere_api_key,
-                groq_api_key=self.groq_api_key,
-                together_api_key=self.together_api_key,
-                jina_api_key=self.jina_api_key,
-                voyage_api_key=self.voyage_api_key,
-                **request_dict,
+                messages=body.pop("messages"),
+                rag_params=body.pop("rag_params", None),
+                **body,
+            )
+            if references is not None:
+                ref = GenTableStreamReferences(
+                    **references.model_dump(exclude=["object"]),
+                    output_column_name=output_column_name,
+                )
+                yield f"data: {ref.model_dump_json()}\n\n"
+            async for chunk in self.llm.generate_stream(
+                request=self.request,
+                messages=messages,
+                **body,
             ):
-                if i == 0 and references is not None:
-                    ref = GenTableStreamReferences(
-                        **references.model_dump(), output_column_name=output_column_name
-                    )
-                    yield f"data: {ref.model_dump_json()}\n\n"
                 new_column_value += chunk.text
                 chunk = GenTableStreamChatCompletionChunk(
-                    **chunk.model_dump(exclude={"object"}),
+                    **chunk.model_dump(exclude=["object"]),
                     output_column_name=output_column_name,
                     row_id=self.row_id,
                 )
                 yield f"data: {chunk.model_dump_json()}\n\n"
-                i += 1
-
-            # Append new column data for subsequence tasks
-            self.column_dict[output_column_name] = new_column_value
-            self.regen_column_dict[output_column_name] = new_column_value
+                if chunk.finish_reason == "error":
+                    self.error_columns.append(output_column_name)
             logger.info(
                 (
                     f"{self.request.state.id} - Streamed completion for "
-                    f"{output_column_name}: {new_column_value}"
+                    f"{output_column_name}: <{mask_string(new_column_value)}>"
                 )
             )
 
-        except Exception:
-            logger.exception(
-                (
-                    f"{self.request.state.id} - LLM generation failed for column: "
-                    f"{task.output_column_name}"
-                )
+        except Exception as exc:
+            error_chunk = GenTableStreamChatCompletionChunk(
+                id=self.request.state.id,
+                object="gen_table.completion.chunk",
+                created=int(time()),
+                model="",
+                usage=None,
+                choices=[
+                    ChatCompletionChoiceDelta(
+                        message=ChatEntry.assistant(f"[ERROR] {exc}"),
+                        index=0,
+                        finish_reason="error",
+                    )
+                ],
+                output_column_name=output_column_name,
+                row_id=self.row_id,
             )
-            raise
+            yield f"data: {error_chunk.model_dump_json()}\n\n"
+            new_column_value = error_chunk.text
+            self.error_columns.append(output_column_name)
+            logger.exception(f"{self.request.state.id} - LLM generation failed for column: {task}")
+        finally:
+            # Append new column data for subsequence tasks
+            self.column_dict[output_column_name] = new_column_value
+            self.regen_column_dict[output_column_name] = new_column_value
 
     async def _execute_task_nonstream(self, task: Task):
         """
@@ -442,35 +462,8 @@ class GenExecutor:
             )
         except (IndexError, KeyError):
             pass
-
-        llm_request, request_dict, references = await _preprocess_completion(
-            request=self.request,
-            body=ChatRequest.model_validate(body),
-            openai_api_key=self.openai_api_key,
-            anthropic_api_key=self.anthropic_api_key,
-            gemini_api_key=self.gemini_api_key,
-            cohere_api_key=self.cohere_api_key,
-            groq_api_key=self.groq_api_key,
-            together_api_key=self.together_api_key,
-            jina_api_key=self.jina_api_key,
-            voyage_api_key=self.voyage_api_key,
-        )
-
         try:
-            response = await predict(
-                request=self.request,
-                messages=llm_request.messages,
-                openai_api_key=self.openai_api_key,
-                anthropic_api_key=self.anthropic_api_key,
-                gemini_api_key=self.gemini_api_key,
-                cohere_api_key=self.cohere_api_key,
-                groq_api_key=self.groq_api_key,
-                together_api_key=self.together_api_key,
-                jina_api_key=self.jina_api_key,
-                voyage_api_key=self.voyage_api_key,
-                **request_dict,
-            )
-            response.references = references
+            response = await self.llm.rag(request=self.request, **body)
             new_column_value = response.text
 
             # append new column data for subsequence tasks
@@ -479,13 +472,13 @@ class GenExecutor:
             logger.info(
                 (
                     f"{self.request.state.id} - Generated completion for {output_column_name}: "
-                    f"{new_column_value}"
+                    f"<{mask_string(new_column_value)}>"
                 )
             )
             return response
 
         except Exception:
-            logger.exception(f"LLM generation failed for column: {task.output_column_name}")
+            logger.exception(f"LLM generation failed for column: {task}")
             raise
 
     async def _stream_sequent_execution(self) -> AsyncGenerator[str, None]:
@@ -493,11 +486,9 @@ class GenExecutor:
         Executes tasks sequentially in a streaming manner.
         """
         llm_tasks = [task for task in self.tasks if not task.is_embed]
-
         for task in llm_tasks:
             async for chunk in self._execute_task_stream(task):
                 yield chunk
-
         yield "data: [DONE]\n\n"
         self._run_embed_tasks()
         self._write_to_table()
@@ -570,7 +561,7 @@ class GenExecutor:
             try:
                 responses[task_name] = await self._execute_task_nonstream(task)
             except Exception:
-                logger.exception(f"Error executing task {task_name}")
+                logger.exception(f"Error executing task: {task}")
             finally:
                 completed.add(task_name)
                 tasks_in_progress.remove(task_name)
@@ -614,7 +605,7 @@ class GenExecutor:
                 async for chunk in self._execute_task_stream(task):
                     await queue.put((task_name, chunk))
             except Exception:
-                logger.exception(f"Error executing task {task_name}")
+                logger.exception(f"Error executing task: {task}")
             finally:
                 completed.add(task_name)
                 await queue.put((task_name, None))

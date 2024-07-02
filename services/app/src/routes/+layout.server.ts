@@ -1,16 +1,17 @@
-import { env } from '$env/dynamic/public';
-import { env as privateEnv } from '$env/dynamic/private';
+import { PUBLIC_IS_LOCAL, PUBLIC_IS_SPA } from '$env/static/public';
+import { JAMAI_URL, JAMAI_SERVICE_KEY } from '$env/static/private';
 import { error, redirect } from '@sveltejs/kit';
 import nodeCache from '$lib/nodeCache.js';
 import logger from '$lib/logger.js';
 import type { OrganizationReadRes, PriceRes, UserRead } from '$lib/types.js';
 
-const { PUBLIC_IS_LOCAL } = env;
-const { JAMAI_URL, JAMAI_SERVICE_KEY } = privateEnv;
-
 const headers = {
 	Authorization: `Bearer ${JAMAI_SERVICE_KEY}`
 };
+
+export const prerender = PUBLIC_IS_SPA !== 'true' ? false : 'auto';
+export const ssr = PUBLIC_IS_SPA !== 'true';
+export const csr = true;
 
 export const load = async ({ cookies, depends, fetch, locals, params, url }) => {
 	depends('layout:root');
@@ -33,7 +34,7 @@ export const load = async ({ cookies, depends, fetch, locals, params, url }) => 
 		cookies.set('dockOpen', 'true', { path: '/', httpOnly: false });
 	}
 	if (showRightDock === undefined) {
-		cookies.set('rightDockOpen', 'true', { path: '/', httpOnly: false });
+		cookies.set('rightDockOpen', 'false', { path: '/', httpOnly: false });
 	}
 
 	if (PUBLIC_IS_LOCAL === 'false' && !url.pathname.startsWith('/api')) {
@@ -100,15 +101,19 @@ export const load = async ({ cookies, depends, fetch, locals, params, url }) => 
 						}
 
 						const orgData = await getOrganizationData(activeOrganizationId!);
+						const userRoleInOrg = orgData?.users?.find(
+							(user) => user.user_id === locals.user?.sub
+						)?.role;
 
 						//* Remove external keys if not admin, don't expose
-						if (
-							orgData &&
-							orgData.users!.find((user) => user.user_id === locals.user?.sub)?.role !== 'admin'
-						) {
+						if (orgData && userRoleInOrg !== 'admin') {
 							delete orgData.external_keys;
-							delete orgData.api_keys;
 							delete orgData.users;
+
+							//* Remove JamAI api keys if not member
+							if (userRoleInOrg !== 'member') {
+								delete orgData.api_keys;
+							}
 						}
 
 						return {
@@ -153,15 +158,19 @@ export const load = async ({ cookies, depends, fetch, locals, params, url }) => 
 					}
 
 					const orgData = await getOrganizationData(activeOrganizationId!);
+					const userRoleInOrg = orgData?.users?.find(
+						(user) => user.user_id === locals.user?.sub
+					)?.role;
 
 					//* Remove external keys if not admin, don't expose
-					if (
-						orgData &&
-						orgData.users!.find((user) => user.user_id === locals.user?.sub)?.role !== 'admin'
-					) {
+					if (orgData && userRoleInOrg !== 'admin') {
 						delete orgData.external_keys;
-						delete orgData.api_keys;
 						delete orgData.users;
+
+						//* Remove JamAI api keys if not member
+						if (userRoleInOrg !== 'member') {
+							delete orgData.api_keys;
+						}
 					}
 
 					return {
@@ -174,6 +183,7 @@ export const load = async ({ cookies, depends, fetch, locals, params, url }) => 
 						organizationData: orgData
 					};
 				} else {
+					logger.error('APP_USER_GET', await userApiRes.json());
 					//FIXME: Throw error if user API fails, maybe?
 					return {
 						prices,
