@@ -507,7 +507,7 @@ export default function Home() {
                                             <li className="" key={column.id}>
                                                 <span>
                                                     {column.gen_config
-                                                        ? "Ouput"
+                                                        ? "Output"
                                                         : "Input"}
                                                 </span>
                                             </li>
