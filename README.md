@@ -12,42 +12,17 @@
 
 ## Overview
 
-Welcome to JamAI Base – the real-time database that orchestrates Large Language Models (LLMs) for you. Designed to simplify AI integration, JamAI Base offers a Backend as a Service (BaaS) platform with an intuitive, spreadsheet-like interface. Focus on defining your data requirements through natural language prompts, and let us handle the complexities of RAG, LLMOps, conversation histories, and LLM orchestration.
+JamAI Base is an open-source RAG (Retrieval-Augmented Generation) backend platform that integrates an embedded database (SQLite) and an embedded vector database (LanceDB) with managed memory and RAG capabilities. It features built-in LLM, vector embeddings, and reranker orchestration and management, all accessible through a convenient, intuitive, spreadsheet-like UI and a simple REST API.
 
 ![JamAI Base Demo](jamaibase.webp)
 
-## Key Benefits
-
-### Ease of Use
-
-- **Interface**: Simple, intuitive spreadsheet-like interface.
-- **Focus**: Define data requirements through natural language prompts.
-
-### Scalability
-
-- **Foundation**: Built on LanceDB, an open-source vector database designed for AI workloads.
-- **Performance**: Serverless design ensures optimal performance and seamless scalability.
-
-### Flexibility
-
-- **LLM Support**: Supports any LLMs, including OpenAI GPT-4, Anthropic Claude 3, Mistral AI Mixtral, and Meta Llama3.
-- **Capabilities**: Leverage state-of-the-art AI capabilities effortlessly.
-
-### Declarative Paradigm
-
-- **Approach**: Define the "what" rather than the "how."
-- **Simplification**: Simplifies complex data operations, making them accessible to users with varying levels of technical expertise.
-
-### Innovative RAG Techniques
-
-- **Effortless RAG**: Built-in RAG features, no need to build the RAG pipeline yourself.
-- **Query Rewriting**: Boosts the accuracy and relevance of your search queries.
-- **Hybrid Search & Reranking**: Combines keyword-based search, structured search, and vector search for the best results.
-- **Structured RAG Content Management**: Organizes and manages your structured content seamlessly.
-- **Adaptive Chunking**: Automatically determines the best way to chunk your data.
-- **BGE M3-Embedding**: Leverages multi-lingual, multi-functional, and multi-granular text embeddings for free.
-
 ## Key Features
+
+- Embedded database (SQLite) and vector database (LanceDB)
+- Managed memory and RAG capabilities
+- Built-in LLM, vector embeddings, and reranker orchestration
+- Intuitive spreadsheet-like UI
+- Simple REST API
 
 ### Generative Tables
 
@@ -94,6 +69,37 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
 - **Simplified Development**: Allow users to define relationships and desired outcomes.
 - **Non-Procedural Approach**: Eliminate the need to write procedures.
 - **Functional Flexibility**: Support functional programming through LLMs.
+
+## Key Benefits
+
+### Ease of Use
+
+- **Interface**: Simple, intuitive spreadsheet-like interface.
+- **Focus**: Define data requirements through natural language prompts.
+
+### Scalability
+
+- **Foundation**: Built on LanceDB, an open-source vector database designed for AI workloads.
+- **Performance**: Serverless design ensures optimal performance and seamless scalability.
+
+### Flexibility
+
+- **LLM Support**: Supports any LLMs, including OpenAI GPT-4, Anthropic Claude 3, Mistral AI Mixtral, and Meta Llama3.
+- **Capabilities**: Leverage state-of-the-art AI capabilities effortlessly.
+
+### Declarative Paradigm
+
+- **Approach**: Define the "what" rather than the "how."
+- **Simplification**: Simplifies complex data operations, making them accessible to users with varying levels of technical expertise.
+
+### Innovative RAG Techniques
+
+- **Effortless RAG**: Built-in RAG features, no need to build the RAG pipeline yourself.
+- **Query Rewriting**: Boosts the accuracy and relevance of your search queries.
+- **Hybrid Search & Reranking**: Combines keyword-based search, structured search, and vector search for the best results.
+- **Structured RAG Content Management**: Organizes and manages your structured content seamlessly.
+- **Adaptive Chunking**: Automatically determines the best way to chunk your data.
+- **BGE M3-Embedding**: Leverages multi-lingual, multi-functional, and multi-granular text embeddings for free.
 
 ## Getting Started
 

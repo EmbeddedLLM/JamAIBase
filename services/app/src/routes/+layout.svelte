@@ -1,12 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
 	import { browser } from '$app/environment';
 	import { beforeNavigate, afterNavigate } from '$app/navigation';
 	import NProgress from 'nprogress';
 	import '../app.css';
 	import 'overlayscrollbars/overlayscrollbars.css';
-	import '@fontsource/roboto';
+	import '@fontsource-variable/roboto-flex';
 	import { showDock, showRightDock, preferredTheme, activeOrganization } from '$globalStore';
 
 	import { Toaster } from '$lib/components/ui/sonner';
@@ -65,7 +64,30 @@
 			}
 		});
 	});
+
+	// function switchTheme(e: KeyboardEvent) {
+	// 	const target = e.target as HTMLElement;
+	// 	if (
+	// 		target.tagName == 'INPUT' ||
+	// 		target.tagName == 'TEXTAREA' ||
+	// 		target.getAttribute('contenteditable') == 'true'
+	// 	)
+	// 		return;
+
+	// 	const switchTheme = () => {
+	// 		$preferredTheme = $preferredTheme == 'LIGHT' ? 'DARK' : 'LIGHT';
+	// 	};
+
+	// 	if (!e.ctrlKey && !e.shiftKey && !e.metaKey && e.key == 'c') {
+	// 		//@ts-ignore
+	// 		if (!document.startViewTransition) switchTheme();
+	// 		//@ts-ignore
+	// 		document.startViewTransition(switchTheme);
+	// 	}
+	// }
 </script>
+
+<!-- <svelte:window on:keydown={switchTheme} /> -->
 
 <!-- <svelte:head>
 	<script>
@@ -95,6 +117,6 @@
 
 <style>
 	:global(body) {
-		font-family: 'Roboto', sans-serif;
+		font-family: 'Roboto Flex Variable', sans-serif;
 	}
 </style>

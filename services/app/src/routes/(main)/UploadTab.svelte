@@ -169,7 +169,7 @@
 						<DocumentFilledIcon
 							class="flex-[0_0_auto] h-6 [&>path]:fill-[#8E4585] data-dark:[&>path]:fill-[#CB63BE]"
 						/>
-						<span title={queuedFile.file.name} class="ml-2 mr-auto w line-clamp-1 break-all">
+						<span title={queuedFile.file.name} class="ml-2 mr-auto line-clamp-1 break-all">
 							{queuedFile.file.name}
 						</span>
 						<div class="flex-[0_0_auto] flex items-center justify-center">
@@ -226,7 +226,7 @@
 					<DocumentFilledIcon
 						class="flex-[0_0_auto] h-6 [&>path]:fill-[#8E4585] data-dark:[&>path]:fill-[#CB63BE]"
 					/>
-					<span title="test-file-queued.jpg" class="ml-2 mr-auto w line-clamp-1 break-all">
+					<span title="test-file-queued.jpg" class="ml-2 mr-auto line-clamp-1 break-all">
 						test-file-queued.jpg
 					</span>
 					<div class="flex-[0_0_auto] flex items-center justify-center">

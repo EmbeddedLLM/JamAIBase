@@ -4,9 +4,11 @@ import type { genTableDTypes, userRoles } from './constants';
 
 export interface AvailableModel {
 	id: string;
-	contextLength: number;
+	context_length: number;
 	languages: string[];
 	owned_by: string;
+	capabilities: string[];
+	object: string;
 }
 
 export type SideDockLink = {

@@ -72,29 +72,26 @@ classifiers = [ # https://pypi.org/classifiers/
 dependencies = [
     "httpx>=0.25.0",
     "loguru>=0.7.2",
-    "numpy>=1.26.0",
+    "numpy>=1.26.0,<2.0.0",
     "orjson>=3.9.7",
     "Pillow>=10.0.1",
-    "pyarrow>=15.0.0",
     "pydantic-settings>=2.0.3",
     "pydantic>=2.4.2",
-    "sqlmodel>=0.0.16",
     "srsly>=2.4.8",
     "toml>=0.10.2",
-    "tqdm>=4.66.1",
     "typing_extensions>=4.10.0",
-    "uuid7~=0.1.0",
 ]
 dynamic = ["version"]
 
 [project.optional-dependencies]
 lint = ["black~=24.4.2", "flake8~=7.0.0"]
 test = [
-    "flaky~=3.7.0",
-    "mypy~=1.5.1",
-    "pytest-asyncio>=0.21.1",
-    "pytest-cov~=4.1.0",
-    "pytest~=7.4.2",
+    "flaky~=3.8.1",
+    "mypy~=1.10.1",
+    "pandas",
+    "pytest-asyncio>=0.23.7",
+    "pytest-cov~=5.0.0",
+    "pytest~=8.2.2",
 ]
 docs = [
     "furo~=2023.9.10",             # Sphinx theme (nice looking, with dark mode)

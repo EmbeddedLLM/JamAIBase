@@ -1,9 +1,9 @@
-import { NameSchema, TableSchemaCreateSchema } from "@/resources/gen_tables/tables";
+import { IdSchema, TableSchemaCreateSchema } from "@/resources/gen_tables/tables";
 import { ChatCompletionChunkSchema, ChatEntrySchema, ReferencesSchema } from "@/resources/llm/chat";
 import { z } from "zod";
 
 export const GetConversationThreadRequestSchema = z.object({
-    table_id: NameSchema
+    table_id: IdSchema
 });
 
 export const GetConversationThreadResponseSchema = z.object({

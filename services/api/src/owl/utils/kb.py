@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from itertools import chain, pairwise
 from typing import Any
 
-from jamaibase.protocol import Chunk
+from owl.protocol import Chunk
 
 
 def detect_consecutive_segments(lst: list[tuple[Any, Any]]) -> list[tuple[Any, Any]]:

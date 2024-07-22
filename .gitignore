@@ -48,3 +48,4 @@ clients/typescript/**/*.d.ts
 **/node_modules/
 **/docs-autogen/
 **/docs-autogen-ts/
+**/dist

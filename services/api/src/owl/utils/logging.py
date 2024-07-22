@@ -76,7 +76,7 @@ def setup_logger_sinks():
     import sys
     from copy import deepcopy
 
-    from owl.config import LOGS
+    from owl.configs.manager import LOGS
 
     logger.remove()
     log_cfg = deepcopy(LOGS)

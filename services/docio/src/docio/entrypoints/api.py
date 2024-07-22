@@ -18,7 +18,9 @@ from docio.utils.logging import replace_logging_handlers, setup_logger_sinks
 
 
 class Config(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", cli_parse_args=True
+    )
     docio_port: int = 6979
     docio_host: str = "0.0.0.0"
     docio_workers: int = 2
@@ -93,6 +95,17 @@ async def health() -> Response:
 
 if __name__ == "__main__":
     import uvicorn
+    import os
+
+    if os.name == "nt":
+        import asyncio
+        from multiprocessing import freeze_support
+
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        freeze_support()
+        logger.info("The system is Windows.")
+    else:
+        logger.info("The system is not Windows.")
 
     uvicorn.run(
         "docio.entrypoints.api:app",

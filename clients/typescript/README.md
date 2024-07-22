@@ -224,11 +224,15 @@ try {
     const response = await jamai.addRow({
         table_type: "action",
         table_id: "workout-suggestion",
-        data: {
-            age: 30,
-            height_in_centimeters: 170,
-            weight_in_kg: 60
-        }
+        data: [
+            {
+                age: 30,
+                height_in_centimeters: 170,
+                weight_in_kg: 60
+            }
+        ],
+        reindex: null,
+        concurrent: false
     });
     console.log("response: ", response);
 } catch (err) {
@@ -243,9 +247,13 @@ try {
     const stream = await jamai.addRowStream({
         table_type: "action",
         table_id: "action-table-example-1",
-        data: {
-            Name: "Albert Eistein"
-        }
+        data: [
+            {
+                Name: "Albert Eistein"
+            }
+        ],
+        reindex: null,
+        concurrent: false
     });
 
     const reader = stream.getReader();

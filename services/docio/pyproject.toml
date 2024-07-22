@@ -78,15 +78,18 @@ dependencies = [
     "langchain~=0.1.10",
     "loguru~=0.7.2",
     "matplotlib",
+    "pandas~=2.2.2",
     "pdfplumber~=0.10.4",          # pdfplumber
     "pydantic-settings>=2.2.1",
     "pydantic~=2.6.3",
     "pypdfium2~=4.27.0",
+    "python-multipart",
     "s3fs",
     "timm",
     "torch",
     "transformers>=4.38.2",
-    "unstructured-client",
+    "unstructured-client @ git+https://github.com/EmbeddedLLM/unstructured-python-client.git@fix-nested-asyncio-conflict-with-uvloop#egg=unstructured-client",
+    "unstructured~=0.14.9",
     "uvicorn[standard]~=0.27.1",
 ] # Sort your dependencies https://sortmylist.com/
 dynamic = ["version"]

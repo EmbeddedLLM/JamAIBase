@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Multilingual Code Examples</title>
+    <style>
+      body {
+        font-family: "Courier New", monospace;
+        line-height: 1.6;
+        color: #333;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+        background-color: #f0f0f0;
+      }
+      h1,
+      h2 {
+        color: #2c3e50;
+      }
+      pre {
+        background-color: #fff;
+        border: 1px solid #ddd;
+        border-left: 3px solid #f36d33;
+        page-break-inside: avoid;
+        font-family: monospace;
+        font-size: 15px;
+        line-height: 1.6;
+        margin-bottom: 1.6em;
+        max-width: 100%;
+        overflow: auto;
+        padding: 1em 1.5em;
+        display: block;
+        word-wrap: break-word;
+      }
+      .comment {
+        color: #009900;
+      }
+      .string {
+        color: #3366cc;
+      }
+      .keyword {
+        color: #ff3300;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Multilingual Code Examples</h1>
+
+    <h2>Python (.py)</h2>
+    <pre>
+<span class="comment"># example.py</span>
+<span class="keyword">def</span> <span class="keyword">greet</span>(name: str) -> str:
+    <span class="keyword">return</span> <span class="string">f"Hello, {name}!"</span>
+
+<span class="comment"># Different data types</span>
+integer_example: int = 42
+float_example: float = 3.14
+string_example: str = <span class="string">"Python"</span>
+boolean_example: bool = True
+list_example: list = [1, 2, 3, 4, 5]
+dict_example: dict = {<span class="string">"key"</span>: <span class="string">"value"</span>}
+
+<span class="keyword">print</span>(greet(<span class="string">"World"</span>))
+    </pre>
+
+    <h2>JavaScript (.js)</h2>
+    <pre>
+<span class="comment">// script.js</span>
+<span class="keyword">function</span> calculateArea(radius) {
+  <span class="keyword">return</span> Math.PI * radius * radius;
+}
+
+<span class="comment">// Different data types</span>
+<span class="keyword">let</span> numberExample = 42;
+<span class="keyword">let</span> stringExample = <span class="string">'JavaScript'</span>;
+<span class="keyword">let</span> booleanExample = false;
+<span class="keyword">let</span> arrayExample = [1, 2, 3, 4, 5];
+<span class="keyword">let</span> objectExample = { key: <span class="string">'value'</span> };
+
+console.log(`Area of circle with radius 5: ${calculateArea(5)}`);
+    </pre>
+
+    <h2>SQL (.sql)</h2>
+    <pre>
+<span class="comment">-- database.sql</span>
+CREATE TABLE users (
+    id INT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO users (id, username, email) VALUES
+(1, <span class="string">'john_doe'</span>, <span class="string">'john@example.com'</span>),
+(2, <span class="string">'jane_smith'</span>, <span class="string">'jane@example.com'</span>);
+
+SELECT * FROM users WHERE id = 1;
+    </pre>
+
+    <h2>HTML (.html) and CSS (.css)</h2>
+    <pre>
+<span class="comment">&lt;!-- index.html --&gt;</span>
+&lt;!DOCTYPE html&gt;
+&lt;html lang=<span class="string">"en"</span>&gt;
+&lt;head&gt;
+    &lt;meta charset=<span class="string">"UTF-8"</span>&gt;
+    &lt;title&gt;Sample Page&lt;/title&gt;
+    &lt;link rel=<span class="string">"stylesheet"</span> href=<span class="string">"styles.css"</span>&gt;
+&lt;/head&gt;
+&lt;body&gt;
+    &lt;h1&gt;Welcome to My Page&lt;/h1&gt;
+    &lt;p class=<span class="string">"highlight"</span>&gt;This is a sample paragraph.&lt;/p&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+
+<span class="comment">/* styles.css */</span>
+body {
+    font-family: Arial, sans-serif;
+    line-height: 1.6;
+    color: #333;
+}
+
+.highlight {
+    background-color: #ffff00;
+    padding: 5px;
+}
+    </pre>
+
+    <h2>JSON (.json)</h2>
+    <pre>
+<span class="comment">// config.json</span>
+{
+  <span class="string">"appName"</span>: <span class="string">"MyApp"</span>,
+  <span class="string">"version"</span>: <span class="string">"1.0.0"</span>,
+  <span class="string">"database"</span>: {
+    <span class="string">"host"</span>: <span class="string">"localhost"</span>,
+    <span class="string">"port"</span>: 5432,
+    <span class="string">"user"</span>: <span class="string">"admin"</span>,
+    <span class="string">"password"</span>: <span class="string">"secret"</span>
+  },
+  <span class="string">"debug"</span>: true,
+  <span class="string">"allowedIPs"</span>: [<span class="string">"192.168.1.1"</span>, <span class="string">"10.0.0.1"</span>]
+}
+    </pre>
+  </body>
+</html>

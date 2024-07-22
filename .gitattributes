@@ -6,6 +6,13 @@
 # https://git-scm.com/docs/gitattributes#Documentation/gitattributes.txt-Settostringvalueauto
 * text=auto eol=lf
 
+# Declare files that will always have CRLF line endings on checkout.
+*.bat text eol=crlf
+
+# Declare files that will always have LF line endings on checkout.
+*.sh text eol=lf
+
+
 # These files are text and should be normalized (Convert crlf => lf)
 # Setting the `text` attribute on a path enables end-of-line normalization and marks the path as a text file.
 # End-of-line conversion takes place without guessing the content type.

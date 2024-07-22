@@ -1,0 +1,3 @@
+[submodule "examples/github-bot"]
+	path = examples/github-bot
+	url = https://github.com/EmbeddedLLM/github-bot

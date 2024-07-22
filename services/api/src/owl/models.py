@@ -9,9 +9,10 @@ import orjson
 from langchain.schema.embeddings import Embeddings
 from litellm import Router
 from loguru import logger
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from jamaibase.protocol import (
+from jamaibase.utils.io import json_loads
+from owl.configs.manager import CONFIG, ENV_CONFIG
+from owl.protocol import (
     Chunk,
     ClipInputData,
     CompletionUsage,
@@ -19,17 +20,7 @@ from jamaibase.protocol import (
     EmbeddingResponseData,
     ModelListConfig,
 )
-from jamaibase.utils.io import json_loads
-from owl.config import get_embed_model_info, get_model_json, get_rerank_model_info
 from owl.utils import filter_external_api_key
-
-
-class Config(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-    cohere_api_base: str = "https://api.cohere.ai/v1"
-    jina_api_base: str = "https://api.jina.ai/v1"
-    voyage_api_base: str = "https://api.voyageai.com/v1"
-    clip_api_base: str = "http://localhost:51010"
 
 
 def _resolve_provider_model_name(id: str) -> str:
@@ -40,7 +31,6 @@ def _resolve_provider_model_name(id: str) -> str:
     return split_names[0], "/".join(split_names[1:])
 
 
-CONFIG = Config()
 HTTP_CLIENT = httpx.Client(timeout=60.0, transport=httpx.HTTPTransport(retries=3))
 
 
@@ -67,7 +57,7 @@ def _get_embedding_router(model_json: str):
 
 # Cached function
 def get_embedding_router():
-    return _get_embedding_router(get_model_json())
+    return _get_embedding_router(CONFIG.get_model_json())
 
 
 class CloudBase:
@@ -81,9 +71,9 @@ class CloudBase:
 
 class CloudReranker(CloudBase):
     API_MAP = {
-        "cohere": CONFIG.cohere_api_base,
-        "voyage": CONFIG.voyage_api_base,
-        "jina": CONFIG.jina_api_base,
+        "cohere": ENV_CONFIG.cohere_api_base,
+        "voyage": ENV_CONFIG.voyage_api_base,
+        "jina": ENV_CONFIG.jina_api_base,
     }
 
     def __init__(
@@ -115,7 +105,7 @@ class CloudReranker(CloudBase):
             ValueError: If provider is not supported.
         """
         # Get embedder_config
-        reranker_config = get_rerank_model_info(reranker_name)
+        reranker_config = CONFIG.get_rerank_model_info(reranker_name)
         reranker_config = reranker_config.model_dump(exclude_none=True)
         provider_name, model_name = _resolve_provider_model_name(reranker_config["id"])
         self.provider_name = provider_name
@@ -252,7 +242,7 @@ class CloudEmbedder(CloudBase):
             ValueError: If provider is not supported.
         """
         # Get embedder_config
-        embedder_config = get_embed_model_info(embedder_name)
+        embedder_config = CONFIG.get_embed_model_info(embedder_name)
         embedder_config = embedder_config.model_dump(exclude_none=True)
         provider_name, model_name = _resolve_provider_model_name(embedder_config["id"])
         self.provider_name = provider_name
@@ -290,7 +280,7 @@ class CloudEmbedder(CloudBase):
             }
             data = {"input": texts, "model": self.embedding_args["model"]}
             response = HTTP_CLIENT.post(
-                CONFIG.jina_api_base + "/embeddings",
+                ENV_CONFIG.jina_api_base + "/embeddings",
                 headers=headers,
                 json=data,
             )
@@ -350,7 +340,7 @@ class CloudImageEmbedder(CloudBase, Embeddings):
             DO NOT DO image-to-text-and-image search
             same modality would most certainly always result in a higher scores than different modality obj
         """
-        api_url = CONFIG.clip_api_base + "/post"
+        api_url = ENV_CONFIG.clip_api_base + "/post"
         self.embedding_args = {
             "api_url": api_url,
         }

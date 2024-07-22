@@ -12,31 +12,13 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from enum import Enum
-from functools import reduce
-from typing import Annotated, Any, Generic, Literal, Sequence, Type, TypeVar
+from enum import Enum, EnumMeta
+from typing import Annotated, Any, Generic, Literal, Sequence, TypeVar
 
 import numpy as np
-import pyarrow as pa
-from loguru import logger
-from pydantic import (
-    BaseModel,
-    BeforeValidator,
-    ConfigDict,
-    Field,
-    ValidationError,
-    computed_field,
-    create_model,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 from pydantic.functional_validators import AfterValidator
-from sqlmodel import JSON, Column
-from sqlmodel import Field as sql_Field
-from sqlmodel import MetaData, SQLModel
 from typing_extensions import Self
-from uuid_extensions import uuid7str
-
-from jamaibase.utils.io import json_dumps
 
 PositiveInt = Annotated[int, Field(ge=0, description="Positive integer.")]
 PositiveNonZeroInt = Annotated[int, Field(gt=0, description="Positive non-zero integer.")]
@@ -142,24 +124,6 @@ class SplitChunksRequest(BaseModel):
         return f"id={self.id} len(chunks)={len(self.chunks)} params={self.params}"
 
 
-class FileUploadRequest(BaseModel):
-    file_path: Annotated[str, Field(description="Path of Local Document to be uploaded.")]
-    table_id: Annotated[str, Field(description="Knowledge Table ID.")]
-    chunk_size: Annotated[
-        int, Field(description="Maximum chunk size (number of characters). Must be > 0.", gt=0)
-    ] = 1000
-    chunk_overlap: Annotated[
-        int, Field(description="Overlap in characters between chunks. Must be >= 0.", ge=0)
-    ] = 200
-    # overwrite: Annotated[
-    #     bool,
-    #     Field(
-    #         description="Whether to overwrite the file.",
-    #         examples=[True, False],
-    #     ),
-    # ] = False
-
-
 class RAGParams(BaseModel):
     table_id: str = Field(description="Knowledge Table ID", examples=["my-dataset"], min_length=2)
     reranking_model: Annotated[
@@ -239,26 +203,10 @@ class ModelCapability(str, Enum):
     rerank = "rerank"
 
 
-DEFAULT_CHAT_MODEL = "openai/gpt-3.5-turbo"
-
-# for openai embedding models doc: https://platform.openai.com/docs/guides/embeddings
-# for cohere embedding models doc: https://docs.cohere.com/reference/embed
-# for jina embedding models doc: https://jina.ai/embeddings/
-# for voyage embedding models doc: https://docs.voyageai.com/docs/embeddings
-# for hf embedding models doc: check the respective hf model page, name should be ellm/{org}/{model}
-DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small-512"
-
-# for cohere reranking models doc: https://docs.cohere.com/reference/rerank-1
-# for jina reranking models doc: https://jina.ai/reranker
-# for colbert reranking models doc: https://docs.voyageai.com/docs/reranker
-# for hf embedding models doc: check the respective hf model page, name should be ellm/{org}/{model}
-DEFAULT_RERANKING_MODEL = "cohere/rerank-multilingual-v3.0"
-
-
 class ModelInfo(BaseModel):
     id: str = Field(
         description="Unique identifier of the model.",
-        examples=[DEFAULT_CHAT_MODEL],
+        examples=["openai/gpt-3.5-turbo"],
     )
     object: str = Field(
         default="model",
@@ -266,9 +214,9 @@ class ModelInfo(BaseModel):
         examples=["model"],
     )
     name: str = Field(
-        default=DEFAULT_CHAT_MODEL,
+        default="openai/gpt-3.5-turbo",
         description="Name of model.",
-        examples=[DEFAULT_CHAT_MODEL],
+        examples=["openai/gpt-3.5-turbo"],
     )
     context_length: int = Field(
         description="Context length of model.",
@@ -412,7 +360,7 @@ def sanitise_name(v: str) -> str:
         v (str): Raw name string.
 
     Returns:
-        str: Sanitised name string that is safe for OpenAI.
+        out (str): Sanitised name string that is safe for OpenAI.
     """
     return re.sub(pat, "_", v).strip()
 
@@ -450,10 +398,10 @@ class ChatEntry(BaseModel):
         """Create a new assistant message."""
         return cls(role=ChatRole.ASSISTANT, content=content, **kwargs)
 
-    # @classmethod
-    # def function(cls, name: str, content: str, **kwargs):
-    #     """Create a new function message."""
-    #     return cls(role=ChatRole.FUNCTION, content=content, name=name, **kwargs)
+    @field_validator("content", mode="before")
+    @classmethod
+    def handle_null_content(cls, v: Any) -> Any:
+        return "" if v is None else v
 
 
 class ChatThread(BaseModel):
@@ -489,7 +437,11 @@ class ChatCompletionChoice(BaseModel):
     index: int = Field(description="The index of the choice in the list of choices.")
     finish_reason: str | None = Field(
         default=None,
-        description="The reason the model stopped generating tokens. This will be stop if the model hit a natural stop point or a provided stop sequence, length if the maximum number of tokens specified in the request was reached.",
+        description=(
+            "The reason the model stopped generating tokens. "
+            "This will be stop if the model hit a natural stop point or a provided stop sequence, "
+            "length if the maximum number of tokens specified in the request was reached."
+        ),
     )
 
     @property
@@ -646,11 +598,12 @@ class ChatRequest(BaseModel):
         description="Chat ID. Must be unique against document ID for it to be embeddable. Defaults to ''.",
     )
     model: str = Field(
-        default=DEFAULT_CHAT_MODEL,
+        default="",
         description="ID of the model to use. See the model endpoint compatibility table for details on which models work with the Chat API.",
     )
     messages: list[ChatEntry] = Field(
-        default=[], description="A list of messages comprising the conversation so far."
+        description="A list of messages comprising the conversation so far.",
+        min_length=1,
     )
     rag_params: RAGParams | None = Field(
         default=None,
@@ -690,10 +643,10 @@ with the stream terminated by a 'data: [DONE]' message.
 """,
         examples=[True],
     )
-    stop: list[str] = Field(
-        default=[],
+    stop: list[str] | None = Field(
+        default=None,
         description="Up to 4 sequences where the API will stop generating further tokens.",
-        examples=[[]],
+        examples=[None],
     )
     max_tokens: PositiveNonZeroInt = Field(
         default=2048,
@@ -737,6 +690,15 @@ values like -100 or 100 should result in a ban or exclusive selection of the rel
         description="A unique identifier representing your end-user. For monitoring and debugging purposes.",
         examples=[""],
     )
+
+    @model_validator(mode="after")
+    def convert_stop(self) -> Self:
+        # TODO: Introduce this in v0.3
+        # if isinstance(self.stop, list) and len(self.stop) == 0:
+        #     self.stop = None
+        if self.stop is None:
+            self.stop = []
+        return self
 
 
 class EmbeddingRequest(BaseModel):
@@ -843,74 +805,30 @@ def datetime_str_before_validator(x):
     return x.isoformat() if isinstance(x, datetime) else str(x)
 
 
-NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_ \-]{0,98}[a-zA-Z0-9]$"
-TABLE_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_\-]{0,98}[a-zA-Z0-9]$"
+COL_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_ \-]{0,98}[a-zA-Z0-9]$"
+TABLE_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_\-\.]{0,98}[a-zA-Z0-9]$"
 ODD_SINGLE_QUOTE = r"(?<!')'(?!')"
 GEN_CONFIG_VAR_PATTERN = r"(?<!\\)\${(.*?)}"
-NdArray = Annotated[
-    np.ndarray,
-    BeforeValidator(nd_array_before_validator),
-]
-DateTimeStr = Annotated[
-    str,
-    BeforeValidator(datetime_str_before_validator),
-]
-Name = Annotated[
-    str,
-    Field(
-        pattern=NAME_PATTERN,
-        description=(
-            "Name or ID. Must be unique. "
-            "Must has at least 2 characters and up to 100 characters."
-            "First and last characters must be an alphanumeric. "
-            "Characters in the middle can include `_` (underscore), `-` (dash), ` ` (space)."
-        ),
-    ),
-]
-TableName = Annotated[
-    str,
-    Field(
-        pattern=TABLE_NAME_PATTERN,
-        description=(
-            "Name or ID. Must be unique. "
-            "Must has at least 2 characters and up to 100 characters."
-            "First and last characters must be an alphanumeric. "
-            "Characters in the middle can include `_` (underscore), `-` (dash), ` ` (space)."
-        ),
-    ),
-]
-_str_to_arrow = {
-    "date-time": pa.timestamp("us", tz="UTC"),
-    "int": pa.int64(),
-    "int8": pa.int8(),
-    "float": pa.float64(),
-    "float32": pa.float32(),
-    "float16": pa.float16(),
-    "bool": pa.bool_(),
-    "str": pa.utf8(),  # Alias for `pa.string()`
-}
-_str_to_py_type = {
-    "int": int,
-    "int8": int,
-    "float": float,
-    "float64": np.float64,
-    "float32": np.float32,
-    "float16": np.float16,
-    "bool": bool,
-    "str": str,
-    "date-time": datetime,
-    "file": str,
-    "bytes": bytes,
-}
 
 
-def str_to_py_type(py_type: str, vlen: int = 0, json_safe: bool = False):
-    if vlen > 0:
-        return list[float] if json_safe else NdArray
-    return _str_to_py_type[py_type]
+class MetaEnum(EnumMeta):
+
+    def __contains__(cls, x):
+        try:
+            cls[x]
+        except KeyError:
+            return False
+        return True
 
 
-class DtypeEnum(str, Enum):
+class CSVDelimiter(Enum, metaclass=MetaEnum):
+    comma = ","
+    """Comma-separated"""
+    tab = "\t"
+    """Tab-separated"""
+
+
+class DtypeEnum(str, Enum, metaclass=MetaEnum):
     int_ = "int"
     int8 = "int8"
     float_ = "float"
@@ -921,14 +839,14 @@ class DtypeEnum(str, Enum):
     date_time = "date-time"
 
 
-class DtypeCreateEnum(str, Enum):
+class DtypeCreateEnum(str, Enum, metaclass=MetaEnum):
     int_ = "int"
     float_ = "float"
     bool_ = "bool"
     str_ = "str"
 
 
-class TableType(str, Enum):
+class TableType(str, Enum, metaclass=MetaEnum):
     action = "action"
     """Action table."""
     knowledge = "knowledge"
@@ -957,7 +875,7 @@ class ColumnSchema(BaseModel):
             "Only applies to string and vector columns. Defaults to True."
         ),
     )
-    gen_config: dict | None = Field(
+    gen_config: dict[str, Any] | None = Field(
         default=None,
         description=(
             '_Optional_. Generation config in the form of `ChatRequest`. If provided, then this column will be an "Output Column". '
@@ -983,77 +901,20 @@ class ColumnSchema(BaseModel):
 
 
 class ColumnSchemaCreate(ColumnSchema):
-    id: Name = Field(description="Column name.")
+    id: str = Field(description="Column name.")
     dtype: DtypeCreateEnum = Field(
         default=DtypeCreateEnum.str_,
         description='Column data type, one of ["int", "float", "bool", "str"]',
     )
 
 
-class TableSQLModel(SQLModel):
-    metadata = MetaData()
-
-
-class TableBase(TableSQLModel):
-    id: str = sql_Field(primary_key=True, description="Table name.")
+class TableBase(BaseModel):
+    id: str = Field(primary_key=True, description="Table name.")
     # version: int = 0
 
 
 class TableSchema(TableBase):
-    cols: list[ColumnSchema] = sql_Field(description="List of column schema.")
-
-    def get_col(self, id: str):
-        return [c for c in self.cols if c.id.lower() == id.lower()][0]
-
-    @staticmethod
-    def _get_col_dtype(py_type: str, vlen: int = 0):
-        if vlen > 0:
-            return pa.list_(_str_to_arrow[py_type], vlen)
-        return _str_to_arrow[py_type]
-
-    @property
-    def pyarrow(self) -> pa.Schema:
-        return pa.schema(
-            [pa.field(c.id, self._get_col_dtype(c.dtype.value, c.vlen)) for c in self.cols]
-        )
-
-    @property
-    def pyarrow_vec(self) -> pa.Schema:
-        return pa.schema(
-            [
-                pa.field(c.id, self._get_col_dtype(c.dtype.value, c.vlen))
-                for c in self.cols
-                if c.vlen > 0
-            ]
-        )
-
-    def add_state_cols(self) -> Self:
-        """
-        Adds state columns.
-
-        Returns:
-            self (TableSchemaCreate): TableSchemaCreate
-        """
-        cols = []
-        for c in self.cols:
-            cols.append(c)
-            if c.id.lower() not in ("id", "updated at"):
-                cols.append(ColumnSchema(id=f"{c.id}_", dtype=DtypeEnum.str_))
-        self.cols = cols
-        return self
-
-    def add_info_cols(self) -> Self:
-        """
-        Adds "ID", "Updated at" columns.
-
-        Returns:
-            self (TableSchemaCreate): TableSchemaCreate
-        """
-        self.cols = [
-            ColumnSchema(id="ID", dtype=DtypeEnum.str_),
-            ColumnSchema(id="Updated at", dtype=DtypeEnum.date_time),
-        ] + self.cols
-        return self
+    cols: list[ColumnSchema] = Field(description="List of column schema.")
 
     @model_validator(mode="after")
     def check_gen_configs(self) -> Self:
@@ -1061,23 +922,35 @@ class TableSchema(TableBase):
             gen_config = col.gen_config
             if gen_config is None:
                 continue
-            col_ids = set(col.id for col in self.cols[: i + 1] if not col.id.endswith("_"))
+            col_ids = set(col.id for col in self.cols[:i] if not col.id.endswith("_"))
             if col.vlen > 0:
                 gen_config = EmbedGenConfig.model_validate(gen_config)
                 if gen_config.source_column not in col_ids:
                     raise ValueError(
                         (
                             f"Table '{self.id}': "
-                            f"Embedding config of column '{col.id}' refers to "
-                            f"a source column that does not exist: '{gen_config.source_column}'."
+                            f"Embedding config of column '{col.id}' referenced "
+                            f"an invalid source column '{gen_config.source_column}'. "
+                            "Make sure you only reference columns on its left. "
+                            f"Available columns: {list(col_ids)}."
                         )
                     )
             else:
-                gen_config = ChatRequest.model_validate(gen_config)
-                if not (
-                    len(gen_config.messages) >= 1
-                    and gen_config.messages[0].role in (ChatRole.SYSTEM.value, ChatRole.SYSTEM)
-                ):
+                num_prompts = len(gen_config["messages"])
+                if num_prompts > 2:
+                    self.cols[i].gen_config["messages"] = self.cols[i].gen_config["messages"][:2]
+                elif num_prompts == 2:
+                    pass
+                elif num_prompts == 1:
+                    self.cols[i].gen_config["messages"].append(
+                        ChatEntry.user(content=".").model_dump()
+                    )
+                else:
+                    raise ValueError(
+                        f"`gen_config.messages` must be a list of at least length 1, received: {num_prompts:,d}"
+                    )
+                gen_config = ChatRequest.model_validate(self.cols[i].gen_config)
+                if gen_config.messages[0].role not in (ChatRole.SYSTEM, ChatRole.SYSTEM.value):
                     raise ValueError(
                         (
                             f"Table '{self.id}': "
@@ -1086,11 +959,14 @@ class TableSchema(TableBase):
                             f"Saw {gen_config.messages[0].role} message."
                         )
                     )
-                if len(gen_config.messages) > 2:
-                    self.cols[i].gen_config["messages"] = self.cols[i].gen_config["messages"][:2]
-                elif len(gen_config.messages) == 1:
-                    self.cols[i].gen_config["messages"].append(
-                        ChatEntry.user(content="").model_dump()
+                if gen_config.messages[1].role not in (ChatRole.USER, ChatRole.USER.value):
+                    raise ValueError(
+                        (
+                            f"Table '{self.id}': "
+                            "The second `ChatEntry` in `gen_config.messages` "
+                            f"of column '{col.id}' is not a user prompt. "
+                            f"Saw {gen_config.messages[1].role} message."
+                        )
                     )
                 for message in gen_config.messages:
                     for key in re.findall(GEN_CONFIG_VAR_PATTERN, message.content):
@@ -1098,16 +974,17 @@ class TableSchema(TableBase):
                             raise ValueError(
                                 (
                                     f"Table '{self.id}': "
-                                    f"Generation prompt of column '{col.id}' "
-                                    f"refers to a column '{key}' that does not exist. "
-                                    f"Available columns: {col_ids}."
+                                    f"Generation prompt of column '{col.id}' referenced "
+                                    f"an invalid source column '{key}'. "
+                                    "Make sure you only reference columns on its left. "
+                                    f"Available columns: {list(col_ids)}."
                                 )
                             )
         return self
 
 
 class TableSchemaCreate(TableSchema):
-    id: TableName = Field(description="Table name.")
+    id: str = Field(description="Table name.")
     cols: list[ColumnSchemaCreate] = Field(description="List of column schema.")
 
     @model_validator(mode="after")
@@ -1188,29 +1065,27 @@ class AddChatColumnSchema(TableSchemaCreate):
         return self
 
 
-class TableMeta(TableBase, table=True):
-    cols: list[dict[str, Any]] = sql_Field(
-        sa_column=Column(JSON), description="List of column schema."
-    )
-    parent_id: str | None = sql_Field(
+class TableMeta(TableBase):
+    cols: list[dict[str, Any]] = Field(description="List of column schema.")
+    parent_id: str | None = Field(
         default=None,
         description="The parent table ID. If None (default), it means this is a template table.",
     )
-    title: str = sql_Field(
+    title: str = Field(
         default="",
         description="Chat title. Defaults to ''.",
     )
-    updated_at: str = sql_Field(
+    updated_at: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(),
         description="Table last update timestamp (ISO 8601 UTC).",
     )  # SQLite does not support TZ
-    indexed_at_fts: str | None = sql_Field(
+    indexed_at_fts: str | None = Field(
         default=None, description="Table last FTS index timestamp (ISO 8601 UTC)."
     )
-    indexed_at_vec: str | None = sql_Field(
+    indexed_at_vec: str | None = Field(
         default=None, description="Table last vector index timestamp (ISO 8601 UTC)."
     )
-    indexed_at_sca: str | None = sql_Field(
+    indexed_at_sca: str | None = Field(
         default=None, description="Table last scalar index timestamp (ISO 8601 UTC)."
     )
 
@@ -1224,7 +1099,7 @@ class TableMeta(TableBase, table=True):
 
 
 class TableMetaResponse(TableSchema):
-    parent_id: TableName | None = Field(
+    parent_id: str | None = Field(
         description="The parent table ID. If None (default), it means this is a template table.",
     )
     title: str = Field(description="Chat title. Defaults to ''.")
@@ -1252,149 +1127,14 @@ class TableMetaResponse(TableSchema):
         return self
 
 
-class RowAddData(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-    table_meta: TableMeta = Field(description="Table metadata.")
-    data: list[dict[Name, Any]] = Field(
-        description="List of row data to add or update. Each list item is a mapping of column ID to its value."
-    )
-    errors: list[list[str]] | None = Field(
-        default=None,
-        description=(
-            "List of row columns that encountered errors (perhaps LLM generation failed mid-stream). "
-            "Each list item is a list of column IDs."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def check_errors(self) -> Self:
-        if self.errors is None:
-            return self
-        if len(self.errors) != len(self.data):
-            raise ValueError(
-                (
-                    "`errors` must contain same number of items as `data`, "
-                    f"received: len(errors)={len(self.errors)}   len(data)={len(self.data)}"
-                )
-            )
-        return self
-
-    @model_validator(mode="after")
-    def check_data(self) -> Self:
-        if "updated at" in self.data:
-            raise ValueError("`data` cannot contain keys: 'Updated at'.")
-        return self
-
-    @model_validator(mode="after")
-    def handle_nulls_and_validate(self) -> Self:
-        return self._handle_nulls_and_validate()
-
-    def _handle_nulls_and_validate(self, check_missing_cols: bool = True) -> Self:
-        cols = {
-            c.id: c
-            for c in self.table_meta.cols_schema
-            if not (c.id.lower() in ("id", "updated at") or c.id.endswith("_"))
-        }
-        # Create the row schema for validation
-        PydanticSchema: Type[BaseModel] = create_model(
-            f"{self.__class__.__name__}Schema",
-            __config__=ConfigDict(arbitrary_types_allowed=True),
-            **{c.id: (str_to_py_type(c.dtype.value, c.vlen) | None, None) for c in cols.values()},
-        )
-        self.errors = [[] for _ in self.data]
-
-        # Validate
-        for d, err in zip(self.data, self.errors):
-            # Fill in missing cols
-            if check_missing_cols:
-                for k in cols:
-                    if k not in d:
-                        d[k] = None
-            try:
-                PydanticSchema.model_validate(d)
-            except ValidationError as e:
-                failed_cols = set(reduce(lambda a, b: a + b, (err["loc"] for err in e.errors())))
-                logger.info(
-                    f"Table {self.table_meta.id}: These columns failed validation: {failed_cols}"
-                )
-            else:
-                failed_cols = {}
-            for k in list(d.keys()):
-                if k not in cols:
-                    continue
-                col = cols[k]
-                state = {}
-                if k in failed_cols:
-                    d[k], state["original"] = None, d[k]
-                if k in err:
-                    d[k] = None
-                    # state["error"] = True
-                if d[k] is None:
-                    if col.dtype == DtypeEnum.int_:
-                        d[k] = 0
-                    elif col.dtype == DtypeEnum.float_:
-                        d[k] = 0.0
-                    elif col.dtype == DtypeEnum.bool_:
-                        d[k] = False
-                    elif col.dtype == DtypeEnum.str_:
-                        # Store null string as ""
-                        # https://github.com/lancedb/lancedb/issues/1160
-                        d[k] = ""
-                    elif col.vlen > 0:
-                        # TODO: Investigate setting null vectors to np.nan
-                        # Pros: nan vectors won't show up in vector search
-                        # Cons: May cause error during vector indexing
-                        d[k] = np.zeros([col.vlen], dtype=_str_to_py_type[col.dtype.value])
-                    state["is_null"] = True
-                else:
-                    if col.vlen > 0:
-                        d[k] = np.asarray(d[k], dtype=_str_to_py_type[col.dtype.value])
-                    state["is_null"] = False
-                d[f"{k}_"] = json_dumps(state)
-            d["Updated at"] = datetime.now(timezone.utc)
-        return self
-
-    def set_id(self) -> Self:
-        """
-        Sets ID,
-
-        Returns:
-            self (RowAddData): RowAddData
-        """
-        for d in self.data:
-            if "ID" not in d:
-                d["ID"] = uuid7str()
-        return self
-
-    def sql_escape(self) -> Self:
-        cols = {c.id: c for c in self.table_meta.cols_schema}
-        for d in self.data:
-            for k in list(d.keys()):
-                if cols[k].dtype == DtypeEnum.str_:
-                    d[k] = re.sub(ODD_SINGLE_QUOTE, "''", d[k])
-        return self
-
-
-class RowUpdateData(RowAddData):
-    @model_validator(mode="after")
-    def check_data(self) -> Self:
-        if sum(n.lower() in ("id", "updated at") for d in self.data for n in d) > 0:
-            raise ValueError("`data` cannot contain keys: 'ID' or 'Updated at'.")
-        return self
-
-    @model_validator(mode="after")
-    def handle_nulls_and_validate(self) -> Self:
-        return self._handle_nulls_and_validate(check_missing_cols=False)
-
-
 class EmbedGenConfig(BaseModel):
     embedding_model: str
     source_column: str
 
 
 class GenConfigUpdateRequest(BaseModel):
-    table_id: TableName = Field(description="Table name or ID.")
-    column_map: dict[Name, dict | None] = Field(
+    table_id: str = Field(description="Table name or ID.")
+    column_map: dict[str, dict | None] = Field(
         description=(
             "Mapping of column ID to generation config JSON in the form of `ChatRequest`. "
             "Table columns on its left can be referenced by `${column-name}`."
@@ -1409,8 +1149,8 @@ class GenConfigUpdateRequest(BaseModel):
 
 
 class ColumnRenameRequest(BaseModel):
-    table_id: TableName = Field(description="Table name or ID.")
-    column_map: dict[Name, Name] = Field(
+    table_id: str = Field(description="Table name or ID.")
+    column_map: dict[str, str] = Field(
         description="Mapping of old column names to new column names."
     )
 
@@ -1422,13 +1162,13 @@ class ColumnRenameRequest(BaseModel):
 
 
 class ColumnReorderRequest(BaseModel):
-    table_id: TableName = Field(description="Table name or ID.")
-    column_names: list[Name] = Field(description="List of column ID in the desired order.")
+    table_id: str = Field(description="Table name or ID.")
+    column_names: list[str] = Field(description="List of column ID in the desired order.")
 
 
 class ColumnDropRequest(BaseModel):
-    table_id: TableName = Field(description="Table name or ID.")
-    column_names: list[Name] = Field(description="List of column ID to drop.")
+    table_id: str = Field(description="Table name or ID.")
+    column_names: list[str] = Field(description="List of column ID to drop.")
 
     @model_validator(mode="after")
     def check_column_names(self) -> Self:
@@ -1437,40 +1177,12 @@ class ColumnDropRequest(BaseModel):
         return self
 
 
-class Task(BaseModel):
-    output_column_name: str
-    body: ChatRequest
-
-
-class RowAdd(BaseModel):
-    table_id: TableName = Field(
-        description="Table name or ID.",
-    )
-    data: dict[Name, Any] = Field(
-        description="Mapping of column names to its value.",
-    )
-    stream: bool = Field(
-        default=True,
-        description="Whether or not to stream the LLM generation.",
-    )
-    reindex: bool | None = Field(
-        default=None,
-        description=(
-            "_Optional_. If True, reindex immediately. If False, wait until next periodic reindex. "
-            "If None (default), reindex immediately for smaller tables."
-        ),
-    )
-    concurrent: bool = Field(
-        default=True,
-        description="_Optional_. Whether or not to concurrently generate the output columns.",
-    )
-
-
 class RowAddRequest(BaseModel):
-    table_id: TableName = Field(
+    table_id: str = Field(
         description="Table name or ID.",
     )
-    data: list[dict[Name, Any]] = Field(
+    data: list[dict[str, Any]] = Field(
+        min_length=1,
         description=(
             "List of mapping of column names to its value. "
             "In other words, each item in the list is a row, and each item is a mapping. "
@@ -1493,16 +1205,6 @@ class RowAddRequest(BaseModel):
         description="_Optional_. Whether or not to concurrently generate the output rows and columns.",
     )
 
-    @model_validator(mode="after")
-    def check_data(self) -> Self:
-        if len(self.data) == 0:
-            raise ValueError("You must add at least one row.")
-        if len(self.data) > 100:
-            raise ValueError(
-                f"You can add at most 100 rows per request, received {len(self.data):,d} rows."
-            )
-        return self
-
     def __repr__(self):
         _data = [
             {
@@ -1522,14 +1224,26 @@ class RowAddRequest(BaseModel):
         )
 
 
+class RowAddRequestWithLimit(RowAddRequest):
+    data: list[dict[str, Any]] = Field(
+        min_length=1,
+        max_length=100,
+        description=(
+            "List of mapping of column names to its value. "
+            "In other words, each item in the list is a row, and each item is a mapping. "
+            "Minimum 1 row, maximum 100 rows."
+        ),
+    )
+
+
 class RowUpdateRequest(BaseModel):
-    table_id: TableName = Field(
+    table_id: str = Field(
         description="Table name or ID.",
     )
     row_id: str = Field(
         description="ID of the row to update.",
     )
-    data: dict[Name, Any] = Field(
+    data: dict[str, Any] = Field(
         description="Mapping of column names to its value.",
     )
     reindex: bool | None = Field(
@@ -1542,7 +1256,7 @@ class RowUpdateRequest(BaseModel):
 
 
 class RowRegen(BaseModel):
-    table_id: TableName = Field(
+    table_id: str = Field(
         description="Table name or ID.",
     )
     row_id: str = Field(
@@ -1565,10 +1279,12 @@ class RowRegen(BaseModel):
 
 
 class RowRegenRequest(BaseModel):
-    table_id: TableName = Field(
+    table_id: str = Field(
         description="Table name or ID.",
     )
     row_ids: list[str] = Field(
+        min_length=1,
+        max_length=100,
         description="List of ID of the row to regenerate. Minimum 1 row, maximum 100 rows.",
     )
     stream: bool = Field(
@@ -1586,19 +1302,15 @@ class RowRegenRequest(BaseModel):
         description="_Optional_. Whether or not to concurrently generate the output rows and columns.",
     )
 
-    @model_validator(mode="after")
-    def check_data(self) -> Self:
-        if len(self.row_ids) == 0:
-            raise ValueError("You must regenerate at least one row.")
-        if len(self.row_ids) > 100:
-            raise ValueError(
-                f"You can regenerate at most 100 rows per request, received {len(self.data):,d} rows."
-            )
-        return self
-
 
 class RowDeleteRequest(BaseModel):
-    table_id: TableName = Field(description="Table name or ID.")
+    table_id: str = Field(description="Table name or ID.")
+    row_ids: list[str] | None = Field(
+        min_length=1,
+        max_length=100,
+        default=None,
+        description="List of ID of the row to delete. Minimum 1 row, maximum 100 rows.",
+    )
     where: str | None = Field(
         default=None,
         description="_Optional_. SQL where clause. If not provided, will match all rows and thus deleting all table content.",
@@ -1613,7 +1325,7 @@ class RowDeleteRequest(BaseModel):
 
 
 class EmbedFileRequest(BaseModel):
-    table_id: TableName = Field(description="Table name or ID.")
+    table_id: str = Field(description="Table name or ID.")
     file_id: str = Field(description="ID of the file.")
     chunk_size: Annotated[
         int, Field(description="Maximum chunk size (number of characters). Must be > 0.", gt=0)
@@ -1627,7 +1339,7 @@ class EmbedFileRequest(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    table_id: TableName = Field(description="Table name or ID.")
+    table_id: str = Field(description="Table name or ID.")
     query: str = Field(
         min_length=1,
         description="Query for full-text-search (FTS) and vector search. Must not be empty.",
@@ -1637,7 +1349,7 @@ class SearchRequest(BaseModel):
         description="_Optional_. SQL where clause. If not provided, will match all rows.",
     )
     limit: Annotated[int, Field(gt=0, le=1_000)] = Field(
-        default=100, description="_Optional_. Min 1, max 100. Number of rows to return."
+        default=100, description="_Optional_. Min 1, max 1000. Number of rows to return."
     )
     metric: str = Field(
         default="cosine",
@@ -1670,6 +1382,55 @@ class SearchRequest(BaseModel):
             "The results are then reordered by the true distance and only the nearest 10 are kept. Defaults to 50."
         ),
     )
+    float_decimals: int = Field(
+        default=0,
+        description="_Optional_. Number of decimals for float values. Defaults to 0 (no rounding).",
+    )
+    vec_decimals: int = Field(
+        default=0,
+        description="_Optional_. Number of decimals for vectors. Defaults to 0 (no rounding).",
+    )
     reranking_model: Annotated[
         str | None, Field(description="Reranking model to use for hybrid search.")
     ] = None
+
+
+class FileUploadRequest(BaseModel):
+    file_path: Annotated[str, Field(description="File path of the document to be uploaded.")]
+    table_id: Annotated[str, Field(description="Knowledge Table name / ID.")]
+    chunk_size: Annotated[
+        int, Field(description="Maximum chunk size (number of characters). Must be > 0.", gt=0)
+    ] = 1000
+    chunk_overlap: Annotated[
+        int, Field(description="Overlap in characters between chunks. Must be >= 0.", ge=0)
+    ] = 200
+    # overwrite: Annotated[
+    #     bool,
+    #     Field(
+    #         description="Whether to overwrite the file.",
+    #         examples=[True, False],
+    #     ),
+    # ] = False
+
+
+class TableDataImportRequest(BaseModel):
+    file_path: Annotated[str, Field(description="CSV or TSV file path.")]
+    table_id: Annotated[str, Field(description="Table name / ID.")]
+    stream: Annotated[bool, Field(description="Whether or not to stream the LLM generation.")] = (
+        True
+    )
+    # column_names: Annotated[
+    #     list[str] | None,
+    #     Field(
+    #         description="A list of columns names if the CSV does not have header row. Defaults to None (read from CSV)."
+    #     ),
+    # ] = None
+    # columns: Annotated[
+    #     list[str] | None,
+    #     Field(
+    #         description="A list of columns to be imported. Defaults to None (import all columns except 'ID' and 'Updated at')."
+    #     ),
+    # ] = None
+    delimiter: Annotated[
+        str, Field(description='The delimiter of the file: can be "," or "\\t". Defaults to ",".')
+    ] = ","

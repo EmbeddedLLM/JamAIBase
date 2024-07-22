@@ -8,4 +8,6 @@ extend-exclude =
     build/,
     configs/,
     dependencies/,
-    venv/
+    venv/,
+    **/dist
+    **/build

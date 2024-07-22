@@ -1,6 +1,8 @@
 from mimetypes import guess_type
+from os.path import split
 from typing import Any, AsyncGenerator, Generator, Type
 from urllib.parse import quote
+from warnings import warn
 
 import httpx
 from pydantic import BaseModel, SecretStr
@@ -10,17 +12,18 @@ from jamaibase import protocol as p
 from jamaibase.utils.io import json_loads
 
 
-class Config(BaseSettings):
+class EnvConfig(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-    jamai_api_base: str = "https://api.jamaibase.com/api"
     jamai_api_key: SecretStr = ""
+    jamai_project_id: str = "default"
+    jamai_api_base: str = "https://api.jamaibase.com/api"
 
     @property
     def jamai_api_key_plain(self):
         return self.jamai_api_key.get_secret_value()
 
 
-CONFIG = Config()
+ENV_CONFIG = EnvConfig()
 GenTableChatResponseType = (
     p.GenTableRowsChatCompletionChunks
     | Generator[p.GenTableStreamReferences | p.GenTableStreamChatCompletionChunk, None, None]
@@ -30,11 +33,23 @@ GenTableChatResponseType = (
 class JamAI:
     def __init__(
         self,
-        project_id: str = "default",
-        api_key: str = CONFIG.jamai_api_key_plain,
-        api_base: str = CONFIG.jamai_api_base,
+        project_id: str = ENV_CONFIG.jamai_project_id,
+        api_key: str = ENV_CONFIG.jamai_api_key_plain,
+        api_base: str = ENV_CONFIG.jamai_api_base,
         headers: dict | None = None,
     ) -> None:
+        """
+        Initialize the JamAI client.
+
+        Args:
+            project_id (str, optional): The project ID. Defaults to "default".
+            api_key (str, optional): The API key for authentication.
+                Defaults to `JAMAI_API_KEY` var in environment or `.env` file.
+            api_base (str, optional): The base URL for the API.
+                Defaults to `JAMAI_API_BASE` var in environment or `.env` file.
+            headers (dict | None, optional): Additional headers to include in requests.
+                Defaults to None.
+        """
         if api_base.endswith("/"):
             api_base = api_base[:-1]
         self.project_id = project_id
@@ -49,13 +64,32 @@ class JamAI:
             self.headers.update(headers)
         self.http_client = httpx.Client(timeout=None, transport=httpx.HTTPTransport(retries=3))
 
-    def close(self):
+    def close(self) -> None:
+        """
+        Close the HTTP client.
+        """
         self.http_client.close()
 
     @staticmethod
-    def raise_exception(response: httpx.Response):
+    def raise_exception(response: httpx.Response) -> httpx.Response:
+        """
+        Raise an exception if the response status code is not 200.
+
+        Args:
+            response (httpx.Response): The HTTP response.
+
+        Raises:
+            RuntimeError: If the response status code is not 200.
+
+        Returns:
+            response (httpx.Response): The HTTP response.
+        """
         if response.status_code == 200:
+            if "warning" in response.headers:
+                warn(response.headers["warning"])
             return response
+        if "warning" in response.headers:
+            warn(response.headers["warning"])
         try:
             err_mssg = response.text
         except httpx.ResponseNotRead:
@@ -66,6 +100,15 @@ class JamAI:
 
     @staticmethod
     def _filter_params(params: dict[str, Any] | None):
+        """
+        Filter out None values from the parameters dictionary.
+
+        Args:
+            params (dict[str, Any] | None): The parameters dictionary.
+
+        Returns:
+            params (dict[str, Any] | None): The filtered parameters dictionary.
+        """
         if params is not None:
             params = {k: v for k, v in params.items() if v is not None}
         return params
@@ -74,10 +117,24 @@ class JamAI:
         self,
         address: str,
         endpoint: str,
+        *,
         params: dict[str, Any] | None = None,
         response_model: Type[BaseModel] | None = None,
         **kwargs,
-    ) -> str | BaseModel:
+    ) -> httpx.Response | BaseModel:
+        """
+        Make a GET request to the specified endpoint.
+
+        Args:
+            address (str): The base address of the API.
+            endpoint (str): The API endpoint.
+            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return.
+            **kwargs (Any): Keyword arguments for `httpx.get`.
+
+        Returns:
+            response (httpx.Response | BaseModel): The response text or Pydantic response object.
+        """
         response = self.http_client.get(
             f"{address}{endpoint}",
             params=self._filter_params(params),
@@ -86,7 +143,7 @@ class JamAI:
         )
         response = self.raise_exception(response)
         if response_model is None:
-            return response.text
+            return response
         else:
             return response_model.model_validate_json(response.text)
 
@@ -94,11 +151,26 @@ class JamAI:
         self,
         address: str,
         endpoint: str,
+        *,
         request: BaseModel | None,
-        response_model: Type[BaseModel] | None = None,
         params: dict[str, Any] | None = None,
+        response_model: Type[BaseModel] | None = None,
         **kwargs,
-    ) -> str | BaseModel:
+    ) -> httpx.Response | BaseModel:
+        """
+        Make a POST request to the specified endpoint.
+
+        Args:
+            address (str): The base address of the API.
+            endpoint (str): The API endpoint.
+            request (BaseModel | None, optional): The request body.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
+            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
+            **kwargs (Any): Keyword arguments for `httpx.post`.
+
+        Returns:
+            response (httpx.Response | BaseModel): The response text or Pydantic response object.
+        """
         if request is not None:
             request = request.model_dump()
         response = self.http_client.post(
@@ -110,7 +182,7 @@ class JamAI:
         )
         response = self.raise_exception(response)
         if response_model is None:
-            return response.text
+            return response
         else:
             return response_model.model_validate_json(response.text)
 
@@ -118,11 +190,26 @@ class JamAI:
         self,
         address: str,
         endpoint: str,
+        *,
         request: BaseModel | None,
-        response_model: Type[BaseModel] | None = None,
         params: dict[str, Any] | None = None,
+        response_model: Type[BaseModel] | None = None,
         **kwargs,
-    ) -> str | BaseModel:
+    ) -> httpx.Response | BaseModel:
+        """
+        Make a PATCH request to the specified endpoint.
+
+        Args:
+            address (str): The base address of the API.
+            endpoint (str): The API endpoint.
+            request (BaseModel | None, optional): The request body.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
+            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
+            **kwargs (Any): Keyword arguments for `httpx.patch`.
+
+        Returns:
+            response (httpx.Response | BaseModel): The response text or Pydantic response object.
+        """
         if request is not None:
             request = request.model_dump()
         response = self.http_client.patch(
@@ -134,7 +221,7 @@ class JamAI:
         )
         response = self.raise_exception(response)
         if response_model is None:
-            return response.text
+            return response
         else:
             return response_model.model_validate_json(response.text)
 
@@ -142,10 +229,24 @@ class JamAI:
         self,
         address: str,
         endpoint: str,
+        *,
         request: BaseModel | None,
         params: dict[str, Any] | None = None,
         **kwargs,
     ) -> Generator[str, None, None]:
+        """
+        Make a streaming POST request to the specified endpoint.
+
+        Args:
+            address (str): The base address of the API.
+            endpoint (str): The API endpoint.
+            request (BaseModel | None, optional): The request body.
+            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
+            **kwargs (Any): Keyword arguments for `httpx.stream`.
+
+        Yields:
+            str: The response chunks.
+        """
         if request is not None:
             request = request.model_dump()
         with self.http_client.stream(
@@ -167,10 +268,24 @@ class JamAI:
         self,
         address: str,
         endpoint: str,
+        *,
         params: dict[str, Any] | None = None,
         response_model: Type[BaseModel] | None = None,
         **kwargs,
-    ) -> str | BaseModel:
+    ) -> httpx.Response | BaseModel:
+        """
+        Make a DELETE request to the specified endpoint.
+
+        Args:
+            address (str): The base address of the API.
+            endpoint (str): The API endpoint.
+            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return.
+            **kwargs (Any): Keyword arguments for `httpx.delete`.
+
+        Returns:
+            response (httpx.Response | BaseModel): The response text or Pydantic response object.
+        """
         response = self.http_client.delete(
             f"{address}{endpoint}",
             params=self._filter_params(params),
@@ -179,7 +294,7 @@ class JamAI:
         )
         response = self.raise_exception(response)
         if response_model is None:
-            return response.text
+            return response
         else:
             return response_model.model_validate_json(response.text)
 
@@ -190,27 +305,60 @@ class JamAI:
         name: str = "",
         capabilities: list[str] | None = None,
     ) -> p.ModelInfoResponse:
+        """
+        Get information about available models.
+
+        Args:
+            name (str, optional): The model name. Defaults to "".
+            capabilities (list[str] | None, optional): List of model capabilities to filter by.
+                Defaults to None.
+
+        Returns:
+            response (p.ModelInfoResponse): The model information response.
+        """
         params = {"model": name, "capabilities": capabilities}
-        return self._get(self.api_base, "/v1/models", params, p.ModelInfoResponse)
+        return self._get(
+            self.api_base,
+            "/v1/models",
+            params=params,
+            response_model=p.ModelInfoResponse,
+        )
 
     def model_names(
         self,
         prefer: str = "",
         capabilities: list[str] | None = None,
     ) -> list[str]:
+        """
+        Get the names of available models.
+
+        Args:
+            prefer (str, optional): Preferred model name. Defaults to "".
+            capabilities (list[str] | None, optional): List of model capabilities to filter by.
+
+        Returns:
+            response (list[str]): List of model names.
+        """
         params = {"prefer": prefer, "capabilities": capabilities}
-        return json_loads(self._get(self.api_base, "/v1/model_names", params))
+        response = self._get(
+            self.api_base,
+            "/v1/model_names",
+            params=params,
+            response_model=None,
+        )
+        return json_loads(response.text)
 
     def generate_chat_completions(
         self, request: p.ChatRequest
     ) -> p.ChatCompletionChunk | Generator[p.References | p.ChatCompletionChunk, None, None]:
-        """Generates chat completions.
+        """
+        Generates chat completions.
 
         Args:
-            request (ChatRequest): The request.
+            request (p.ChatRequest): The request.
 
         Returns:
-            completion (ChatCompletionChunk | Generator): The chat completion.
+            completion (p.ChatCompletionChunk | Generator): The chat completion.
                 In streaming mode, it is a generator that yields a `References` object
                 followed by zero or more `ChatCompletionChunk` objects.
                 In non-streaming mode, it is a `ChatCompletionChunk` object.
@@ -218,8 +366,11 @@ class JamAI:
         if request.stream:
 
             def gen():
-                gen_stream = self._stream(self.api_base, "/v1/chat/completions", request)
-                for chunk in gen_stream:
+                for chunk in self._stream(
+                    self.api_base,
+                    "/v1/chat/completions",
+                    request=request,
+                ):
                     chunk = json_loads(chunk[5:])
                     if chunk["object"] == "chat.references":
                         yield p.References.model_validate(chunk)
@@ -231,181 +382,457 @@ class JamAI:
             return gen()
         else:
             return self._post(
-                self.api_base, "/v1/chat/completions", request, p.ChatCompletionChunk
+                self.api_base,
+                "/v1/chat/completions",
+                request=request,
+                response_model=p.ChatCompletionChunk,
             )
 
     def generate_embeddings(self, request: p.EmbeddingRequest) -> p.EmbeddingResponse:
-        return self._post(self.api_base, "/v1/embeddings", request, p.EmbeddingResponse)
+        """
+        Generate embeddings for the given input.
+
+        Args:
+            request (p.EmbeddingRequest): The embedding request.
+
+        Returns:
+            response (p.EmbeddingResponse): The embedding response.
+        """
+        return self._post(
+            self.api_base,
+            "/v1/embeddings",
+            request=request,
+            response_model=p.EmbeddingResponse,
+        )
 
     # --- Gen Table --- #
+
+    @staticmethod
+    def _get_table_type(table_type: str | p.TableType) -> str:
+        if isinstance(table_type, str):
+            try:
+                return p.TableType[table_type]
+            except KeyError:
+                raise ValueError(f"Invalid table type: {table_type}")
+        else:
+            raise TypeError(
+                f"`table_type` must be a str or TableType, received: {type(table_type)}"
+            )
+
     def create_action_table(self, request: p.ActionTableSchemaCreate) -> p.TableMetaResponse:
-        return self._post(self.api_base, "/v1/gen_tables/action", request, p.TableMetaResponse)
+        """
+        Create an Action Table.
+
+        Args:
+            request (p.ActionTableSchemaCreate): The action table schema.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
+        return self._post(
+            self.api_base,
+            "/v1/gen_tables/action",
+            request=request,
+            response_model=p.TableMetaResponse,
+        )
 
     def create_knowledge_table(self, request: p.KnowledgeTableSchemaCreate) -> p.TableMetaResponse:
-        return self._post(self.api_base, "/v1/gen_tables/knowledge", request, p.TableMetaResponse)
+        """
+        Create a Knowledge Table.
+
+        Args:
+            request (p.KnowledgeTableSchemaCreate): The knowledge table schema.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
+        return self._post(
+            self.api_base,
+            "/v1/gen_tables/knowledge",
+            request=request,
+            response_model=p.TableMetaResponse,
+        )
 
     def create_chat_table(self, request: p.ChatTableSchemaCreate) -> p.TableMetaResponse:
-        return self._post(self.api_base, "/v1/gen_tables/chat", request, p.TableMetaResponse)
+        """
+        Create a Chat Table.
 
-    def get_table(self, table_type: p.TableType, table_id: p.TableName) -> p.TableMetaResponse:
+        Args:
+            request (p.ChatTableSchemaCreate): The chat table schema.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
+        return self._post(
+            self.api_base,
+            "/v1/gen_tables/chat",
+            request=request,
+            response_model=p.TableMetaResponse,
+        )
+
+    def get_table(
+        self,
+        table_type: str | p.TableType,
+        table_id: str,
+    ) -> p.TableMetaResponse:
+        """
+        Get metadata for a specific Generative Table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id (str): The ID of the table.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return self._get(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/{quote(table_id)}",
-            None,
-            p.TableMetaResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/{quote(table_id)}",
+            params=None,
+            response_model=p.TableMetaResponse,
         )
 
     def list_tables(
         self,
-        table_type: p.TableType,
+        table_type: str | p.TableType,
         offset: int = 0,
         limit: int = 100,
     ) -> p.Page[p.TableMetaResponse]:
+        """
+        List Generative Tables of a specific type.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            offset (int, optional): Pagination offset. Defaults to 0.
+            limit (int, optional): Number of tables to return (min 1, max 100). Defaults to 100.
+
+        Returns:
+            response (p.Page[p.TableMetaResponse]): The paginated table metadata response.
+        """
         return self._get(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}",
-            dict(offset=offset, limit=limit),
-            p.Page[p.TableMetaResponse],
+            f"/v1/gen_tables/{self._get_table_type(table_type)}",
+            params=dict(offset=offset, limit=limit),
+            response_model=p.Page[p.TableMetaResponse],
         )
 
-    def delete_table(self, table_type: p.TableType, table_id: p.TableName) -> p.OkResponse:
+    def delete_table(
+        self,
+        table_type: str | p.TableType,
+        table_id: str,
+    ) -> p.OkResponse:
+        """
+        Delete a specific table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id (str): The ID of the table.
+
+        Returns:
+            response (p.OkResponse): The response indicating success.
+        """
         return self._delete(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/{quote(table_id)}",
-            None,
-            p.OkResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/{quote(table_id)}",
+            params=None,
+            response_model=p.OkResponse,
         )
 
     def duplicate_table(
         self,
-        table_type: p.TableType,
+        table_type: str | p.TableType,
         table_id_src: str,
         table_id_dst: str,
         include_data: bool = True,
         deploy: bool = False,
     ) -> p.TableMetaResponse:
+        """
+        Duplicate a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id_src (str): The source table ID.
+            table_id_dst (str): The destination / new table ID.
+            include_data (bool, optional): Whether to include data in the duplicated table. Defaults to True.
+            deploy (bool, optional): Whether to deploy the duplicated table. Defaults to False.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/duplicate/{quote(table_id_src)}/{quote(table_id_dst)}",
-            None,
-            p.TableMetaResponse,
-            dict(include_data=include_data, deploy=deploy),
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/duplicate/{quote(table_id_src)}/{quote(table_id_dst)}",
+            request=None,
+            params=dict(include_data=include_data, deploy=deploy),
+            response_model=p.TableMetaResponse,
         )
 
     def rename_table(
-        self, table_type: p.TableType, table_id_src: str, table_id_dst: str
+        self,
+        table_type: str | p.TableType,
+        table_id_src: str,
+        table_id_dst: str,
     ) -> p.TableMetaResponse:
+        """
+        Rename a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id_src (str): The source table ID.
+            table_id_dst (str): The destination / new table ID.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/rename/{quote(table_id_src)}/{quote(table_id_dst)}",
-            None,
-            p.TableMetaResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/rename/{quote(table_id_src)}/{quote(table_id_dst)}",
+            request=None,
+            response_model=p.TableMetaResponse,
         )
 
     def update_gen_config(
-        self, table_type: p.TableType, request: p.GenConfigUpdateRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.GenConfigUpdateRequest,
     ) -> p.TableMetaResponse:
+        """
+        Update the generation configuration for a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.GenConfigUpdateRequest): The generation configuration update request.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/gen_config/update",
-            request,
-            p.TableMetaResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/gen_config/update",
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     def add_action_columns(self, request: p.AddActionColumnSchema) -> p.TableMetaResponse:
+        """
+        Add columns to an Action Table.
+
+        Args:
+            request (p.AddActionColumnSchema): The action column schema.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return self._post(
             self.api_base,
             "/v1/gen_tables/action/columns/add",
-            request,
-            p.TableMetaResponse,
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     def add_knowledge_columns(self, request: p.AddKnowledgeColumnSchema) -> p.TableMetaResponse:
+        """
+        Add columns to a Knowledge Table.
+
+        Args:
+            request (p.AddKnowledgeColumnSchema): The knowledge column schema.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return self._post(
             self.api_base,
             "/v1/gen_tables/knowledge/columns/add",
-            request,
-            p.TableMetaResponse,
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     def add_chat_columns(self, request: p.AddChatColumnSchema) -> p.TableMetaResponse:
+        """
+        Add columns to a Chat Table.
+
+        Args:
+            request (p.AddChatColumnSchema): The chat column schema.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return self._post(
             self.api_base,
             "/v1/gen_tables/chat/columns/add",
-            request,
-            p.TableMetaResponse,
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     def drop_columns(
-        self, table_type: p.TableType, request: p.ColumnDropRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.ColumnDropRequest,
     ) -> p.TableMetaResponse:
+        """
+        Drop columns from a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.ColumnDropRequest): The column drop request.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/columns/drop",
-            request,
-            p.TableMetaResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/columns/drop",
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     def rename_columns(
-        self, table_type: p.TableType, request: p.ColumnRenameRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.ColumnRenameRequest,
     ) -> p.TableMetaResponse:
+        """
+        Rename columns in a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.ColumnRenameRequest): The column rename request.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/columns/rename",
-            request,
-            p.TableMetaResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/columns/rename",
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     def reorder_columns(
-        self, table_type: p.TableType, request: p.ColumnReorderRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.ColumnReorderRequest,
     ) -> p.TableMetaResponse:
+        """
+        Reorder columns in a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.ColumnReorderRequest): The column reorder request.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/columns/reorder",
-            request,
-            p.TableMetaResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/columns/reorder",
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     def list_table_rows(
         self,
-        table_type: p.TableType,
-        table_id: p.TableName,
+        table_type: str | p.TableType,
+        table_id: str,
         offset: int = 0,
         limit: int = 100,
-        columns: list[p.Name] | None = None,
-    ) -> p.Page[dict[p.Name, Any]]:
+        search_query: str = "",
+        columns: list[str] | None = None,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
+    ) -> p.Page[dict[str, Any]]:
+        """
+        List rows in a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id (str): The ID of the table.
+            offset (int, optional): Pagination offset. Defaults to 0.
+            limit (int, optional): Number of rows to return (min 1, max 100). Defaults to 100.
+            search_query (str, optional): FTS query to filter the returned rows. Defaults to "" (no filter).
+            columns (list[str] | None, optional): List of column names to include in the response.
+                Defaults to None (all columns).
+            float_decimals (int, optional): Number of decimals for float values. Defaults to 0 (no rounding).
+            vec_decimals (int, optional): Number of decimals for vectors. Defaults to 0 (no rounding).
+
+        Returns:
+            response (p.Page[dict[str, Any]]): The paginated rows response.
+        """
         return self._get(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/{quote(table_id)}/rows",
-            dict(offset=offset, limit=limit, columns=columns),
-            p.Page[dict[p.Name, Any]],
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/{quote(table_id)}/rows",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                search_query=search_query,
+                columns=columns,
+                float_decimals=float_decimals,
+                vec_decimals=vec_decimals,
+            ),
+            response_model=p.Page[dict[str, Any]],
         )
 
     def get_table_row(
         self,
-        table_type: p.TableType,
-        table_id: p.TableName,
+        table_type: str | p.TableType,
+        table_id: str,
         row_id: str,
-        columns: list[p.Name] | None = None,
-    ) -> dict[p.Name, Any]:
+        columns: list[str] | None = None,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
+    ) -> dict[str, Any]:
+        """
+        Get a specific row in a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id (str): The ID of the table.
+            row_id (str): The ID of the row.
+            columns (list[str] | None, optional): List of column names to include in the response.
+                Defaults to None (all columns).
+            float_decimals (int, optional): Number of decimals for float values. Defaults to 0 (no rounding).
+            vec_decimals (int, optional): Number of decimals for vectors. Defaults to 0 (no rounding).
+
+        Returns:
+            response (dict[str, Any]): The row data.
+        """
         response = self._get(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/{quote(table_id)}/rows/{quote(row_id)}",
-            dict(columns=columns),
-            None,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/{quote(table_id)}/rows/{quote(row_id)}",
+            params=dict(
+                columns=columns,
+                float_decimals=float_decimals,
+                vec_decimals=vec_decimals,
+            ),
+            response_model=None,
         )
-        return json_loads(response)
+        return json_loads(response.text)
 
     def add_table_rows(
-        self, table_type: p.TableType, request: p.RowAddRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.RowAddRequest,
     ) -> GenTableChatResponseType:
+        """
+        Add rows to a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.RowAddRequest): The row add request.
+
+        Returns:
+            response (GenTableChatResponseType): The row completion.
+                In streaming mode, it is a generator that yields a `p.GenTableStreamReferences` object
+                followed by zero or more `p.GenTableStreamChatCompletionChunk` objects.
+                In non-streaming mode, it is a `p.GenTableRowsChatCompletionChunks` object.
+        """
         if request.stream:
 
             def gen():
                 for chunk in self._stream(
                     self.api_base,
-                    f"/v1/gen_tables/{table_type.value}/rows/add",
-                    request,
+                    f"/v1/gen_tables/{self._get_table_type(table_type)}/rows/add",
+                    request=request,
                 ):
                     chunk = json_loads(chunk[5:])
                     if chunk["object"] == "gen_table.references":
@@ -419,21 +846,36 @@ class JamAI:
         else:
             return self._post(
                 self.api_base,
-                f"/v1/gen_tables/{table_type.value}/rows/add",
-                request,
-                p.GenTableRowsChatCompletionChunks,
+                f"/v1/gen_tables/{self._get_table_type(table_type)}/rows/add",
+                request=request,
+                response_model=p.GenTableRowsChatCompletionChunks,
             )
 
     def regen_table_rows(
-        self, table_type: p.TableType, request: p.RowRegenRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.RowRegenRequest,
     ) -> GenTableChatResponseType:
+        """
+        Regenerate rows in a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.RowRegenRequest): The row regenerate request.
+
+        Returns:
+            response (GenTableChatResponseType): The row completion.
+                In streaming mode, it is a generator that yields a `p.GenTableStreamReferences` object
+                followed by zero or more `p.GenTableStreamChatCompletionChunk` objects.
+                In non-streaming mode, it is a `p.GenTableRowsChatCompletionChunks` object.
+        """
         if request.stream:
 
             def gen():
                 for chunk in self._stream(
                     self.api_base,
-                    f"/v1/gen_tables/{table_type.value}/rows/regen",
-                    request,
+                    f"/v1/gen_tables/{self._get_table_type(table_type)}/rows/regen",
+                    request=request,
                 ):
                     chunk = json_loads(chunk[5:])
                     if chunk["object"] == "gen_table.references":
@@ -447,75 +889,150 @@ class JamAI:
         else:
             return self._post(
                 self.api_base,
-                f"/v1/gen_tables/{table_type.value}/rows/regen",
-                request,
-                p.GenTableRowsChatCompletionChunks,
+                f"/v1/gen_tables/{self._get_table_type(table_type)}/rows/regen",
+                request=request,
+                response_model=p.GenTableRowsChatCompletionChunks,
             )
 
     def update_table_row(
-        self, table_type: p.TableType, request: p.RowUpdateRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.RowUpdateRequest,
     ) -> p.OkResponse:
+        """
+        Update a specific row in a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.RowUpdateRequest): The row update request.
+
+        Returns:
+            response (p.OkResponse): The response indicating success.
+        """
         return self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/rows/update",
-            request,
-            p.OkResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/rows/update",
+            request=request,
+            response_model=p.OkResponse,
         )
 
     def delete_table_rows(
-        self, table_type: p.TableType, request: p.RowDeleteRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.RowDeleteRequest,
     ) -> p.OkResponse:
+        """
+        Delete rows from a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.RowDeleteRequest): The row delete request.
+
+        Returns:
+            response (p.OkResponse): The response indicating success.
+        """
         return self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/rows/delete",
-            request,
-            p.OkResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/rows/delete",
+            request=request,
+            response_model=p.OkResponse,
         )
 
     def delete_table_row(
-        self, table_type: p.TableType, table_id: p.TableName, row_id: str
+        self,
+        table_type: str | p.TableType,
+        table_id: str,
+        row_id: str,
     ) -> p.OkResponse:
+        """
+        Delete a specific row from a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id (str): The ID of the table.
+            row_id (str): The ID of the row.
+
+        Returns:
+            response (p.OkResponse): The response indicating success.
+        """
         return self._delete(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/{quote(table_id)}/rows/{quote(row_id)}",
-            None,
-            p.OkResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/{quote(table_id)}/rows/{quote(row_id)}",
+            params=None,
+            response_model=p.OkResponse,
         )
 
-    def get_conversation_thread(self, table_id: p.TableName) -> p.ChatThread:
+    def get_conversation_thread(
+        self,
+        table_id: str,
+        row_id: str = "",
+        include: bool = True,
+    ) -> p.ChatThread:
+        """
+        Get the conversation thread for a chat table.
+
+        Args:
+            table_id (str): The ID of the chat table.
+            row_id (str, optional): Row ID for filtering. Defaults to "" (export all rows).
+            include (bool, optional): Whether to include the row specified by `row_id`. Defaults to True.
+
+        Returns:
+            response (p.ChatThread): The conversation thread.
+        """
         return self._get(
             self.api_base,
             f"/v1/gen_tables/chat/{quote(table_id)}/thread",
-            None,
-            p.ChatThread,
+            params=dict(row_id=row_id, include=include),
+            response_model=p.ChatThread,
         )
 
     def hybrid_search(
         self,
-        table_type: p.TableType,
+        table_type: str | p.TableType,
         request: p.SearchRequest,
-    ) -> list[dict[p.Name, Any]]:
+    ) -> list[dict[str, Any]]:
+        """
+        Perform a hybrid search on a table.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.SearchRequest): The search request.
+
+        Returns:
+            response (list[dict[str, Any]]): The search results.
+        """
         response = self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/hybrid_search",
-            request,
-            None,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/hybrid_search",
+            request=request,
+            response_model=None,
         )
-        return json_loads(response)
+        return json_loads(response.text)
 
     def upload_file(self, request: p.FileUploadRequest) -> p.OkResponse:
+        """
+        Upload a file to a Knowledge Table.
+
+        Args:
+            request (p.FileUploadRequest): The file upload request.
+
+        Returns:
+            response (p.OkResponse): The response indicating success.
+        """
         file_path = request.file_path
         # Guess the MIME type of the file based on its extension
         mime_type, _ = guess_type(file_path)
         if mime_type is None:
             mime_type = "application/octet-stream"  # Default MIME type
         # Extract the filename from the file path
-        filename = file_path.split("/")[-1]
+        filename = split(file_path)[-1]
         # Open the file in binary mode
         with open(file_path, "rb") as f:
-            # Make an asynchronous POST request to upload the file
-            response = self.http_client.post(
-                f"{self.api_base}/v1/gen_tables/knowledge/upload_file",
+            response = self._post(
+                self.api_base,
+                "/v1/gen_tables/knowledge/upload_file",
+                request=None,
+                response_model=p.OkResponse,
                 files={
                     "file": (filename, f, mime_type),
                 },
@@ -528,18 +1045,125 @@ class JamAI:
                 },
                 timeout=None,
             )
-        response = self.raise_exception(response)
-        return p.OkResponse.model_validate_json(response.text)
+        return response
+
+    def import_table_data(
+        self,
+        table_type: str | p.TableType,
+        request: p.TableDataImportRequest,
+    ) -> GenTableChatResponseType:
+        """
+        Imports CSV or TSV data into a table.
+
+        Args:
+            file_path (str): CSV or TSV file path.
+            table_type (str | p.TableType): Table type.
+            request (p.TableDataImportRequest): Data import request.
+
+        Returns:
+            response (p.OkResponse): The response indicating success.
+        """
+        # Guess the MIME type of the file based on its extension
+        mime_type, _ = guess_type(request.file_path)
+        if mime_type is None:
+            mime_type = "application/octet-stream"  # Default MIME type
+        # Extract the filename from the file path
+        filename = split(request.file_path)[-1]
+        data = {
+            "file_name": filename,
+            "table_id": request.table_id,
+            "stream": request.stream,
+            # "column_names": request.column_names,
+            # "columns": request.columns,
+            "delimiter": request.delimiter,
+        }
+        if request.stream:
+
+            def gen():
+                # Open the file in binary mode
+                with open(request.file_path, "rb") as f:
+                    for chunk in self._stream(
+                        self.api_base,
+                        f"/v1/gen_tables/{self._get_table_type(table_type)}/import_data",
+                        request=None,
+                        files={
+                            "file": (filename, f, mime_type),
+                        },
+                        data=data,
+                        timeout=None,
+                    ):
+                        chunk = json_loads(chunk[5:])
+                        if chunk["object"] == "gen_table.references":
+                            yield p.GenTableStreamReferences.model_validate(chunk)
+                        elif chunk["object"] == "gen_table.completion.chunk":
+                            yield p.GenTableStreamChatCompletionChunk.model_validate(chunk)
+                        else:
+                            raise RuntimeError(f"Unexpected SSE chunk: {chunk}")
+
+            return gen()
+        else:
+            # Open the file in binary mode
+            with open(request.file_path, "rb") as f:
+                return self._post(
+                    self.api_base,
+                    f"/v1/gen_tables/{self._get_table_type(table_type)}/import_data",
+                    request=None,
+                    response_model=p.GenTableRowsChatCompletionChunks,
+                    files={
+                        "file": (filename, f, mime_type),
+                    },
+                    data=data,
+                    timeout=None,
+                )
+
+    def export_table_data(
+        self,
+        table_type: str | p.TableType,
+        table_id: str,
+        columns: list[str] | None = None,
+        delimiter: str = ",",
+    ) -> bytes:
+        """
+        Exports the row data of a table as CSV or TSV file.
+
+        Args:
+            table_type (str | p.TableType): Table type.
+            table_id (str): Table name / ID.
+            delimiter (str, optional): The delimiter of the file: can be "," or "\\t". Defaults to ",".
+            columns (list[str], optional): A list of columns to be exported. Defaults to None (export all columns).
+
+        Returns:
+            response (list[dict[str, Any]]): The search results.
+        """
+        response = self._get(
+            self.api_base,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/{quote(table_id)}/export_data",
+            params=dict(delimiter=delimiter, columns=columns),
+            response_model=None,
+        )
+        return response.content
 
 
 class JamAIAsync(JamAI):
     def __init__(
         self,
-        project_id: str = "default",
-        api_key: str = CONFIG.jamai_api_key_plain,
-        api_base: str = CONFIG.jamai_api_base,
+        project_id: str = ENV_CONFIG.jamai_project_id,
+        api_key: str = ENV_CONFIG.jamai_api_key_plain,
+        api_base: str = ENV_CONFIG.jamai_api_base,
         headers: dict | None = None,
     ) -> None:
+        """
+        Initialize the JamAI asynchronous client.
+
+        Args:
+            project_id (str, optional): The project ID. Defaults to "default".
+            api_key (str, optional): The API key for authentication.
+                Defaults to `JAMAI_API_KEY` var in environment or `.env` file.
+            api_base (str, optional): The base URL for the API.
+                Defaults to `JAMAI_API_BASE` var in environment or `.env` file.
+            headers (dict | None, optional): Additional headers to include in requests.
+                Defaults to None.
+        """
         super().__init__(
             project_id=project_id,
             api_key=api_key,
@@ -550,17 +1174,34 @@ class JamAIAsync(JamAI):
             timeout=None, transport=httpx.AsyncHTTPTransport(retries=3)
         )
 
-    async def close(self):
+    async def close(self) -> None:
+        """
+        Close the HTTP async client.
+        """
         await self.http_client.aclose()
 
     async def _get(
         self,
         address: str,
         endpoint: str,
+        *,
         params: dict[str, Any] | None = None,
         response_model: Type[BaseModel] | None = None,
         **kwargs,
-    ) -> str | BaseModel:
+    ) -> httpx.Response | BaseModel:
+        """
+        Make an asynchronous GET request to the specified endpoint.
+
+        Args:
+            address (str): The base address of the API.
+            endpoint (str): The API endpoint.
+            params (dict[str, Any] | None, optional): Query parameters.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return.
+            **kwargs (Any): Keyword arguments for `httpx.get`.
+
+        Returns:
+            response (httpx.Response | BaseModel): The response text or Pydantic response object.
+        """
         response = await self.http_client.get(
             f"{address}{endpoint}",
             params=self._filter_params(params),
@@ -569,7 +1210,7 @@ class JamAIAsync(JamAI):
         )
         response = self.raise_exception(response)
         if response_model is None:
-            return response.text
+            return response
         else:
             return response_model.model_validate_json(response.text)
 
@@ -577,11 +1218,26 @@ class JamAIAsync(JamAI):
         self,
         address: str,
         endpoint: str,
+        *,
         request: BaseModel | None,
         response_model: Type[BaseModel] | None = None,
         params: dict[str, Any] | None = None,
         **kwargs,
-    ) -> str | BaseModel:
+    ) -> httpx.Response | BaseModel:
+        """
+        Make an asynchronous POST request to the specified endpoint.
+
+        Args:
+            address (str): The base address of the API.
+            endpoint (str): The API endpoint.
+            request (BaseModel | None, optional): The request body.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
+            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
+            **kwargs (Any): Keyword arguments for `httpx.post`.
+
+        Returns:
+            response (httpx.Response | BaseModel): The response text or Pydantic response object.
+        """
         if request is not None:
             request = request.model_dump()
         response = await self.http_client.post(
@@ -593,7 +1249,7 @@ class JamAIAsync(JamAI):
         )
         response = self.raise_exception(response)
         if response_model is None:
-            return response.text
+            return response
         else:
             return response_model.model_validate_json(response.text)
 
@@ -601,11 +1257,26 @@ class JamAIAsync(JamAI):
         self,
         address: str,
         endpoint: str,
+        *,
         request: BaseModel | None,
         response_model: Type[BaseModel] | None = None,
         params: dict[str, Any] | None = None,
         **kwargs,
-    ) -> str | BaseModel:
+    ) -> httpx.Response | BaseModel:
+        """
+        Make an asynchronous PATCH request to the specified endpoint.
+
+        Args:
+            address (str): The base address of the API.
+            endpoint (str): The API endpoint.
+            request (BaseModel | None, optional): The request body.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
+            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
+            **kwargs (Any): Keyword arguments for `httpx.patch`.
+
+        Returns:
+            response (httpx.Response | BaseModel): The response text or Pydantic response object.
+        """
         if request is not None:
             request = request.model_dump()
         response = await self.http_client.patch(
@@ -617,7 +1288,7 @@ class JamAIAsync(JamAI):
         )
         response = self.raise_exception(response)
         if response_model is None:
-            return response.text
+            return response
         else:
             return response_model.model_validate_json(response.text)
 
@@ -625,10 +1296,24 @@ class JamAIAsync(JamAI):
         self,
         address: str,
         endpoint: str,
+        *,
         request: BaseModel | None,
         params: dict[str, Any] | None = None,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
+        """
+        Make an asynchronous streaming POST request to the specified endpoint.
+
+        Args:
+            address (str): The base address of the API.
+            endpoint (str): The API endpoint.
+            request (BaseModel | None, optional): The request body.
+            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
+            **kwargs (Any): Keyword arguments for `httpx.stream`.
+
+        Yields:
+            str: The response chunks.
+        """
         if request is not None:
             request = request.model_dump()
         async with self.http_client.stream(
@@ -650,10 +1335,24 @@ class JamAIAsync(JamAI):
         self,
         address: str,
         endpoint: str,
+        *,
         params: dict[str, Any] | None = None,
         response_model: Type[BaseModel] | None = None,
         **kwargs,
-    ) -> str | BaseModel:
+    ) -> httpx.Response | BaseModel:
+        """
+        Make an asynchronous DELETE request to the specified endpoint.
+
+        Args:
+            address (str): The base address of the API.
+            endpoint (str): The API endpoint.
+            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return.
+            **kwargs (Any): Keyword arguments for `httpx.delete`.
+
+        Returns:
+            response (httpx.Response | BaseModel): The response text or Pydantic response object.
+        """
         response = await self.http_client.delete(
             f"{address}{endpoint}",
             params=self._filter_params(params),
@@ -662,7 +1361,7 @@ class JamAIAsync(JamAI):
         )
         response = self.raise_exception(response)
         if response_model is None:
-            return response.text
+            return response
         else:
             return response_model.model_validate_json(response.text)
 
@@ -673,27 +1372,60 @@ class JamAIAsync(JamAI):
         name: str = "",
         capabilities: list[str] | None = None,
     ) -> p.ModelInfoResponse:
+        """
+        Get information about available models asynchronously.
+
+        Args:
+            name (str, optional): The model name. Defaults to "".
+            capabilities (list[str] | None, optional): List of model capabilities to filter by.
+                Defaults to None.
+
+        Returns:
+            response (p.ModelInfoResponse): The model information response.
+        """
         params = {"model": name, "capabilities": capabilities}
-        return await self._get(self.api_base, "/v1/models", params, p.ModelInfoResponse)
+        return await self._get(
+            self.api_base,
+            "/v1/models",
+            params=params,
+            response_model=p.ModelInfoResponse,
+        )
 
     async def model_names(
         self,
         prefer: str = "",
         capabilities: list[str] | None = None,
     ) -> list[str]:
+        """
+        Get the names of available models asynchronously.
+
+        Args:
+            prefer (str, optional): Preferred model name. Defaults to "".
+            capabilities (list[str] | None, optional): List of model capabilities to filter by.
+
+        Returns:
+            response (list[str]): List of model names.
+        """
         params = {"prefer": prefer, "capabilities": capabilities}
-        return json_loads(await self._get(self.api_base, "/v1/model_names", params))
+        response = await self._get(
+            self.api_base,
+            "/v1/model_names",
+            params=params,
+            response_model=None,
+        )
+        return json_loads(response.text)
 
     async def generate_chat_completions(
         self, request: p.ChatRequest
     ) -> p.ChatCompletionChunk | AsyncGenerator[p.References | p.ChatCompletionChunk, None]:
-        """Generates chat completions.
+        """
+        Generates chat completions asynchronously.
 
         Args:
-            request (ChatRequest): The request.
+            request (p.ChatRequest): The request.
 
         Returns:
-            completion (ChatCompletionChunk | AsyncGenerator): The chat completion.
+            completion (p.ChatCompletionChunk | AsyncGenerator): The chat completion.
                 In streaming mode, it is an async generator that yields a `References` object
                 followed by zero or more `ChatCompletionChunk` objects.
                 In non-streaming mode, it is a `ChatCompletionChunk` object.
@@ -701,8 +1433,9 @@ class JamAIAsync(JamAI):
         if request.stream:
 
             async def gen():
-                gen_stream = self._stream(self.api_base, "/v1/chat/completions", request)
-                async for chunk in gen_stream:
+                async for chunk in self._stream(
+                    self.api_base, "/v1/chat/completions", request=request
+                ):
                     chunk = json_loads(chunk[5:])
                     if chunk["object"] == "chat.references":
                         yield p.References.model_validate(chunk)
@@ -712,194 +1445,448 @@ class JamAIAsync(JamAI):
             return gen()
         else:
             return await self._post(
-                self.api_base, "/v1/chat/completions", request, p.ChatCompletionChunk
+                self.api_base,
+                "/v1/chat/completions",
+                request=request,
+                response_model=p.ChatCompletionChunk,
             )
 
     async def generate_embeddings(self, request: p.EmbeddingRequest) -> p.EmbeddingResponse:
-        return await self._post(self.api_base, "/v1/embeddings", request, p.EmbeddingResponse)
+        """
+        Generate embeddings for the given input asynchronously.
+
+        Args:
+            request (p.EmbeddingRequest): The embedding request.
+
+        Returns:
+            response (p.EmbeddingResponse): The embedding response.
+        """
+        return await self._post(
+            self.api_base,
+            "/v1/embeddings",
+            request=request,
+            response_model=p.EmbeddingResponse,
+        )
 
     # --- Gen Table --- #
     async def create_action_table(self, request: p.ActionTableSchemaCreate) -> p.TableMetaResponse:
+        """
+        Create an Action Table asynchronously.
+
+        Args:
+            request (p.ActionTableSchemaCreate): The action table schema.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return await self._post(
-            self.api_base, "/v1/gen_tables/action", request, p.TableMetaResponse
+            self.api_base,
+            "/v1/gen_tables/action",
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     async def create_knowledge_table(
         self, request: p.KnowledgeTableSchemaCreate
     ) -> p.TableMetaResponse:
+        """
+        Create a Knowledge Table asynchronously.
+
+        Args:
+            request (p.KnowledgeTableSchemaCreate): The knowledge table schema.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return await self._post(
-            self.api_base, "/v1/gen_tables/knowledge", request, p.TableMetaResponse
+            self.api_base,
+            "/v1/gen_tables/knowledge",
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     async def create_chat_table(self, request: p.ChatTableSchemaCreate) -> p.TableMetaResponse:
-        return await self._post(self.api_base, "/v1/gen_tables/chat", request, p.TableMetaResponse)
+        """
+        Create a Chat Table asynchronously.
+
+        Args:
+            request (p.ChatTableSchemaCreate): The chat table schema.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
+        return await self._post(
+            self.api_base,
+            "/v1/gen_tables/chat",
+            request=request,
+            response_model=p.TableMetaResponse,
+        )
 
     async def get_table(
-        self, table_type: p.TableType, table_id: p.TableName
+        self,
+        table_type: str | p.TableType,
+        table_id: str,
     ) -> p.TableMetaResponse:
+        """
+        Get metadata for a specific Generative Table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id (str): The ID of the table.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return await self._get(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/{quote(table_id)}",
-            None,
-            p.TableMetaResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/{quote(table_id)}",
+            params=None,
+            response_model=p.TableMetaResponse,
         )
 
     async def list_tables(
         self,
-        table_type: p.TableType,
+        table_type: str | p.TableType,
         offset: int = 0,
         limit: int = 100,
     ) -> p.Page[p.TableMetaResponse]:
+        """
+        List Generative Tables of a specific type asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            offset (int, optional): Pagination offset. Defaults to 0.
+            limit (int, optional): Number of tables to return (min 1, max 100). Defaults to 100.
+
+        Returns:
+            response (p.Page[p.TableMetaResponse]): The paginated table metadata response.
+        """
         return await self._get(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}",
-            dict(offset=offset, limit=limit),
-            p.Page[p.TableMetaResponse],
+            f"/v1/gen_tables/{self._get_table_type(table_type)}",
+            params=dict(offset=offset, limit=limit),
+            response_model=p.Page[p.TableMetaResponse],
         )
 
-    async def delete_table(self, table_type: p.TableType, table_id: p.TableName) -> p.OkResponse:
+    async def delete_table(
+        self,
+        table_type: str | p.TableType,
+        table_id: str,
+    ) -> p.OkResponse:
+        """
+        Delete a specific table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id (str): The ID of the table.
+
+        Returns:
+            response (p.OkResponse): The response indicating success.
+        """
         return await self._delete(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/{quote(table_id)}",
-            None,
-            p.OkResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/{quote(table_id)}",
+            params=None,
+            response_model=p.OkResponse,
         )
 
     async def duplicate_table(
         self,
-        table_type: p.TableType,
+        table_type: str | p.TableType,
         table_id_src: str,
         table_id_dst: str,
         include_data: bool = True,
         deploy: bool = False,
     ) -> p.TableMetaResponse:
+        """
+        Duplicate a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id_src (str): The source table ID.
+            table_id_dst (str): The destination / new table ID.
+            include_data (bool, optional): Whether to include data in the duplicated table. Defaults to True.
+            deploy (bool, optional): Whether to deploy the duplicated table. Defaults to False.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return await self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/duplicate/{quote(table_id_src)}/{quote(table_id_dst)}",
-            None,
-            p.TableMetaResponse,
-            dict(include_data=include_data, deploy=deploy),
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/duplicate/{quote(table_id_src)}/{quote(table_id_dst)}",
+            request=None,
+            params=dict(include_data=include_data, deploy=deploy),
+            response_model=p.TableMetaResponse,
         )
 
     async def rename_table(
-        self, table_type: p.TableType, table_id_src: str, table_id_dst: str
+        self,
+        table_type: str | p.TableType,
+        table_id_src: str,
+        table_id_dst: str,
     ) -> p.TableMetaResponse:
+        """
+        Rename a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id_src (str): The source table ID.
+            table_id_dst (str): The destination / new table ID.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return await self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/rename/{quote(table_id_src)}/{quote(table_id_dst)}",
-            None,
-            p.TableMetaResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/rename/{quote(table_id_src)}/{quote(table_id_dst)}",
+            request=None,
+            response_model=p.TableMetaResponse,
         )
 
     async def update_gen_config(
-        self, table_type: p.TableType, request: p.GenConfigUpdateRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.GenConfigUpdateRequest,
     ) -> p.TableMetaResponse:
+        """
+        Update the generation configuration for a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.GenConfigUpdateRequest): The generation configuration update request.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return await self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/gen_config/update",
-            request,
-            p.TableMetaResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/gen_config/update",
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     async def add_action_columns(self, request: p.AddActionColumnSchema) -> p.TableMetaResponse:
+        """
+        Add columns to an Action Table asynchronously.
+
+        Args:
+            request (p.AddActionColumnSchema): The action column schema.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return await self._post(
             self.api_base,
             "/v1/gen_tables/action/columns/add",
-            request,
-            p.TableMetaResponse,
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     async def add_knowledge_columns(
         self, request: p.AddKnowledgeColumnSchema
     ) -> p.TableMetaResponse:
+        """
+        Add columns to a Knowledge Table asynchronously.
+
+        Args:
+            request (p.AddKnowledgeColumnSchema): The knowledge column schema.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return await self._post(
             self.api_base,
             "/v1/gen_tables/knowledge/columns/add",
-            request,
-            p.TableMetaResponse,
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     async def add_chat_columns(self, request: p.AddChatColumnSchema) -> p.TableMetaResponse:
+        """
+        Add columns to a Chat Table asynchronously.
+
+        Args:
+            request (p.AddChatColumnSchema): The chat column schema.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return await self._post(
             self.api_base,
             "/v1/gen_tables/chat/columns/add",
-            request,
-            p.TableMetaResponse,
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     async def drop_columns(
-        self, table_type: p.TableType, request: p.ColumnDropRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.ColumnDropRequest,
     ) -> p.TableMetaResponse:
+        """
+        Drop columns from a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.ColumnDropRequest): The column drop request.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return await self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/columns/drop",
-            request,
-            p.TableMetaResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/columns/drop",
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     async def rename_columns(
-        self, table_type: p.TableType, request: p.ColumnRenameRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.ColumnRenameRequest,
     ) -> p.TableMetaResponse:
+        """
+        Rename columns in a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.ColumnRenameRequest): The column rename request.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return await self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/columns/rename",
-            request,
-            p.TableMetaResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/columns/rename",
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     async def reorder_columns(
-        self, table_type: p.TableType, request: p.ColumnReorderRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.ColumnReorderRequest,
     ) -> p.TableMetaResponse:
+        """
+        Reorder columns in a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.ColumnReorderRequest): The column reorder request.
+
+        Returns:
+            response (p.TableMetaResponse): The table metadata response.
+        """
         return await self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/columns/reorder",
-            request,
-            p.TableMetaResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/columns/reorder",
+            request=request,
+            response_model=p.TableMetaResponse,
         )
 
     async def list_table_rows(
         self,
-        table_type: p.TableType,
-        table_id: p.TableName,
+        table_type: str | p.TableType,
+        table_id: str,
         offset: int = 0,
         limit: int = 100,
-        columns: list[p.Name] | None = None,
-    ) -> p.Page[dict[p.Name, Any]]:
+        search_query: str = "",
+        columns: list[str] | None = None,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
+    ) -> p.Page[dict[str, Any]]:
+        """
+        List rows in a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id (str): The ID of the table.
+            offset (int, optional): Pagination offset. Defaults to 0.
+            limit (int, optional): Number of rows to return (min 1, max 100). Defaults to 100.
+            search_query (str, optional): FTS query to filter the returned rows. Defaults to "" (no filter).
+            columns (list[str] | None, optional): List of column names to include in the response.
+                Defaults to None (all columns).
+            float_decimals (int, optional): Number of decimals for float values. Defaults to 0 (no rounding).
+            vec_decimals (int, optional): Number of decimals for vectors. Defaults to 0 (no rounding).
+        """
         return await self._get(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/{quote(table_id)}/rows",
-            dict(offset=offset, limit=limit, columns=columns),
-            p.Page[dict[p.Name, Any]],
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/{quote(table_id)}/rows",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                search_query=search_query,
+                columns=columns,
+                float_decimals=float_decimals,
+                vec_decimals=vec_decimals,
+            ),
+            response_model=p.Page[dict[str, Any]],
         )
 
     async def get_table_row(
         self,
-        table_type: p.TableType,
-        table_id: p.TableName,
+        table_type: str | p.TableType,
+        table_id: str,
         row_id: str,
-        columns: list[p.Name] | None = None,
-    ) -> dict[p.Name, Any]:
+        columns: list[str] | None = None,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
+    ) -> dict[str, Any]:
+        """
+        Get a specific row in a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id (str): The ID of the table.
+            row_id (str): The ID of the row.
+            columns (list[str] | None, optional): List of column names to include in the response.
+                Defaults to None (all columns).
+            float_decimals (int, optional): Number of decimals for float values. Defaults to 0 (no rounding).
+            vec_decimals (int, optional): Number of decimals for vectors. Defaults to 0 (no rounding).
+
+        Returns:
+            response (dict[str, Any]): The row data.
+        """
         response = await self._get(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/{quote(table_id)}/rows/{quote(row_id)}",
-            dict(columns=columns),
-            None,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/{quote(table_id)}/rows/{quote(row_id)}",
+            params=dict(
+                columns=columns,
+                float_decimals=float_decimals,
+                vec_decimals=vec_decimals,
+            ),
+            response_model=None,
         )
-        return json_loads(response)
+        return json_loads(response.text)
 
     async def add_table_rows(
-        self, table_type: p.TableType, request: p.RowAddRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.RowAddRequest,
     ) -> (
         p.GenTableRowsChatCompletionChunks
         | AsyncGenerator[p.GenTableStreamReferences | p.GenTableStreamChatCompletionChunk, None]
     ):
+        """
+        Add rows to a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.RowAddRequest): The row add request.
+
+        Returns:
+            response (p.GenTableRowsChatCompletionChunks | AsyncGenerator): The row completion.
+                In streaming mode, it is an async generator that yields a `p.GenTableStreamReferences` object
+                followed by zero or more `p.GenTableStreamChatCompletionChunk` objects.
+                In non-streaming mode, it is a `p.GenTableRowsChatCompletionChunks` object.
+        """
         if request.stream:
 
             async def gen():
                 async for chunk in self._stream(
                     self.api_base,
-                    f"/v1/gen_tables/{table_type.value}/rows/add",
-                    request,
+                    f"/v1/gen_tables/{self._get_table_type(table_type)}/rows/add",
+                    request=request,
                 ):
                     chunk = json_loads(chunk[5:])
                     if chunk["object"] == "gen_table.references":
@@ -911,24 +1898,39 @@ class JamAIAsync(JamAI):
         else:
             return await self._post(
                 self.api_base,
-                f"/v1/gen_tables/{table_type.value}/rows/add",
-                request,
-                p.GenTableRowsChatCompletionChunks,
+                f"/v1/gen_tables/{self._get_table_type(table_type)}/rows/add",
+                request=request,
+                response_model=p.GenTableRowsChatCompletionChunks,
             )
 
     async def regen_table_rows(
-        self, table_type: p.TableType, request: p.RowRegenRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.RowRegenRequest,
     ) -> (
         p.GenTableRowsChatCompletionChunks
         | AsyncGenerator[p.GenTableStreamReferences | p.GenTableStreamChatCompletionChunk, None]
     ):
+        """
+        Regenerate rows in a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.RowRegenRequest): The row regenerate request.
+
+        Returns:
+            response (p.GenTableRowsChatCompletionChunks | AsyncGenerator): The row completion.
+                In streaming mode, it is an async generator that yields a `p.GenTableStreamReferences` object
+                followed by zero or more `p.GenTableStreamChatCompletionChunk` objects.
+                In non-streaming mode, it is a `p.GenTableRowsChatCompletionChunks` object.
+        """
         if request.stream:
 
             async def gen():
                 async for chunk in self._stream(
                     self.api_base,
-                    f"/v1/gen_tables/{table_type.value}/rows/regen",
-                    request,
+                    f"/v1/gen_tables/{self._get_table_type(table_type)}/rows/regen",
+                    request=request,
                 ):
                     chunk = json_loads(chunk[5:])
                     if chunk["object"] == "gen_table.references":
@@ -940,58 +1942,249 @@ class JamAIAsync(JamAI):
         else:
             return await self._post(
                 self.api_base,
-                f"/v1/gen_tables/{table_type.value}/rows/regen",
-                request,
-                p.GenTableRowsChatCompletionChunks,
+                f"/v1/gen_tables/{self._get_table_type(table_type)}/rows/regen",
+                request=request,
+                response_model=p.GenTableRowsChatCompletionChunks,
             )
 
     async def update_table_row(
-        self, table_type: p.TableType, request: p.RowUpdateRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.RowUpdateRequest,
     ) -> p.OkResponse:
+        """
+        Update a specific row in a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.RowUpdateRequest): The row update request.
+
+        Returns:
+            response (p.OkResponse): The response indicating success.
+        """
         return await self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/rows/update",
-            request,
-            p.OkResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/rows/update",
+            request=request,
+            response_model=p.OkResponse,
         )
 
     async def delete_table_rows(
-        self, table_type: p.TableType, request: p.RowDeleteRequest
+        self,
+        table_type: str | p.TableType,
+        request: p.RowDeleteRequest,
     ) -> p.OkResponse:
+        """
+        Delete rows from a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.RowDeleteRequest): The row delete request.
+
+        Returns:
+            response (p.OkResponse): The response indicating success.
+        """
         return await self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/rows/delete",
-            request,
-            p.OkResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/rows/delete",
+            request=request,
+            response_model=p.OkResponse,
         )
 
     async def delete_table_row(
-        self, table_type: p.TableType, table_id: p.TableName, row_id: str
+        self,
+        table_type: str | p.TableType,
+        table_id: str,
+        row_id: str,
     ) -> p.OkResponse:
+        """
+        Delete a specific row from a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            table_id (str): The ID of the table.
+            row_id (str): The ID of the row.
+
+        Returns:
+            response (p.OkResponse): The response indicating success.
+        """
         return await self._delete(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/{quote(table_id)}/rows/{quote(row_id)}",
-            None,
-            p.OkResponse,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/{quote(table_id)}/rows/{quote(row_id)}",
+            params=None,
+            response_model=p.OkResponse,
         )
 
-    async def get_conversation_thread(self, table_id: p.TableName) -> p.ChatThread:
+    async def get_conversation_thread(self, table_id: str) -> p.ChatThread:
+        """
+        Get the conversation thread for a chat table asynchronously.
+
+        Args:
+            table_id (str): The ID of the chat table.
+
+        Returns:
+            response (p.ChatThread): The conversation thread.
+        """
         return await self._get(
             self.api_base,
             f"/v1/gen_tables/chat/{quote(table_id)}/thread",
-            None,
-            p.ChatThread,
+            params=None,
+            response_model=p.ChatThread,
         )
 
     async def hybrid_search(
         self,
-        table_type: p.TableType,
+        table_type: str | p.TableType,
         request: p.SearchRequest,
-    ) -> list[dict[p.Name, Any]]:
+    ) -> list[dict[str, Any]]:
+        """
+        Perform a hybrid search on a table asynchronously.
+
+        Args:
+            table_type (str | p.TableType): The type of the table.
+            request (p.SearchRequest): The search request.
+
+        Returns:
+            response (list[dict[str, Any]]): The search results.
+        """
         response = await self._post(
             self.api_base,
-            f"/v1/gen_tables/{table_type.value}/hybrid_search",
-            request,
-            None,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/hybrid_search",
+            request=request,
+            response_model=None,
         )
-        return json_loads(response)
+        return json_loads(response.text)
+
+    async def upload_file(self, request: p.FileUploadRequest) -> p.OkResponse:
+        """
+        Upload a file to a Knowledge Table asynchronously.
+
+        Args:
+            request (p.FileUploadRequest): The file upload request.
+
+        Returns:
+            response (p.OkResponse): The response indicating success.
+        """
+        file_path = request.file_path
+        # Guess the MIME type of the file based on its extension
+        mime_type, _ = guess_type(file_path)
+        if mime_type is None:
+            mime_type = "application/octet-stream"  # Default MIME type
+        # Extract the filename from the file path
+        filename = split(file_path)[-1]
+        # Open the file in binary mode
+        with open(file_path, "rb") as f:
+            response = await self._post(
+                self.api_base,
+                "/v1/gen_tables/knowledge/upload_file",
+                request=None,
+                response_model=p.OkResponse,
+                files={
+                    "file": (filename, f, mime_type),
+                },
+                data={
+                    "file_name": filename,
+                    "table_id": request.table_id,
+                    "chunk_size": request.chunk_size,
+                    "chunk_overlap": request.chunk_overlap,
+                    # "overwrite": request.overwrite,
+                },
+                timeout=None,
+            )
+        return response
+
+    async def import_table_data(
+        self,
+        table_type: str | p.TableType,
+        request: p.TableDataImportRequest,
+    ) -> GenTableChatResponseType:
+        """
+        Imports CSV or TSV data into a table.
+
+        Args:
+            file_path (str): CSV or TSV file path.
+            table_type (str | p.TableType): Table type.
+            request (p.TableDataImportRequest): Data import request.
+
+        Returns:
+            response (p.OkResponse): The response indicating success.
+        """
+        # Guess the MIME type of the file based on its extension
+        mime_type, _ = guess_type(request.file_path)
+        if mime_type is None:
+            mime_type = "application/octet-stream"  # Default MIME type
+        # Extract the filename from the file path
+        filename = split(request.file_path)[-1]
+        data = {
+            "file_name": filename,
+            "table_id": request.table_id,
+            "stream": request.stream,
+            # "column_names": request.column_names,
+            # "columns": request.columns,
+            "delimiter": request.delimiter,
+        }
+        if request.stream:
+
+            async def gen():
+                # Open the file in binary mode
+                with open(request.file_path, "rb") as f:
+                    async for chunk in self._stream(
+                        self.api_base,
+                        f"/v1/gen_tables/{self._get_table_type(table_type)}/import_data",
+                        request=None,
+                        files={
+                            "file": (filename, f, mime_type),
+                        },
+                        data=data,
+                        timeout=None,
+                    ):
+                        chunk = json_loads(chunk[5:])
+                        if chunk["object"] == "gen_table.references":
+                            yield p.GenTableStreamReferences.model_validate(chunk)
+                        elif chunk["object"] == "gen_table.completion.chunk":
+                            yield p.GenTableStreamChatCompletionChunk.model_validate(chunk)
+                        else:
+                            raise RuntimeError(f"Unexpected SSE chunk: {chunk}")
+
+            return gen()
+        else:
+            # Open the file in binary mode
+            with open(request.file_path, "rb") as f:
+                return await self._post(
+                    self.api_base,
+                    f"/v1/gen_tables/{self._get_table_type(table_type)}/import_data",
+                    request=None,
+                    response_model=p.GenTableRowsChatCompletionChunks,
+                    files={
+                        "file": (filename, f, mime_type),
+                    },
+                    data=data,
+                    timeout=None,
+                )
+
+    async def export_table_data(
+        self,
+        table_type: str | p.TableType,
+        table_id: str,
+        columns: list[str] | None = None,
+        delimiter: str = ",",
+    ) -> bytes:
+        """
+        Exports the row data of a table as CSV or TSV file.
+
+        Args:
+            table_type (str | p.TableType): Table type.
+            table_id (str): Table name / ID.
+            delimiter (str, optional): The delimiter of the file: can be "," or "\\t". Defaults to ",".
+            columns (list[str], optional): A list of columns to be exported. Defaults to None (export all columns).
+
+        Returns:
+            response (list[dict[str, Any]]): The search results.
+        """
+        response = await self._get(
+            self.api_base,
+            f"/v1/gen_tables/{self._get_table_type(table_type)}/{quote(table_id)}/export_data",
+            params=dict(delimiter=delimiter, columns=columns),
+            response_model=None,
+        )
+        return response.content

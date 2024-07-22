@@ -49,7 +49,9 @@ COLORS = [
 ]
 
 
-def extract_from_images_with_rapidocr(images: Sequence[Iterable[np.ndarray] | bytes]) -> str:
+def extract_from_images_with_rapidocr(
+    images: Sequence[Iterable[np.ndarray] | bytes],
+) -> str:
     try:
         from rapidocr_onnxruntime import RapidOCR
     except ImportError:

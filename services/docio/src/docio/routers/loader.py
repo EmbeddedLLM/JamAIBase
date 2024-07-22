@@ -11,6 +11,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from s3fs import S3FileSystem
 
 from docio.langchain.pdfplumber import PDFPlumberLoader
+from docio.langchain.tsvloader import TSVLoader
+from docio.langchain.jsonloader import JSONLoader
 from jamaibase.protocol import Document
 
 
@@ -77,6 +79,12 @@ def load_file(file_path: str) -> list[Document]:
         loader = PDFPlumberLoader(file_path)
     elif ext == ".csv":
         loader = loaders.CSVLoader(file_path)
+    elif ext == ".tsv":
+        loader = TSVLoader(file_path)
+    elif ext == ".json":
+        loader = JSONLoader(file_path, text_content=False)
+    elif ext == ".jsonl":
+        loader = JSONLoader(file_path, text_content=False, json_lines=True)
     else:
         raise ValueError(f"Unsupported file type: {ext}")
 

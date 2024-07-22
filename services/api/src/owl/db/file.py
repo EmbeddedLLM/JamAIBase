@@ -10,7 +10,7 @@ from loguru import logger
 from typing_extensions import Self
 from uuid_extensions import uuid7str
 
-from jamaibase.protocol import Name, TableName
+from owl.protocol import ColName, TableName
 
 
 class FileTable:
@@ -113,7 +113,7 @@ class FileTable:
         file_id: str | None = None,
         file_name: str | None = None,
         columns: list[str] | None = None,
-    ) -> dict[Name, Any]:
+    ) -> dict[ColName, Any]:
         if file_id == "" or file_name == "":
             raise ValueError("`file_id` or `file_name` cannot be empty string.")
         if file_id is not None and file_name is not None:

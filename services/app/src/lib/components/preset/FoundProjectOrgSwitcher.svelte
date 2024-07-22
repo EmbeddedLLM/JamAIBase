@@ -38,7 +38,6 @@
 					}
 					window.location.reload();
 				}}
-				variant="secondary"
 				type="button"
 				class="px-6 rounded-full"
 			>

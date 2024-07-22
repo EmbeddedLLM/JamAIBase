@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<weather-forecast>
+  <location>
+    <city>Sunnyville</city>
+    <state>Weatherland</state>
+    <country>Climatia</country>
+    <coordinates>
+      <latitude>40.7128</latitude>
+      <longitude>-74.0060</longitude>
+    </coordinates>
+  </location>
+  <current-conditions>
+    <timestamp>2024-07-10T12:00:00</timestamp>
+    <temperature unit="celsius">25</temperature>
+    <humidity unit="percent">60</humidity>
+    <wind>
+      <speed unit="km/h">15</speed>
+      <direction>NW</direction>
+    </wind>
+    <pressure unit="hPa">1013</pressure>
+    <visibility unit="km">10</visibility>
+    <uv-index>6</uv-index>
+    <condition>Partly Cloudy</condition>
+  </current-conditions>
+  <forecast>
+    <day>
+      <date>2024-07-11</date>
+      <high-temperature unit="celsius">28</high-temperature>
+      <low-temperature unit="celsius">18</low-temperature>
+      <precipitation>
+        <probability unit="percent">20</probability>
+        <type>Rain</type>
+        <amount unit="mm">2</amount>
+      </precipitation>
+      <wind>
+        <speed unit="km/h">12</speed>
+        <direction>W</direction>
+      </wind>
+      <condition>Mostly Sunny</condition>
+    </day>
+    <day>
+      <date>2024-07-12</date>
+      <high-temperature unit="celsius">30</high-temperature>
+      <low-temperature unit="celsius">20</low-temperature>
+      <precipitation>
+        <probability unit="percent">10</probability>
+        <type>None</type>
+        <amount unit="mm">0</amount>
+      </precipitation>
+      <wind>
+        <speed unit="km/h">10</speed>
+        <direction>SW</direction>
+      </wind>
+      <condition>Sunny</condition>
+    </day>
+  </forecast>
+  <alerts>
+    <alert>
+      <type>Heat Advisory</type>
+      <severity>Moderate</severity>
+      <description>High temperatures expected. Stay hydrated and avoid prolonged sun exposure.</description>
+      <start-time>2024-07-12T12:00:00</start-time>
+      <end-time>2024-07-12T20:00:00</end-time>
+    </alert>
+  </alerts>
+  <station-info>
+    <station-id>WS001</station-id>
+    <name>Sunnyville Central Station</name>
+    <last-update>2024-07-10T11:55:00</last-update>
+  </station-info>
+</weather-forecast>
