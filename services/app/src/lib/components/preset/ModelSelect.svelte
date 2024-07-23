@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
-	import { onMount } from 'svelte';
 	import throttle from 'lodash/throttle';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
 	import { modelsAvailable } from '$globalStore';
@@ -26,34 +25,31 @@
 	export let buttonText: string;
 
 	async function getModels() {
-		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/models${
-				capabilityFilter ? `?${new URLSearchParams({ capabilities: capabilityFilter })}` : ''
-			}`,
-			{
-				method: 'GET',
-				credentials: 'same-origin'
-			}
-		);
+		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/models`, {
+			method: 'GET',
+			credentials: 'same-origin'
+		});
 
 		const responseBody = await response.json();
 		if (response.ok) {
 			$modelsAvailable = responseBody.data;
 		} else {
 			logger.error('MODELS_FETCH_FAILED', responseBody);
+			console.error(responseBody);
 			toast.error('Failed to fetch models', {
 				description: responseBody.message || JSON.stringify(responseBody)
 			});
 		}
 	}
 	const throttledInvalidateModels = throttle(getModels, 5000);
-
-	onMount(() => {
-		getModels();
-	});
 </script>
 
-<Select.Root>
+<Select.Root
+	selected={{ value: selectedModel }}
+	onSelectedChange={(v) => {
+		v && selectCb(v.value);
+	}}
+>
 	<!-- ? Select.Trigger has no event listener props for some reason -->
 	<!-- svelte-ignore a11y-no-static-element-interactions -->
 	<div on:mouseenter={throttledInvalidateModels} on:focusin={throttledInvalidateModels}>
@@ -77,16 +73,18 @@
 		</Select.Trigger>
 	</div>
 	<Select.Content {sameWidth} side="bottom" class="max-h-96 overflow-y-auto">
-		{#each $modelsAvailable as { id, languages }}
-			<Select.Item
-				on:click={() => selectCb(id)}
-				value={id}
-				label={id}
-				class="flex justify-between gap-10 cursor-pointer"
-			>
-				{id}
-				<span class="uppercase">{languages.join(', ')}</span>
-			</Select.Item>
+		{#each $modelsAvailable as { id, languages, capabilities }}
+			{#if !capabilityFilter || capabilities.includes(capabilityFilter)}
+				<Select.Item
+					value={id}
+					label={id}
+					labelSelected
+					class="flex justify-between gap-10 cursor-pointer"
+				>
+					{id}
+					<span class="uppercase">{languages.join(', ')}</span>
+				</Select.Item>
+			{/if}
 		{/each}
 		{#if $modelsAvailable.length == 0}
 			<span class="m-6 min-w-max text-sm text-left text-foreground-content/60 pointer-events-none">

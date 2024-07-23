@@ -7,10 +7,9 @@ $ JAMAI_API_BASE=http://localhost:6969/api TZ=Asia/Singapore python -m owl.entry
 ```
 """
 
+import os
 from asyncio import sleep
 from collections import defaultdict
-from os import makedirs
-from os.path import exists
 from time import perf_counter
 
 from fastapi import FastAPI, Request, Response, status
@@ -19,12 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 from filelock import FileLock, Timeout
 from loguru import logger
-from pydantic import SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.background import BackgroundTasks
 from uuid_utils import uuid7
 
-from owl.cache import CACHE
+from owl.configs.manager import CONFIG, ENV_CONFIG
 from owl.routers import gen_table, llm
 from owl.utils.exceptions import (
     ContextOverflowError,
@@ -66,65 +63,6 @@ except ImportError as e:
     from owl.billing import BillingManager
 
 
-class Config(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-    owl_compute_storage_period_min: float = 1
-    owl_cache_purge: bool = False
-    owl_db_dir: str = "db"
-    owl_port: int = 7770
-    owl_host: str = "0.0.0.0"
-    owl_workers: int = 2
-    owl_service: str = ""
-    default_project: str = "default"
-    default_org: str = "default"
-    service_key: SecretStr = ""
-    openai_api_key: SecretStr = ""
-    anthropic_api_key: SecretStr = ""
-    gemini_api_key: SecretStr = ""
-    cohere_api_key: SecretStr = ""
-    groq_api_key: SecretStr = ""
-    together_api_key: SecretStr = ""
-    jina_api_key: SecretStr = ""
-    voyage_api_key: SecretStr = ""
-
-    @property
-    def service_key_plain(self):
-        return self.service_key.get_secret_value()
-
-    @property
-    def openai_api_key_plain(self):
-        return self.openai_api_key.get_secret_value()
-
-    @property
-    def anthropic_api_key_plain(self):
-        return self.anthropic_api_key.get_secret_value()
-
-    @property
-    def gemini_api_key_plain(self):
-        return self.gemini_api_key.get_secret_value()
-
-    @property
-    def cohere_api_key_plain(self):
-        return self.cohere_api_key.get_secret_value()
-
-    @property
-    def groq_api_key_plain(self):
-        return self.groq_api_key.get_secret_value()
-
-    @property
-    def together_api_key_plain(self):
-        return self.together_api_key.get_secret_value()
-
-    @property
-    def jina_api_key_plain(self):
-        return self.jina_api_key.get_secret_value()
-
-    @property
-    def voyage_api_key_plain(self):
-        return self.voyage_api_key.get_secret_value()
-
-
-CONFIG = Config()
 setup_logger_sinks()
 # We purposely don't intercept uvicorn logs since it is typically not useful
 # We also don't intercept transformers logs
@@ -132,14 +70,14 @@ replace_logging_handlers(["uvicorn.access"], False)
 suppress_logging_handlers(["litellm", "openmeter", "azure"], True)
 
 # Maybe purge Redis data
-if CONFIG.owl_cache_purge:
-    CACHE.purge()
+if ENV_CONFIG.owl_cache_purge:
+    CONFIG.purge()
 
 # Cloud client
-if OwlAsync is None or CONFIG.service_key_plain == "":
+if OwlAsync is None or ENV_CONFIG.service_key_plain == "":
     owl_client = None
 else:
-    owl_client = OwlAsync(api_key=CONFIG.service_key_plain)
+    owl_client = OwlAsync(api_key=ENV_CONFIG.service_key_plain)
 
 app = FastAPI(
     logger=logger,
@@ -159,22 +97,28 @@ services = {
 }
 if cloud_admin is not None:
     services["cloud_admin"] = (cloud_admin.router, ["Cloud Admin"], "/api/admin")
-if CONFIG.owl_service != "":
+if ENV_CONFIG.owl_service != "":
     try:
-        router, tags, prefix = services[CONFIG.owl_service]
+        router, tags, prefix = services[ENV_CONFIG.owl_service]
     except KeyError:
         logger.error(
-            f"Invalid service '{CONFIG.owl_service}', choose from: {list(services.keys())}"
+            f"Invalid service '{ENV_CONFIG.owl_service}', choose from: {list(services.keys())}"
         )
         raise
     app.include_router(
-        router, prefix=prefix, tags=tags, generate_unique_id_function=custom_generate_unique_id
+        router,
+        prefix=prefix,
+        tags=tags,
+        generate_unique_id_function=custom_generate_unique_id,
     )
 else:
     # Mount everything
     for service, (router, tags, prefix) in services.items():
         app.include_router(
-            router, prefix=prefix, tags=tags, generate_unique_id_function=custom_generate_unique_id
+            router,
+            prefix=prefix,
+            tags=tags,
+            generate_unique_id_function=custom_generate_unique_id,
         )
 
 # Permissive CORS
@@ -189,20 +133,18 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
-    # Temporary for backwards compatibility
-    logger.info(f"Using configuration: {CONFIG}")
-    # Create db dir
-    if not exists(CONFIG.owl_db_dir):
-        makedirs(CONFIG.owl_db_dir, exist_ok=True)
+    # Router lifespan is broken as of fastapi==0.109.0 and starlette==0.35.1
+    # https://github.com/tiangolo/fastapi/discussions/9664
+    logger.info(f"Using configuration: {ENV_CONFIG}")
 
 
 @router.on_event("startup")
-@repeat_every(seconds=CONFIG.owl_compute_storage_period_min * 60, wait_first=True)
+@repeat_every(seconds=ENV_CONFIG.owl_compute_storage_period_min * 60, wait_first=True)
 async def periodic_storage_update():
     if OwlAsync is None:
         return
     # Only let one worker perform this task
-    lock = FileLock(f"{CONFIG.owl_db_dir}/periodic_storage_update.lock", blocking=False)
+    lock = FileLock(f"{ENV_CONFIG.owl_db_dir}/periodic_storage_update.lock", blocking=False)
     try:
         t0 = perf_counter()
         with lock:
@@ -231,7 +173,7 @@ async def periodic_storage_update():
                         file_usage=file_usages[org_id],
                         last_db_usage=org_info.db_storage_gb,
                         last_file_usage=org_info.file_storage_gb,
-                        min_wait_mins=max(5.0, CONFIG.owl_compute_storage_period_min),
+                        min_wait_mins=max(5.0, ENV_CONFIG.owl_compute_storage_period_min),
                     )
                     num_ok += 1
                 except Exception as e:
@@ -239,7 +181,7 @@ async def periodic_storage_update():
                     num_failed += 1
             t = perf_counter() - t0
             # Hold the lock for a while to block other workers
-            await sleep(max(0.0, (CONFIG.owl_compute_storage_period_min * 60 - t) * 0.5))
+            await sleep(max(0.0, (ENV_CONFIG.owl_compute_storage_period_min * 60 - t) * 0.5))
             logger.info(
                 (
                     f"Periodic storage usage update completed (t={t:,.3f} s, "
@@ -287,20 +229,20 @@ async def authenticate(request: Request, call_next):
         return await call_next(request)
     t0 = perf_counter()
     # Defaults
-    project_id, org_id, org_tier = CONFIG.default_project, CONFIG.default_org, "free"
+    project_id, org_id, org_tier = ENV_CONFIG.default_project, ENV_CONFIG.default_org, "free"
     token, openmeter_id = "", "default"
     quotas, quota_reset_at = defaultdict(lambda: 1.0), ""
 
     # --- OSS Mode --- #
-    if CONFIG.service_key_plain == "":
-        openai_api_key = CONFIG.openai_api_key_plain
-        anthropic_api_key = CONFIG.anthropic_api_key_plain
-        gemini_api_key = CONFIG.gemini_api_key_plain
-        cohere_api_key = CONFIG.cohere_api_key_plain
-        groq_api_key = CONFIG.groq_api_key_plain
-        together_api_key = CONFIG.together_api_key_plain
-        jina_api_key = CONFIG.jina_api_key_plain
-        voyage_api_key = CONFIG.voyage_api_key_plain
+    if ENV_CONFIG.service_key_plain == "":
+        openai_api_key = ENV_CONFIG.openai_api_key_plain
+        anthropic_api_key = ENV_CONFIG.anthropic_api_key_plain
+        gemini_api_key = ENV_CONFIG.gemini_api_key_plain
+        cohere_api_key = ENV_CONFIG.cohere_api_key_plain
+        groq_api_key = ENV_CONFIG.groq_api_key_plain
+        together_api_key = ENV_CONFIG.together_api_key_plain
+        jina_api_key = ENV_CONFIG.jina_api_key_plain
+        voyage_api_key = ENV_CONFIG.voyage_api_key_plain
 
     # --- Cloud Mode --- #
     else:
@@ -328,7 +270,7 @@ async def authenticate(request: Request, call_next):
         token = auth[1]
         # Admin API only accepts service key
         if "api/admin" in request.url.path:
-            if token != CONFIG.service_key_plain:
+            if token != ENV_CONFIG.service_key_plain:
                 _err_mssg = f"Incorrect service key provided: {token}."
                 return ORJSONResponse(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -359,13 +301,13 @@ async def authenticate(request: Request, call_next):
                         "exception": "ResourceNotFoundError",
                     },
                 )
-            if token == CONFIG.service_key_plain:
+            if token == ENV_CONFIG.service_key_plain:
                 # Service key auth
                 try:
                     project_info = await owl_client.get_project(project_id)
                     org_info = project_info.organization
                     org_id, external_keys = org_info.id, org_info.external_keys
-                except ResourceNotFoundError:
+                except (RuntimeError, ResourceNotFoundError):
                     _err_mssg = f"Project not found: {project_id}."
                     return ORJSONResponse(
                         status_code=status.HTTP_404_NOT_FOUND,
@@ -373,7 +315,7 @@ async def authenticate(request: Request, call_next):
                             "object": "error",
                             "error": "resource_not_found",
                             "message": _err_mssg,
-                            "detail": f"{_err_mssg} Org data: {org_info}",
+                            "detail": _err_mssg,
                             "request_id": request.state.id,
                             "exception": "ResourceNotFoundError",
                         },
@@ -395,7 +337,7 @@ async def authenticate(request: Request, call_next):
                 # API key auth
                 try:
                     org_info = await owl_client.get_organization(token)
-                except ResourceNotFoundError:
+                except (RuntimeError, ResourceNotFoundError):
                     _err_mssg = f"Incorrect API key provided: {token}."
                     return ORJSONResponse(
                         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -689,19 +631,52 @@ async def context_overflow_exc_handler(request: Request, exc: ContextOverflowErr
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_exc_handler(request: Request, exc: RequestValidationError):
-    logger.info(f"{request.state.id} - RequestValidationError: {exc.errors()}")
-    return ORJSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={
-            "object": "error",
-            "error": "validation_error",
-            "message": "Your request contains errors and cannot be processed at this time.",
-            "detail": str(exc.errors()),
-            "request_id": request.state.id,
-            "body": exc.body,
-            "exception": exc.__class__.__name__,
-        },
-    )
+    try:
+        logger.info(f"{request.state.id} - RequestValidationError: {exc.errors()}")
+        errors, messages = [], []
+        for i, e in enumerate(exc.errors()):
+            try:
+                msg = str(e["ctx"]["error"]).strip()
+            except Exception:
+                msg = e["msg"].strip()
+            if not msg.endswith("."):
+                msg = f"{msg}."
+            loc = ""
+            if len(e["loc"]) > 0:
+                loc = ".".join(str(ll) for ll in e["loc"]) + " : "
+            messages.append(f"{i + 1}. {loc}{msg}")
+            error = {k: v for k, v in e.items() if k != "ctx"}
+            if "ctx" in e:
+                error["ctx"] = {k: repr(v) if k == "error" else v for k, v in e["ctx"].items()}
+            errors.append(error)
+        message = "\n".join(messages)
+        message = f"Your request contains errors:\n{message}"
+        body = exc.body if isinstance(exc.body, dict) else str(exc.body)
+        return ORJSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "object": "error",
+                "error": "validation_error",
+                "message": message,
+                "detail": errors,
+                "request_id": request.state.id,
+                "body": body,
+                "exception": exc.__class__.__name__,
+            },
+        )
+    except Exception:
+        logger.exception("Failed to parse error data !!!")
+        return ORJSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "object": "error",
+                "error": "validation_error",
+                "message": str(exc),
+                "detail": str(exc),
+                "request_id": request.state.id,
+                "exception": exc.__class__.__name__,
+            },
+        )
 
 
 @app.exception_handler(Exception)
@@ -737,13 +712,22 @@ openapi_schema["security"] = [{"Authentication": [], "X-PROJECT-ID": []}]
 openapi_schema["info"]["x-logo"] = {"url": "https://www.jamaibase.com/favicon.svg"}
 app.openapi_schema = openapi_schema
 
+
 if __name__ == "__main__":
     import uvicorn
+
+    if os.name == "nt":
+        import asyncio
+        from multiprocessing import freeze_support
+
+        logger.warning("The system is Windows, performing asyncio and multiprocessing patches.")
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        freeze_support()
 
     uvicorn.run(
         "owl.entrypoints.api:app",
         reload=False,
-        host=CONFIG.owl_host,
-        port=CONFIG.owl_port,
-        workers=CONFIG.owl_workers,
+        host=ENV_CONFIG.owl_host,
+        port=ENV_CONFIG.owl_port,
+        workers=ENV_CONFIG.owl_workers,
     )

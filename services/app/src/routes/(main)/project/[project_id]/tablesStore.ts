@@ -22,17 +22,46 @@ function createGenTableRows() {
 					return rows;
 				}
 			}),
-		/** Set cell value */
-		setCell: ({ rowID, columnID }: { rowID: string; columnID: string }, value: any) =>
+		/** Removes a row */
+		deleteRow: (rowID: string) =>
+			update((rows) => {
+				if (rows) {
+					return rows.filter((row) => row.ID !== rowID);
+				} else {
+					return rows;
+				}
+			}),
+		/** Updates a row */
+		updateRow: (rowID: string, data: GenTableRow) =>
 			update((rows) =>
 				rows?.map((row) => {
 					if (row.ID === rowID) {
 						return {
 							...row,
-							[columnID]: {
-								value: value
-							}
+							...data
 						};
+					}
+					return row;
+				})
+			),
+		/** Set cell value */
+		setCell: ({ rowID, columnID }: { rowID: string; columnID: string }, value: any) =>
+			update((rows) =>
+				rows?.map((row) => {
+					if (row.ID === rowID) {
+						if (columnID === 'ID' || columnID === 'Updated at') {
+							return {
+								...row,
+								[columnID]: value
+							};
+						} else {
+							return {
+								...row,
+								[columnID]: {
+									value: value
+								}
+							};
+						}
 					}
 					return row;
 				})

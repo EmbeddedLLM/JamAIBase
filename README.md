@@ -12,42 +12,17 @@
 
 ## Overview
 
-Welcome to JamAI Base – the real-time database that orchestrates Large Language Models (LLMs) for you. Designed to simplify AI integration, JamAI Base offers a Backend as a Service (BaaS) platform with an intuitive, spreadsheet-like interface. Focus on defining your data requirements through natural language prompts, and let us handle the complexities of RAG, LLMOps, conversation histories, and LLM orchestration.
+JamAI Base is an open-source RAG (Retrieval-Augmented Generation) backend platform that integrates an embedded database (SQLite) and an embedded vector database (LanceDB) with managed memory and RAG capabilities. It features built-in LLM, vector embeddings, and reranker orchestration and management, all accessible through a convenient, intuitive, spreadsheet-like UI and a simple REST API.
 
 ![JamAI Base Demo](jamaibase.webp)
 
-## Key Benefits
-
-### Ease of Use
-
-- **Interface**: Simple, intuitive spreadsheet-like interface.
-- **Focus**: Define data requirements through natural language prompts.
-
-### Scalability
-
-- **Foundation**: Built on LanceDB, an open-source vector database designed for AI workloads.
-- **Performance**: Serverless design ensures optimal performance and seamless scalability.
-
-### Flexibility
-
-- **LLM Support**: Supports any LLMs, including OpenAI GPT-4, Anthropic Claude 3, Mistral AI Mixtral, and Meta Llama3.
-- **Capabilities**: Leverage state-of-the-art AI capabilities effortlessly.
-
-### Declarative Paradigm
-
-- **Approach**: Define the "what" rather than the "how."
-- **Simplification**: Simplifies complex data operations, making them accessible to users with varying levels of technical expertise.
-
-### Innovative RAG Techniques
-
-- **Effortless RAG**: Built-in RAG features, no need to build the RAG pipeline yourself.
-- **Query Rewriting**: Boosts the accuracy and relevance of your search queries.
-- **Hybrid Search & Reranking**: Combines keyword-based search, structured search, and vector search for the best results.
-- **Structured RAG Content Management**: Organizes and manages your structured content seamlessly.
-- **Adaptive Chunking**: Automatically determines the best way to chunk your data.
-- **BGE M3-Embedding**: Leverages multi-lingual, multi-functional, and multi-granular text embeddings for free.
-
 ## Key Features
+
+- Embedded database (SQLite) and vector database (LanceDB)
+- Managed memory and RAG capabilities
+- Built-in LLM, vector embeddings, and reranker orchestration
+- Intuitive spreadsheet-like UI
+- Simple REST API
 
 ### Generative Tables
 
@@ -95,67 +70,51 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
 - **Non-Procedural Approach**: Eliminate the need to write procedures.
 - **Functional Flexibility**: Support functional programming through LLMs.
 
+## Key Benefits
+
+### Ease of Use
+
+- **Interface**: Simple, intuitive spreadsheet-like interface.
+- **Focus**: Define data requirements through natural language prompts.
+
+### Scalability
+
+- **Foundation**: Built on LanceDB, an open-source vector database designed for AI workloads.
+- **Performance**: Serverless design ensures optimal performance and seamless scalability.
+
+### Flexibility
+
+- **LLM Support**: Supports any LLMs, including OpenAI GPT-4, Anthropic Claude 3, Mistral AI Mixtral, and Meta Llama3.
+- **Capabilities**: Leverage state-of-the-art AI capabilities effortlessly.
+
+### Declarative Paradigm
+
+- **Approach**: Define the "what" rather than the "how."
+- **Simplification**: Simplifies complex data operations, making them accessible to users with varying levels of technical expertise.
+
+### Innovative RAG Techniques
+
+- **Effortless RAG**: Built-in RAG features, no need to build the RAG pipeline yourself.
+- **Query Rewriting**: Boosts the accuracy and relevance of your search queries.
+- **Hybrid Search & Reranking**: Combines keyword-based search, structured search, and vector search for the best results.
+- **Structured RAG Content Management**: Organizes and manages your structured content seamlessly.
+- **Adaptive Chunking**: Automatically determines the best way to chunk your data.
+- **BGE M3-Embedding**: Leverages multi-lingual, multi-functional, and multi-granular text embeddings for free.
+
 ## Getting Started
-
-### Install Python Client
-
-1. Create a Python (>= 3.10) environment and install `jamaibase`:
-   ```shell
-   $ mm create -n jam310 python=3.10 -y
-   $ pip install jamaibase
-   ```
-
-### Install JS Client
-
-1. Create a Python (>= 3.10) environment and install `jamaibase`:
-   ```shell
-   $ npm install jamaibase
-   ```
 
 ### Option 1: Use the JamAI Base Cloud
 
-Get free LLM tokens on JamAI Base Cloud. [Sign up now.](https://cloud.jamaibase.com/)
+[Sign up for a free account!](https://cloud.jamaibase.com/) Did we mention that you can get free LLM tokens?
 
 ### Option 2: Launch self-hosted services
 
-1. Clone the repository:
-
-   ```shell
-   $ git clone https://github.com/EmbeddedLLM/JamAIBase.git
-   $ cd JamAIBase
-   ```
-
-2. Add your API keys into `.env`:
-
-   ```
-   OPENAI_API_KEY=your_key
-   ```
-
-3. Launch the Docker containers by running one of these:
-
-   ```shell
-   # CPU-only
-   $ docker compose -f docker/compose.cpu.yml up --quiet-pull -d
-
-   # With NVIDIA GPU
-   $ docker compose -f docker/compose.nvidia.yml up --quiet-pull -d
-   ```
-
-<!-- prettier-ignore -->
-> [!TIP]
-> By default, frontend and backend are accessible at ports 4000 and 6969.
-> You can change the ports exposed to host by setting env var like so `API_PORT=6970 FRONTEND_PORT=4001 docker compose -f docker/compose.cpu.yml up --quiet-pull -d`
-
-4. Try the command below in your terminal, or open your browser and go to `localhost:4000`.
-
-   ```shell
-   $ curl localhost:6969/api/v1/models
-   ```
+[Follow our step-by-step guide.](https://docs.jamaibase.com/sdk/python-sdk-documentation#oss)
 
 ### Explore the Documentation:
 
+- [SDK and Platform Documentation](https://docs.jamaibase.com)
 - [API Documentation](https://jamaibase.readme.io)
-- [Platform Documentation](https://docs.jamaibase.com)
 - [Changelog](CHANGELOG.md)
 - [Versioning](VERSIONING.md)
 
@@ -167,6 +126,7 @@ Here are a couple of cool frontend examples:
 
 1. [Simple Chatbot Bot using NLUX](https://docs.jamaibase.com/getting-started/quick-start/nlux-frontend-only): Build a basic chatbot without any backend setup. It's a great way to dip your toes in!
 2. [Simple Chatbot Bot using NLUX + Express.js](https://docs.jamaibase.com/getting-started/quick-start/nlux-+-express.js): Take it a step further and add some backend power with Express.js.
+3. [Simple Chatbot Bot using Streamlit](https://docs.jamaibase.com/sdk/python-sdk-documentation#streamlit-chat-app): Are you a Python dev? Checkout this Streamlit demo!
 
 Let us know if you have any questions – we're here to help! Happy coding! 😊
 

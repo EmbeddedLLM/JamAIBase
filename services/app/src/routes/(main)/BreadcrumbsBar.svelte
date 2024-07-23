@@ -42,7 +42,7 @@
 					<Button
 						builders={[builder]}
 						on:click={() => (isSelectOrgOpen = !isSelectOrgOpen)}
-						class="flex items-center gap-1 pl-1.5 pr-[unset] py-1 h-[unset] w-[unset] text-xs text-black bg-transparent hover:bg-black/[0.09] data-dark:hover:bg-white/[0.1] rounded-sm transition-colors"
+						class="flex items-center gap-1 pl-1.5 pr-[unset] py-1 h-[unset] w-[unset] text-xs text-text bg-transparent hover:bg-black/[0.09] data-dark:hover:bg-white/[0.1] rounded-sm transition-colors"
 					>
 						<PeopleIcon class="h-3.5 mb-0.5" />
 						<span>{$activeOrganization?.organization_name ?? 'Unknown'}</span>

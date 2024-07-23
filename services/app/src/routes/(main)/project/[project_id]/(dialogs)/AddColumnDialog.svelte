@@ -7,7 +7,7 @@
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
 	import { modelsAvailable } from '$globalStore';
 	import { insertAtCursor } from '$lib/utils';
-	import { genTableDTypes } from '$lib/constants';
+	import { genTableDTypes, projectIDPattern } from '$lib/constants';
 	import logger from '$lib/logger';
 	import type { GenTableCol, ChatRequest } from '$lib/types';
 
@@ -30,6 +30,7 @@
 			) ?? [];
 	}
 
+	let form: HTMLFormElement;
 	let isLoading = false;
 	let columnName = '';
 	let selectedDatatype = '';
@@ -44,6 +45,11 @@
 		if (!columnName || !selectedDatatype) {
 			return toast.error('Please fill in all fields');
 		}
+
+		if (!projectIDPattern.test(columnName))
+			return toast.error(
+				'Column name must contain only alphanumeric characters and underscores/hyphens/spaces/periods, and start and end with alphanumeric characters'
+			);
 
 		if (isLoading) return;
 		isLoading = true;
@@ -117,7 +123,11 @@
 	>
 		<Dialog.Header>New {isAddingColumn.type} column</Dialog.Header>
 
-		<div class="grow py-3 w-full overflow-auto">
+		<form
+			bind:this={form}
+			on:submit|preventDefault={handleAddColumn}
+			class="grow py-3 w-full overflow-auto"
+		>
 			<div class="flex flex-col gap-2 px-6 pl-8 py-2 w-full text-center">
 				<span class="font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
 					Column ID*
@@ -211,7 +221,7 @@
 						<Range
 							bind:value={maxTokens}
 							min="1"
-							max={$modelsAvailable.find((model) => model.id == selectedModel)?.contextLength ?? 0}
+							max={$modelsAvailable.find((model) => model.id == selectedModel)?.context_length ?? 0}
 							step="1"
 						/>
 					</div>
@@ -281,7 +291,17 @@
 					/>
 				</div>
 			{/if}
-		</div>
+
+			<!-- hidden submit -->
+			<Button
+				type="submit"
+				loading={isLoading}
+				disabled={isLoading}
+				class="hidden relative grow px-6 rounded-full"
+			>
+				Add
+			</Button>
+		</form>
 
 		<Dialog.Actions>
 			<div class="flex gap-2">
@@ -293,7 +313,8 @@
 				<Button
 					type="button"
 					loading={isLoading}
-					on:click={handleAddColumn}
+					disabled={isLoading}
+					on:click={() => form.requestSubmit()}
 					class="relative grow px-6 rounded-full"
 				>
 					Add

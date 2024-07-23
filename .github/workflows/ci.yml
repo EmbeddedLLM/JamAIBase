@@ -28,6 +28,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Inspect git version
+        run: |
+          git --version
+
       - name: Remove cloud-only modules and install Python client
         run: |
           set -e
@@ -89,11 +93,18 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
-          # JAMAI_API_KEY: ${{ secrets.JAMAI_API_KEY }}
           COMPOSE_DOCKER_CLI_BUILD: 1
           DOCKER_BUILDKIT: 1
 
-      - name: Pytest
+      - name: Inspect owl environment
+        run: docker exec jamai_owl pip list
+
+      # - name: Pytest (owl)
+      #   run: |
+      #     set -e
+      #     python -m pytest -vv --doctest-modules --junitxml=junit/test-results-${{ matrix.python-version }}.xml --cov-report=xml services/api/tests
+
+      - name: Pytest (Python client)
         run: |
           set -e
           export JAMAI_API_BASE=http://localhost:6969/api

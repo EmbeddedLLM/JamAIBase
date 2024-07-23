@@ -10,7 +10,7 @@ from fastapi import APIRouter, Header, Query, Request
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
-from jamaibase import protocol as p
+from owl import protocol as p
 from owl.llm import LLMEngine
 from owl.models import CloudEmbedder
 from owl.utils.exceptions import OwlException, ResourceNotFoundError

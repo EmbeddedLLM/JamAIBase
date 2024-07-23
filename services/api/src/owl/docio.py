@@ -5,7 +5,7 @@ from httpx import Timeout
 from langchain.docstore.document import Document
 from loguru import logger
 
-from jamaibase import protocol
+from owl import protocol
 
 HTTP_CLIENT = httpx.Client(transport=httpx.HTTPTransport(retries=3), timeout=Timeout(5 * 60))
 

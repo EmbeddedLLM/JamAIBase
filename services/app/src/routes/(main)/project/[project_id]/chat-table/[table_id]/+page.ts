@@ -1,5 +1,6 @@
 import { PUBLIC_JAMAI_URL } from '$env/static/public';
 import logger from '$lib/logger.js';
+import { chatRowsPerPage } from '$lib/constants.js';
 import type { GenTable, GenTableRow, ChatRequest } from '$lib/types.js';
 
 export const load = async ({ depends, fetch, params, parent, url }) => {
@@ -19,8 +20,8 @@ export const load = async ({ depends, fetch, params, parent, url }) => {
 			fetch(
 				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat/${params.table_id}/rows?` +
 					new URLSearchParams({
-						offset: ((page - 1) * 100).toString(),
-						limit: '100'
+						offset: ((page - 1) * chatRowsPerPage).toString(),
+						limit: chatRowsPerPage.toString()
 					})
 			),
 			fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat/${params.table_id}/thread`)

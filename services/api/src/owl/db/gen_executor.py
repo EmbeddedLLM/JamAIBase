@@ -10,7 +10,10 @@ from fastapi import Request
 from loguru import logger
 from uuid_extensions import uuid7str
 
-from jamaibase.protocol import (
+from owl.db.gen_table import ChatTable, GenerativeTable
+from owl.llm import LLMEngine
+from owl.models import CloudEmbedder
+from owl.protocol import (
     GEN_CONFIG_VAR_PATTERN,
     ChatCompletionChoiceDelta,
     ChatEntry,
@@ -24,9 +27,6 @@ from jamaibase.protocol import (
     RowRegenRequest,
     TableMeta,
 )
-from owl.db.gen_table import ChatTable, GenerativeTable
-from owl.llm import LLMEngine
-from owl.models import CloudEmbedder
 from owl.utils import mask_string
 from owl.utils.exceptions import ResourceNotFoundError
 
@@ -116,6 +116,7 @@ class MultiRowsGenExecutor:
                     await self.queue.put(chunk)
             except Exception:
                 logger.exception(f"Error executing task {tmp_id}: {body_}")
+                await self.queue.put("data: [DONE]\n\n")
         else:
             return await self.executor.gen_row()
 
@@ -204,8 +205,10 @@ class GenExecutor:
     async def gen_row(self) -> Any | GenTableChatCompletionChunks:
         with self.table.create_session() as session:
             meta = session.get(TableMeta, self.table_id)
+
+        col_ids = set(c["id"] for c in meta.cols)
         if self.is_row_add:
-            self.column_dict = self.body.data
+            self.column_dict = {k: v for k, v in self.body.data.items() if k in col_ids}
         else:
             self.column_dict = self.table.get_row(self.table_id, self.row_id)
 
@@ -228,7 +231,11 @@ class GenExecutor:
                     self.column_dict[col_id] = None
                 continue
             if self.is_chat and col_id.lower() == "ai":
-                messages = self.table.get_conversation_thread(self.table_id).thread
+                messages = self.table.get_conversation_thread(
+                    table_id=self.table_id,
+                    row_id="" if self.is_row_add else self.row_id,
+                    include=False,
+                ).thread
                 user_message = self.column_dict["User"]
                 messages.append(ChatEntry.user(content=user_message if user_message else "."))
                 if len(messages) == 0:
@@ -238,12 +245,9 @@ class GenExecutor:
                 Task(col_id, gen_config, is_embed=col["vlen"] > 0, dtype=col["dtype"])
             )
 
-        col_ids = set(c["id"] for c in meta.cols)
         column_dict_keys = set(self.column_dict.keys())
         if len(column_dict_keys - col_ids) > 0:
-            raise ResourceNotFoundError(
-                f"There are unexpected columns: {column_dict_keys - col_ids}"
-            )
+            raise ValueError(f"There are unexpected columns: {column_dict_keys - col_ids}")
 
         if self.body.stream:
             if self.body.concurrent:

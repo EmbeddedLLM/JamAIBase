@@ -2,6 +2,8 @@ import re
 from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from os import listdir
+from os.path import exists
 from pathlib import Path
 from shutil import copytree, move
 from time import perf_counter, sleep
@@ -9,6 +11,7 @@ from typing import Any, Type
 
 import lancedb
 import numpy as np
+import pandas as pd
 import pyarrow as pa
 from filelock import FileLock
 from lancedb.table import LanceTable
@@ -19,9 +22,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from typing_extensions import Self
 from uuid_extensions import uuid7str
 
-from jamaibase import protocol as p
-from jamaibase.utils.io import json_loads
-from owl.config import get_embed_model_info
+from jamaibase.utils.io import df_to_csv, json_loads
+from owl import protocol as p
+from owl.configs.manager import CONFIG
 from owl.db import create_sql_tables, create_sqlite_engine
 from owl.models import CloudEmbedder, CloudReranker
 from owl.utils.exceptions import ResourceExistsError, ResourceNotFoundError, TableSchemaFixedError
@@ -174,30 +177,22 @@ class GenerativeTable:
         parent_id: str | None = None,
     ) -> tuple[list[p.TableMetaResponse], int]:
         selection = self._list_meta_selection(parent_id)
-        # # Validate
-        # metas = []
-        # for meta in session.exec(selection.order_by(desc(p.TableMeta.updated_at))).all():
-        #     try:
-        #         self.open_table(meta.id)
-        #     except ResourceNotFoundError:
-        #         logger.warning(f"Lance table missing: {meta.id}")
-        #         session.delete(meta)
-        #     else:
-        #         metas.append(deepcopy(meta))
-        # session.commit()
-        # meta_responses = []
-        # for meta in metas[offset : offset + limit]:
-        #     num_rows = self.count_rows(meta.id)
-        #     meta_responses.append(
-        #         p.TableMetaResponse.model_validate(meta, update={"num_rows": num_rows})
-        #     )
         total = len(session.exec(selection).all())
         metas = session.exec(
             selection.order_by(desc(p.TableMeta.updated_at)).offset(offset).limit(limit)
         ).all()
         meta_responses = []
         for meta in metas:
-            num_rows = self.count_rows(meta.id)
+            try:
+                num_rows = self.count_rows(meta.id)
+            except Exception:
+                table_path = f"{self.vector_db_url}/{meta.id}.lance"
+                if exists(table_path) and len(listdir(table_path)) > 0:
+                    logger.error(f"Lance table FAILED to be opened: {meta.id}")
+                else:
+                    logger.warning(f"Lance table MISSING, removing metadata: {meta.id}")
+                    session.delete(meta)
+                    continue
             meta_responses.append(
                 p.TableMetaResponse.model_validate(meta, update={"num_rows": num_rows})
             )
@@ -377,7 +372,10 @@ class GenerativeTable:
         return table, meta
 
     def _drop_columns(
-        self, session: Session, table_id: p.TableName, col_names: list[p.Name]
+        self,
+        session: Session,
+        table_id: p.TableName,
+        col_names: list[p.ColName],
     ) -> tuple[LanceTable, p.TableMeta]:
         """
         NOTE: This is broken until lance issue is resolved
@@ -421,7 +419,7 @@ class GenerativeTable:
         return table, meta
 
     def drop_columns(
-        self, session: Session, table_id: p.TableName, col_names: list[p.Name]
+        self, session: Session, table_id: p.TableName, col_names: list[p.ColName]
     ) -> tuple[LanceTable, p.TableMeta]:
         """
         Drops one or more input or output column.
@@ -476,13 +474,13 @@ class GenerativeTable:
         return new_table, new_meta
 
     def rename_columns(
-        self, session: Session, table_id: p.TableName, name_map: dict[p.Name, p.Name]
+        self, session: Session, table_id: p.TableName, name_map: dict[p.ColName, p.ColName]
     ) -> p.TableMeta:
         if self.has_state_col_names(name_map.keys()):
             raise ValueError("Cannot rename state columns.")
         if self.has_info_col_names(name_map.keys()):
             raise ValueError("Cannot rename 'ID' or 'Updated at'.")
-        if not all(re.match(p.NAME_PATTERN, v) for v in name_map.values()):
+        if not all(re.match(p.COL_NAME_PATTERN, v) for v in name_map.values()):
             raise ValueError("`name_map` contains invalid new column names.")
         meta = self.open_meta(session, table_id)
         table = self.open_table(table_id)
@@ -519,7 +517,7 @@ class GenerativeTable:
         return meta
 
     def reorder_columns(
-        self, session: Session, table_id: p.TableName, columns: list[p.Name]
+        self, session: Session, table_id: p.TableName, columns: list[p.ColName]
     ) -> p.TableMeta:
         if self.has_state_col_names(columns):
             raise ValueError("Cannot reorder state columns.")
@@ -560,7 +558,7 @@ class GenerativeTable:
         self,
         session: Session,
         table_id: p.TableName,
-        data: list[dict[p.Name, Any]],
+        data: list[dict[p.ColName, Any]],
         errors: list[list[str]] | None = None,
     ) -> Self:
         if not isinstance(data, list):
@@ -628,12 +626,19 @@ class GenerativeTable:
         col_id: str,
         convert_null: bool,
         include_original: bool,
+        float_decimals: int,
+        vec_decimals: int,
     ):
         state_id = f"{col_id}_"
         data = row[col_id]
         if state_id not in row:
             # Some columns like "ID", "Updated at" do not have state cols
             return data
+        # Process precision
+        if float_decimals > 0 and isinstance(data, float):
+            data = round(data, float_decimals)
+        elif vec_decimals > 0 and isinstance(data, list) and isinstance(data[0], float):
+            data = np.asarray(data).round(vec_decimals).tolist()
         state = row[state_id]
         if state == "" or state is None:
             data = None if convert_null else data
@@ -658,6 +663,8 @@ class GenerativeTable:
         remove_state_cols: bool = False,
         json_safe: bool = False,
         include_original: bool = False,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
     ):
         if json_safe:
             rows = [
@@ -665,7 +672,17 @@ class GenerativeTable:
                 for row in rows
             ]
         rows = [
-            {k: self._process_cell(row, k, convert_null, include_original) for k in row}
+            {
+                k: self._process_cell(
+                    row,
+                    k,
+                    convert_null=convert_null,
+                    include_original=include_original,
+                    float_decimals=float_decimals,
+                    vec_decimals=vec_decimals,
+                )
+                for k in row
+            }
             for row in rows
         ]
         rows = [
@@ -687,6 +704,8 @@ class GenerativeTable:
         remove_state_cols: bool = False,
         json_safe: bool = False,
         include_original: bool = False,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
     ) -> dict[str, Any]:
         table = self.open_table(table_id)
         rows = table.search().where(where=f"`ID` = '{row_id}'", prefilter=True).to_list()
@@ -701,6 +720,8 @@ class GenerativeTable:
             remove_state_cols=remove_state_cols,
             json_safe=json_safe,
             include_original=include_original,
+            float_decimals=float_decimals,
+            vec_decimals=vec_decimals,
         )
         return rows[0]
 
@@ -710,12 +731,14 @@ class GenerativeTable:
         *,
         offset: int = 0,
         limit: int = 1_000,
-        columns: list[p.Name] | None = None,
+        columns: list[p.ColName] | None = None,
         convert_null: bool = True,
         remove_state_cols: bool = False,
         json_safe: bool = False,
         sort_descending: bool = True,
         include_original: bool = False,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:
         table = self.open_table(table_id)
         total = self.count_rows(table_id)
@@ -736,6 +759,8 @@ class GenerativeTable:
                 remove_state_cols=remove_state_cols,
                 json_safe=json_safe,
                 include_original=include_original,
+                float_decimals=float_decimals,
+                vec_decimals=vec_decimals,
             )
         return rows, total
 
@@ -750,10 +775,21 @@ class GenerativeTable:
             session.commit()
         return self
 
-    def delete_rows(self, session: Session, table_id: p.TableName, where: str) -> Self:
+    def delete_rows(
+        self,
+        session: Session,
+        table_id: p.TableName,
+        row_ids: list[str] | None = None,
+        where: str | None = "",
+    ) -> Self:
+        if row_ids is None:
+            row_ids = []
         with self.lock(table_id):
             table = self.open_table(table_id)
-            table.delete(where)
+            for row_id in row_ids:
+                table.delete(f"`ID` = '{row_id}'")
+            if where:
+                table.delete(where)
             # Update metadata
             meta = self.open_meta(session, table_id)
             meta.updated_at = datetime.now(timezone.utc).isoformat()
@@ -761,9 +797,87 @@ class GenerativeTable:
             session.commit()
         return self
 
-    @staticmethod
+    def export_csv(
+        self,
+        table_id: p.TableName,
+        columns: list[p.ColName] | None = None,
+        file_path: str = "",
+        delimiter: p.CSVDelimiter | str = p.CSVDelimiter.comma,
+    ) -> pd.DataFrame:
+        if isinstance(delimiter, str):
+            try:
+                delimiter = p.CSVDelimiter[delimiter]
+            except KeyError:
+                raise ValueError(f'Delimiter can only be "," or "\\t", received: {delimiter}')
+        rows, total = self.list_rows(
+            table_id=table_id,
+            offset=0,
+            limit=self.count_rows(table_id),
+            columns=columns,
+            convert_null=True,
+            remove_state_cols=True,
+            json_safe=True,
+            sort_descending=False,
+            include_original=False,
+            float_decimals=0,
+            vec_decimals=0,
+        )
+        df = pd.DataFrame.from_dict(rows, orient="columns", dtype=None, columns=None)
+        if len(df) != total:
+            logger.error(
+                f"Table {table_id} has {total:,d} rows but exported DF has {len(df):,d} rows !!!"
+            )
+        if file_path == "":
+            return df
+        if delimiter == p.CSVDelimiter.comma and not file_path.endswith(".csv"):
+            file_path = f"{file_path}.csv"
+        elif delimiter == p.CSVDelimiter.tab and not file_path.endswith(".tsv"):
+            file_path = f"{file_path}.tsv"
+        df_to_csv(df, file_path, sep=delimiter.value)
+        return df
+
+    def dump_parquet(
+        self,
+        session: Session,
+        table_id: p.TableName,
+        file_path: str,
+    ) -> None:
+        from pyarrow.parquet import write_table
+
+        with self.lock(table_id):
+            meta = self.open_meta(session, table_id)
+            table = self.open_table(table_id)
+            pa_table = table._dataset.to_table(offset=None, limit=None)
+            pa_meta = {} if pa_table.schema.metadata is None else pa_table.schema.metadata
+            pa_table = pa_table.replace_schema_metadata(
+                {"gen_table_meta": meta.model_dump_json(), **pa_meta}
+            )
+            if not file_path.endswith(".parquet"):
+                file_path = f"{file_path}.parquet"
+            write_table(pa_table, file_path)
+
+    def import_parquet(
+        self,
+        session: Session,
+        file_path: str,
+        table_id_dst: str,
+    ) -> tuple[LanceTable, p.TableMeta]:
+        from pyarrow.parquet import read_table
+
+        pa_table = read_table(file_path)
+        meta = p.TableMeta.model_validate_json(pa_table.schema.metadata[b"gen_table_meta"])
+        meta.id = table_id_dst
+        session.add(meta)
+        session.commit()
+        session.refresh(meta)
+        table = self.lance_db.create_table(meta.id, data=pa_table, schema=pa_table.schema)
+        return table, meta
+
     @retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(4))
     def _run_query(
+        self,
+        session: Session,
+        table_id: p.TableName,
         table: LanceTable,
         query: np.ndarray | list | str | None = None,
         column_name: str | None = None,
@@ -797,7 +911,15 @@ class GenerativeTable:
             )
         if where:
             query_builder = query_builder.where(where, prefilter=True)
-        return query_builder.limit(limit).to_list()
+        try:
+            results = query_builder.limit(limit).to_list()
+        except ValueError:
+            logger.exception("Failed to perform search !!! Attempting index rebuild")
+            index_ok = self.create_indexes(session, table_id, force=True)
+            if not index_ok:
+                logger.error("Failed to reindex !!!")
+            results = query_builder.limit(limit).to_list()
+        return results
 
     @staticmethod
     def _reciprocal_rank_fusion(
@@ -810,7 +932,7 @@ class GenerativeTable:
             result_key: dict key of the search result
             K: const (def=60) for reciprocal rank fusion
         Return:
-            A list of dict of originial result with the rrf scores (higher scroes, higher ranking)
+            A list of dict of original result with the rrf scores (higher scores, higher ranking)
         """
         rrf_scores = defaultdict(lambda: {"rrf_score": 0.0})
         for search_result in search_results:
@@ -821,6 +943,52 @@ class GenerativeTable:
         sorted_rrf = sorted(rrf_scores.values(), key=lambda x: x["rrf_score"], reverse=True)
         return sorted_rrf
 
+    def fts_search(
+        self,
+        session: Session,
+        table_id: p.TableName,
+        query: str | None,
+        *,
+        where: str | None = None,
+        columns: list[p.ColName] | None = None,
+        convert_null: bool = True,
+        remove_state_cols: bool = False,
+        json_safe: bool = False,
+        include_original: bool = False,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
+    ) -> list[dict[str, Any]]:
+        table, meta = self.open_table_meta(session, table_id)
+        if self.count_rows(table_id) == 0:
+            return []
+        if not isinstance(query, str):
+            raise TypeError(f"`query` must be string, received: {type(query)}")
+        rows = []
+        # 2024-06 (BUG?): lance fts works on all indexed cols at once (can't specify the col to be searched)
+        # Thus no need to loop through indexed col one by one
+        if len(self.fts_cols(meta)) > 0:
+            t1 = perf_counter()
+            rows = self._run_query(
+                session=session,
+                table_id=table_id,
+                table=table,
+                query=re.sub(r"[^\w\s]", "", query).replace("\n", " "),
+                where=where,
+                limit=1_000_000,
+            )
+            logger.info(f"FTS search timings: {perf_counter() - t1:,.3f}")
+        rows = self._post_process_rows(
+            rows,
+            columns=columns,
+            convert_null=convert_null,
+            remove_state_cols=remove_state_cols,
+            json_safe=json_safe,
+            include_original=include_original,
+            float_decimals=float_decimals,
+            vec_decimals=vec_decimals,
+        )
+        return rows
+
     def hybrid_search(
         self,
         session: Session,
@@ -829,7 +997,7 @@ class GenerativeTable:
         *,
         where: str | None = None,
         limit: p.PositiveInt = 100,
-        columns: list[p.Name] | None = None,
+        columns: list[p.ColName] | None = None,
         metric: str = "cosine",
         nprobes: p.PositiveInt = 50,
         refine_factor: p.PositiveInt = 20,
@@ -838,6 +1006,8 @@ class GenerativeTable:
         remove_state_cols: bool = False,
         json_safe: bool = False,
         include_original: bool = False,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
         openai_api_key: str = "",
         anthropic_api_key: str = "",
         gemini_api_key: str = "",
@@ -859,22 +1029,26 @@ class GenerativeTable:
         if query is None:
             t1 = perf_counter()
             rows = self._run_query(
+                session=session,
+                table_id=table_id,
                 table=table,
                 query=None,
                 column_name=None,
                 where=where,
                 limit=limit,
             )
-            timings["No query search"] = perf_counter() - t1
+            timings["no_query"] = perf_counter() - t1
         else:
             if not isinstance(query, str):
                 raise TypeError(f"`query` must be string, received: {type(query)}")
             search_results = []
             # 2024-06 (BUG?): lance fts works on all indexed cols at once (can't specify the col to be searched)
             # Thus no need to loop through indexed col one by one
-            if self.fts_cols(meta):
+            if len(self.fts_cols(meta)) > 0:
                 t1 = perf_counter()
                 fts_result = self._run_query(
+                    session=session,
+                    table_id=table_id,
                     table=table,
                     query=re.sub(r"[^\w\s]", "", query).replace("\n", " "),
                     # column_name=c.id,
@@ -909,6 +1083,8 @@ class GenerativeTable:
                 timings[f"Embed ({gen_config.embedding_model}): {c.id}"] = perf_counter() - t1
                 t1 = perf_counter()
                 sub_rows = self._run_query(
+                    session=session,
+                    table_id=table_id,
                     table=table,
                     query=embedding,
                     column_name=c.id,
@@ -961,6 +1137,8 @@ class GenerativeTable:
             remove_state_cols=remove_state_cols,
             json_safe=json_safe,
             include_original=include_original,
+            float_decimals=float_decimals,
+            vec_decimals=vec_decimals,
         )
         timings["Total"] = perf_counter() - t0
         timings = {k: f"{v:,.3f}" for k, v in timings.items()}
@@ -978,38 +1156,54 @@ class GenerativeTable:
             c for c in meta.cols_schema if c.dtype == p.DtypeEnum.str_ and c.id.lower() != "id"
         ]
 
-    def create_fts_index(self, session: Session, table_id: p.TableName) -> bool:
-        meta = self.open_meta(session, table_id)
-        if meta.indexed_at_fts is not None and meta.indexed_at_fts > meta.updated_at:
-            return False
-        table = self.open_table(table_id)
-        num_rows = table.count_rows()
-        if num_rows == 0:
-            return False
+    def create_fts_index(
+        self,
+        session: Session,
+        table_id: p.TableName,
+        *,
+        force: bool = False,
+    ) -> bool:
+        table, meta = self.open_table_meta(session, table_id)
         fts_cols = [c.id for c in self.fts_cols(meta)]
-        if len(fts_cols) == 0:
-            return False
+        if not force:
+            # Maybe can skip reindexing
+            if meta.indexed_at_fts is not None and meta.indexed_at_fts > meta.updated_at:
+                return False
+            num_rows = table.count_rows()
+            if num_rows == 0:
+                return False
+            if len(fts_cols) == 0:
+                return False
+        index_datetime = datetime.now(timezone.utc).isoformat()
         with self.lock(table_id):
             table.create_fts_index(fts_cols, replace=True)
             # Update metadata
-            meta.indexed_at_fts = datetime.now(timezone.utc).isoformat()
+            meta.indexed_at_fts = index_datetime
             session.add(meta)
             session.commit()
         return True
 
-    def create_scalar_index(self, session: Session, table_id: p.TableName) -> bool:
-        meta = self.open_meta(session, table_id)
-        if meta.indexed_at_sca is not None and meta.indexed_at_sca > meta.updated_at:
-            return False
-        table = self.open_table(table_id)
-        num_rows = table.count_rows()
-        if num_rows == 0:
-            return False
+    def create_scalar_index(
+        self,
+        session: Session,
+        table_id: p.TableName,
+        *,
+        force: bool = False,
+    ) -> bool:
+        table, meta = self.open_table_meta(session, table_id)
+        if not force:
+            # Maybe can skip reindexing
+            if meta.indexed_at_sca is not None and meta.indexed_at_sca > meta.updated_at:
+                return False
+            num_rows = table.count_rows()
+            if num_rows == 0:
+                return False
+        index_datetime = datetime.now(timezone.utc).isoformat()
         for c in self.scalar_cols(meta):
             with self.lock(table_id):
                 table.create_scalar_index(c.id, replace=True)
         # Update metadata
-        meta.indexed_at_sca = datetime.now(timezone.utc).isoformat()
+        meta.indexed_at_sca = index_datetime
         session.add(meta)
         session.commit()
         return True
@@ -1018,6 +1212,8 @@ class GenerativeTable:
         self,
         session: Session,
         table_id: p.TableName,
+        force: bool = False,
+        *,
         metric: str = "cosine",
         num_partitions: int | None = None,
         num_sub_vectors: int | None = None,
@@ -1031,6 +1227,7 @@ class GenerativeTable:
         Args:
             session (Session): SQLAlchemy session.
             table_id (TableName): Table ID.
+            force (bool, optional): If True, force reindex. Defaults to False.
             metric (str, optional): The distance metric type.
                 "L2" (alias to "euclidean"), "cosine" or "dot" (dot product). Defaults to "dot".
             num_partitions (int, optional): The number of IVF partitions to create.
@@ -1051,17 +1248,20 @@ class GenerativeTable:
                 Accepted accelerator: "cuda" (Nvidia GPU) and "mps" (Apple Silicon GPU).
                 If not set, use the CPU. Defaults to None.
             index_cache_size (int | None, optional): The size of the index cache in number of entries. Defaults to None.
+            index_cache_size (int | None, optional): The size of the index cache in number of entries. Defaults to None.
 
         Returns:
             reindexed (bool): Whether the reindex operation is performed.
         """
-        meta = self.open_meta(session, table_id)
-        if meta.indexed_at_vec is not None and meta.indexed_at_vec > meta.updated_at:
-            return False
-        table = self.open_table(table_id)
-        num_rows = table.count_rows()
-        if num_rows < 10_000:
-            return False
+        table, meta = self.open_table_meta(session, table_id)
+        if not force:
+            # Maybe can skip reindexing
+            if meta.indexed_at_vec is not None and meta.indexed_at_vec > meta.updated_at:
+                return False
+            num_rows = table.count_rows()
+            if num_rows < 10_000:
+                return False
+        index_datetime = datetime.now(timezone.utc).isoformat()
         num_partitions = num_partitions or max(1, int(np.sqrt(num_rows)))
         for c in self.embedding_cols(meta):
             if num_sub_vectors is None:
@@ -1082,18 +1282,34 @@ class GenerativeTable:
                     index_cache_size=index_cache_size,
                 )
         # Update metadata
-        meta.indexed_at_vec = datetime.now(timezone.utc).isoformat()
+        meta.indexed_at_vec = index_datetime
         session.add(meta)
         session.commit()
         return True
 
-    def create_indexes(self, session: Session, table_id: p.TableName) -> bool:
+    def create_indexes(
+        self,
+        session: Session,
+        table_id: p.TableName,
+        *,
+        force: bool = False,
+    ) -> bool:
+        """_summary_
+
+        Args:
+            session (Session): SQLAlchemy session.
+            table_id (TableName): Table ID.
+            force (bool, optional): If True, force reindex. Defaults to False.
+
+        Returns:
+            index_ok (bool): Whether at least one reindexing operation is performed.
+        """
         t0 = perf_counter()
-        sca_reindexed = self.create_scalar_index(session, table_id)
+        sca_reindexed = self.create_scalar_index(session, table_id, force=force)
         t1 = perf_counter()
-        fts_reindexed = self.create_fts_index(session, table_id)
+        fts_reindexed = self.create_fts_index(session, table_id, force=force)
         t2 = perf_counter()
-        vec_reindexed = self.create_vector_index(session, table_id)
+        vec_reindexed = self.create_vector_index(session, table_id, force=force)
         t3 = perf_counter()
         timings = []
         if sca_reindexed:
@@ -1163,7 +1379,7 @@ class KnowledgeTable(GenerativeTable):
                     # 2024-05-21, lance 0.6.13, pylance 0.10.12
                     # https://github.com/lancedb/lancedb/issues/1312
                     dtype=p.DtypeEnum.float32,
-                    vlen=get_embed_model_info(schema.embedding_model).embedding_size,
+                    vlen=CONFIG.get_embed_model_info(schema.embedding_model).embedding_size,
                     gen_config={
                         "embedding_model": schema.embedding_model,
                         "source_column": "Title",
@@ -1173,7 +1389,7 @@ class KnowledgeTable(GenerativeTable):
                 p.ColumnSchema(
                     id="Text Embed",
                     dtype=p.DtypeEnum.float32,
-                    vlen=get_embed_model_info(schema.embedding_model).embedding_size,
+                    vlen=CONFIG.get_embed_model_info(schema.embedding_model).embedding_size,
                     gen_config={
                         "embedding_model": schema.embedding_model,
                         "source_column": "Text",
@@ -1224,7 +1440,7 @@ class KnowledgeTable(GenerativeTable):
         return super().add_columns(session, schema)
 
     def drop_columns(
-        self, session: Session, table_id: p.TableName, col_names: list[p.Name]
+        self, session: Session, table_id: p.TableName, col_names: list[p.ColName]
     ) -> tuple[LanceTable, p.TableMeta]:
         """
         Drops one or more input or output column.
@@ -1252,7 +1468,7 @@ class KnowledgeTable(GenerativeTable):
         return super().drop_columns(session, table_id, col_names)
 
     def rename_columns(
-        self, session: Session, table_id: p.TableName, name_map: dict[p.Name, p.Name]
+        self, session: Session, table_id: p.TableName, name_map: dict[p.ColName, p.ColName]
     ) -> p.TableMeta:
         if sum(n.lower() in ("text", "text embed", "title", "title embed") for n in name_map) > 0:
             raise TableSchemaFixedError(
@@ -1324,7 +1540,7 @@ class ChatTable(GenerativeTable):
         return super().add_columns(session, schema)
 
     def drop_columns(
-        self, session: Session, table_id: p.TableName, col_names: list[p.Name]
+        self, session: Session, table_id: p.TableName, col_names: list[p.ColName]
     ) -> tuple[LanceTable, p.TableMeta]:
         """
         Drops one or more input or output column.
@@ -1363,7 +1579,7 @@ class ChatTable(GenerativeTable):
         return super().update_gen_config(session, updates)
 
     def rename_columns(
-        self, session: Session, table_id: p.TableName, name_map: dict[p.Name, p.Name]
+        self, session: Session, table_id: p.TableName, name_map: dict[p.ColName, p.ColName]
     ) -> p.TableMeta:
         if sum(n.lower() in ("user", "ai") for n in name_map) > 0:
             raise TableSchemaFixedError("Cannot rename 'User' or 'AI'.")
@@ -1384,7 +1600,12 @@ class ChatTable(GenerativeTable):
             selection = select(p.TableMeta).where(p.TableMeta.parent_id == parent_id)
         return selection
 
-    def get_conversation_thread(self, table_id: p.TableName) -> p.ChatThread:
+    def get_conversation_thread(
+        self,
+        table_id: p.TableName,
+        row_id: str = "",
+        include: bool = True,
+    ) -> p.ChatThread:
         rows, _ = self.list_rows(
             table_id=table_id,
             offset=0,
@@ -1394,7 +1615,15 @@ class ChatTable(GenerativeTable):
             remove_state_cols=True,
             json_safe=True,
             sort_descending=False,
+            float_decimals=0,
+            vec_decimals=0,
         )
+        if row_id:
+            row_ids = [r["ID"] for r in rows]
+            try:
+                rows = rows[: row_ids.index(row_id) + (1 if include else 0)]
+            except ValueError:
+                raise ValueError(f'Row ID "{row_id}" not found in table "{table_id}".')
         with self.create_session() as session:
             meta = self.open_meta(session, table_id)
         ai_col = [c for c in meta.cols if c["id"] == "AI"][0]

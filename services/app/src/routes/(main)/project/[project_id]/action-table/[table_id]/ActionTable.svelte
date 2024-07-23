@@ -9,16 +9,15 @@
 	import type { PageData } from './$types';
 	import type { GenTable, GenTableCol, GenTableRow } from '$lib/types';
 
+	import { NewRow } from '../../(components)';
 	import Checkbox from '$lib/components/Checkbox.svelte';
 	import Portal from '$lib/components/Portal.svelte';
 	import { toast } from 'svelte-sonner';
 	import FoundProjectOrgSwitcher from '$lib/components/preset/FoundProjectOrgSwitcher.svelte';
+	import RowStreamIndicator from '$lib/components/preset/RowStreamIndicator.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import * as Pagination from '$lib/components/ui/pagination';
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
-	import ArrowLeftIcon from '$lib/icons/ArrowLeftIcon.svelte';
-	import ArrowRightIcon from '$lib/icons/ArrowRightIcon.svelte';
 	import MoreVertIcon from '$lib/icons/MoreVertIcon.svelte';
 	import TuneIcon from '$lib/icons/TuneIcon.svelte';
 	import EditIcon from '$lib/icons/EditIcon.svelte';
@@ -30,10 +29,6 @@
 	export let streamingRows: Record<string, boolean>;
 	export let isColumnSettingsOpen: { column: any; showMenu: boolean };
 	export let isDeletingColumn: string | null;
-
-	$: count = table?.total_rows ?? 0;
-	$: perPage = 100;
-	$: currentPage = parseInt($page.url.searchParams.get('page') ?? '1');
 
 	function refetchTable() {
 		//? Don't refetch while streaming
@@ -93,7 +88,7 @@
 			isRenamingColumn = column.id;
 		} else {
 			dblClickTimer = setTimeout(() => {
-				if (column.id !== 'ID' && column.id !== 'Updated at') {
+				if (column.id !== 'ID' && column.id !== 'Updated at' && column.gen_config) {
 					isColumnSettingsOpen = { column, showMenu: true };
 				}
 				dblClickTimer = null;
@@ -257,18 +252,16 @@
 	<div inert={isColumnSettingsOpen.showMenu} class="grow flex flex-col w-full min-h-0">
 		<div
 			on:scroll={(e) => {
+				//? Used to prevent elements showing through the padding between side nav and table header
+				//FIXME: Use transform for performance
 				const el = document.getElementById('checkbox-bg-obscure');
 				if (el) {
-					if (e.currentTarget.scrollLeft > 70) {
-						el.style.left = '-16px';
-					} else {
-						el.style.left = '0px';
-					}
+					el.style.left = `-${e.currentTarget.scrollLeft > 20 ? 20 : e.currentTarget.scrollLeft}px`;
 				}
 			}}
 			role="grid"
-			style="grid-template-rows: 46px repeat({$genTableRows.length}, min-content);"
-			class="grow relative grid px-4 overflow-auto"
+			style="grid-template-rows: 40px repeat({$genTableRows.length + 1}, min-content);"
+			class="grow relative grid px-2 overflow-auto"
 		>
 			<div
 				role="row"
@@ -278,15 +271,20 @@
 					: '130px'} {tableData.cols.length - 2 !== 0
 					? `repeat(${tableData.cols.length - 2}, minmax(320px, 1fr))`
 					: ''};"
-				class="sticky top-0 z-20 h-[46px] grid text-sm border border-[#E5E5E5] data-dark:border-[#333] rounded-lg bg-white data-dark:bg-[#42464E] transition-[grid-template-columns] duration-200"
+				class="sticky top-0 z-20 h-[40px] grid text-sm border border-[#E4E7EC] data-dark:border-[#333] rounded-lg bg-white data-dark:bg-[#42464E] transition-[grid-template-columns] duration-200"
 			>
+				<!-- Obscure padding between header and side nav bar -->
+				<div
+					class="absolute -z-0 -top-[1px] -left-[9px] h-[41px] w-4 bg-[#FAFBFC] data-dark:bg-[#1E2024]"
+				/>
+
 				<div
 					role="columnheader"
-					class="sticky left-0 z-0 flex items-center justify-center px-4 py-3 bg-white data-dark:bg-[#42464E] rounded-l-lg"
+					class="sticky left-0 z-0 flex items-center justify-center px-2 bg-white data-dark:bg-[#42464E] border-r border-[#E4E7EC] data-dark:border-[#333] rounded-l-lg"
 				>
 					<div
 						id="checkbox-bg-obscure"
-						class="absolute -z-10 top-[1px] -left-0 h-[calc(100%_-_2px)] w-full bg-white data-dark:bg-[#42464E] rounded-l-lg"
+						class="absolute -z-10 -top-[1px] -left-0 h-[40px] w-full bg-white data-dark:bg-[#42464E] border-l border-t border-b border-[#E4E7EC] data-dark:border-[#333] rounded-l-lg"
 					/>
 					<Checkbox
 						on:checkedChange={() => {
@@ -320,7 +318,7 @@
 								hoveredColumnIndex = index;
 							}
 						}}
-						class="flex items-center gap-2 pl-3 pr-5 py-2 cursor-default {isColumnSettingsOpen
+						class="flex items-center gap-2 px-2 cursor-default [&:not(:last-child)]:border-r border-[#E4E7EC] data-dark:border-[#333] {isColumnSettingsOpen
 							.column?.id == column.id && isColumnSettingsOpen.showMenu
 							? 'bg-[#30A8FF33]'
 							: ''} {draggingColumn?.id == column.id ? 'opacity-0' : ''}"
@@ -397,7 +395,11 @@
 								class="w-full bg-transparent border-0 outline outline-1 outline-[#4169e1] data-dark:outline-[#5b7ee5] rounded-[2px]"
 							/>
 						{:else}
-							<span class="w-full font-medium text-[#666] data-dark:text-white line-clamp-1">
+							<span
+								class="w-full font-medium {column.id === 'ID' || column.id === 'Updated at'
+									? 'text-[#98A2B3]'
+									: 'text-[#666] data-dark:text-white'} line-clamp-1 break-all"
+							>
 								{column.id}
 							</span>
 						{/if}
@@ -416,15 +418,17 @@
 									</Button>
 								</DropdownMenu.Trigger>
 								<DropdownMenu.Content alignOffset={-65} transitionConfig={{ x: 5, y: -5 }}>
-									<DropdownMenu.Group>
-										<DropdownMenu.Item
-											on:click={() => (isColumnSettingsOpen = { column, showMenu: true })}
-										>
-											<TuneIcon class="h-4 w-4 mr-2 mb-[1px]" />
-											<span>Open settings</span>
-										</DropdownMenu.Item>
-									</DropdownMenu.Group>
-									<DropdownMenu.Separator />
+									{#if colType === 'output'}
+										<DropdownMenu.Group>
+											<DropdownMenu.Item
+												on:click={() => (isColumnSettingsOpen = { column, showMenu: true })}
+											>
+												<TuneIcon class="h-4 w-4 mr-2 mb-[1px]" />
+												<span>Open settings</span>
+											</DropdownMenu.Item>
+										</DropdownMenu.Group>
+										<DropdownMenu.Separator />
+									{/if}
 									<DropdownMenu.Group>
 										<DropdownMenu.Item
 											on:click={async () => {
@@ -448,14 +452,16 @@
 				{/each}
 			</div>
 
+			<NewRow tableType="action" bind:streamingRows {tableData} {focusedCol} {refetchTable} />
+
 			<!-- Bandaid fix for no scrolling when no rows -->
 			<div
 				style="grid-template-columns: 60px 120px 130px repeat({tableData.cols.length -
 					2}, minmax(320px, 1fr));"
-				class="z-0 grid place-items-start h-[1px] max-h-[150px] text-sm pointer-events-none invisible"
+				class="z-0 grid place-items-start h-0 max-h-[150px] text-sm pointer-events-none invisible"
 			/>
 
-			{#each $genTableRows as row (row.ID)}
+			{#each $genTableRows as row}
 				<div
 					role="row"
 					style="grid-template-columns: 60px {focusedCol === 'ID'
@@ -465,18 +471,25 @@
 					0
 						? `repeat(${tableData.cols.length - 2}, minmax(320px, 1fr))`
 						: ''};"
-					class="relative z-0 grid place-items-start h-min max-h-[150px] text-sm transition-[border-color,grid-template-columns] duration-200 {streamingRows[
-						row.ID
-					]
-						? 'border border-blink-secondary'
-						: 'border-l border-l-transparent data-dark:border-l-transparent border-r border-r-transparent data-dark:border-r-transparent border-b border-[#E5E5E5] data-dark:border-[#333]'}"
+					class="relative z-0 grid place-items-start h-min max-h-[150px] text-sm transition-[border-color,grid-template-columns] duration-200 border-l border-l-transparent data-dark:border-l-transparent border-r border-r-transparent data-dark:border-r-transparent border-b border-[#E4E7EC] data-dark:border-[#333]"
 				>
 					<div
 						role="gridcell"
-						class="sticky left-0 flex justify-center px-4 py-2 h-full w-full border-r border-[#E5E5E5] data-dark:border-[#333]"
+						class="sticky left-0 flex justify-center p-2 h-full w-full border-r border-[#E4E7EC] data-dark:border-[#333]"
 					>
+						<!-- Streaming row colored part -->
+						{#if streamingRows[row.ID]}
+							<div
+								class="absolute -z-[1] -top-[1px] -left-[9px] h-[calc(100%_+_2px)] w-1.5 bg-[#F2839F]"
+							/>
+						{/if}
+
 						<div
-							class="absolute -z-10 top-0 -left-4 h-full w-[calc(100%_+_16px)] bg-[#FAFBFC] data-dark:bg-[#1E2024]"
+							class="absolute -z-10 top-0 -left-4 h-full w-[calc(100%_+_16px)] {streamingRows[
+								row.ID
+							]
+								? 'bg-[#FDEFF4]'
+								: 'bg-[#FAFBFC] data-dark:bg-[#1E2024]'}"
 						/>
 						<Checkbox
 							on:checkedChange={(e) => handleSelectRow(e, row)}
@@ -507,18 +520,21 @@
 									isEditingCell = { rowID: row.ID, columnID: column.id };
 								}
 							}}
-							class="flex justify-start {editMode
+							style={isColumnSettingsOpen.column?.id == column.id && isColumnSettingsOpen.showMenu
+								? 'background-color: #30A8FF17;'
+								: ''}
+							class="flex flex-col justify-start gap-1 {editMode
 								? 'p-0 bg-black/5 data-dark:bg-white/5'
-								: 'px-4 py-2 overflow-auto whitespace-pre-line'} h-full max-h-[149px] w-full break-words {isColumnSettingsOpen
-								.column?.id == column.id && isColumnSettingsOpen.showMenu
-								? 'bg-[#30A8FF17]'
-								: ''} hover:bg-black/5 data-dark:hover:bg-white/5 {streamingRows[row.ID] &&
-							column.id !== 'ID' &&
-							column.id !== 'Updated at' &&
-							column.gen_config
-								? 'response-cursor'
-								: ''}"
+								: 'p-2 overflow-auto whitespace-pre-line'} h-full max-h-[149px] w-full break-words {streamingRows[
+								row.ID
+							]
+								? 'bg-[#FDEFF4]'
+								: 'hover:bg-black/5 data-dark:hover:bg-white/5'} [&:not(:last-child)]:border-r border-[#E4E7EC] data-dark:border-[#333]"
 						>
+							{#if streamingRows[row.ID] && !editMode && column.id !== 'ID' && column.id !== 'Updated at' && column.gen_config}
+								<RowStreamIndicator />
+							{/if}
+
 							{#if editMode}
 								<!-- svelte-ignore a11y-autofocus -->
 								<textarea
@@ -534,18 +550,18 @@
 										}
 									}}
 									on:blur={() => (isEditingCell = null)}
-									class="min-h-[150px] h-full w-full px-4 py-2 bg-transparent outline outline-secondary resize-none"
+									class="min-h-[150px] h-full w-full p-2 bg-transparent outline outline-secondary resize-none"
 								/>
 							{:else}
 								<span
 									class="h-min {column.id === 'ID' || column.id === 'Updated at'
-										? 'line-clamp-1'
-										: ''}"
+										? 'text-[#667085] line-clamp-1 break-all'
+										: 'text-text'}"
 								>
 									{#if column.id === 'ID'}
 										{row[column.id]}
 									{:else if column.id === 'Updated at'}
-										{new Date(row[column.id]).toLocaleString()}
+										{new Date(row[column.id]).toISOString()}
 									{:else}
 										{row[column.id]?.value === undefined ? '' : row[column.id].value}
 									{/if}
@@ -556,71 +572,6 @@
 				</div>
 			{/each}
 		</div>
-	</div>
-
-	<div
-		inert={isColumnSettingsOpen.showMenu}
-		class="flex items-center justify-between px-4 py-3 min-h-[55px] border-t border-[#E5E5E5] data-dark:border-[#333]"
-	>
-		<div class="flex items-end gap-6">
-			<span class="text-sm font-medium text-[#666] data-dark:text-white">
-				Showing {count == 0 ? 0 : perPage * currentPage - perPage + 1}-{perPage * currentPage >
-				count
-					? count
-					: perPage * currentPage} of {count} rows
-			</span>
-
-			{#if selectedRows.length}
-				<span class="text-xs font-medium text-[#666] data-dark:text-white">
-					Selected {selectedRows.length} rows
-				</span>
-			{/if}
-		</div>
-
-		{#if count > 0}
-			<Pagination.Root page={currentPage} {count} {perPage} let:pages class="w-[unset] mx-0">
-				<Pagination.Content>
-					<Pagination.Item>
-						<Pagination.PrevButton asChild class="!mt-1 [all:unset] hover:[all:unset]">
-							<a
-								href="?page={currentPage - 1}"
-								class="inline-flex items-center justify-center rounded-md text-sm font-medium whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-6 w-6"
-							>
-								<ArrowLeftIcon class="h-4 w-4" />
-							</a>
-						</Pagination.PrevButton>
-					</Pagination.Item>
-					{#each pages as page (page.key)}
-						{#if page.type === 'ellipsis'}
-							<Pagination.Item>
-								<Pagination.Ellipsis />
-							</Pagination.Item>
-						{:else}
-							<Pagination.Item>
-								<Pagination.Link asChild isActive={currentPage === page.value} {page}>
-									<a
-										href="?page={page.value}"
-										class="inline-flex items-center justify-center rounded-md text-sm font-medium whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-6 w-6"
-									>
-										{page.value}
-									</a>
-								</Pagination.Link>
-							</Pagination.Item>
-						{/if}
-					{/each}
-					<Pagination.Item>
-						<Pagination.NextButton asChild class="!mt-1 [all:unset] hover:[all:unset]">
-							<a
-								href="?page={currentPage + 1}"
-								class="inline-flex items-center justify-center rounded-md text-sm font-medium whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-6 w-6"
-							>
-								<ArrowRightIcon class="h-4 w-4" />
-							</a>
-						</Pagination.NextButton>
-					</Pagination.Item>
-				</Pagination.Content>
-			</Pagination.Root>
-		{/if}
 	</div>
 {:else if table && table.error == 404}
 	{#if table.message.tableData.org_id && userData?.organizations.find((org) => org.organization_id === table.message.tableData?.org_id)}
@@ -636,7 +587,7 @@
 {:else if table && table.error}
 	<div class="flex flex-col items-center justify-center gap-2 self-center h-full max-w-[50%]">
 		<p class="font-medium text-xl">{table.error} Failed to load table</p>
-		<p class="text-sm text-[#999]">{table.message}</p>
+		<p class="text-sm text-[#999]">{JSON.stringify(table.message)}</p>
 	</div>
 {:else}
 	<div class="flex items-center justify-center h-full">
@@ -653,20 +604,27 @@
 			style="top: {dragMouseCoords.y - dragMouseCoords.startY - 15}px; left: {dragMouseCoords.x -
 				dragMouseCoords.startX -
 				15}px; width: {dragMouseCoords.width}px;"
-			class="absolute z-[9999] flex items-center gap-2 pl-4 pr-5 py-2 bg-white data-dark:bg-[#42464E] pointer-events-none"
+			class="absolute z-[9999] flex items-center gap-2 px-2 h-[40px] bg-white data-dark:bg-[#42464E] border border-[#E4E7EC] data-dark:border-[#333] pointer-events-none"
 		>
 			<button>
 				<GripVertical size={18} />
 			</button>
 
 			<span
-				style="background-color: {colType === 'input' ? '#CFE8FF' : '#FFE3CF'}; color: {colType ===
+				style="background-color: {colType === 'input' ? '#E9EDFA' : '#FFEAD5'}; color: {colType ===
 				'input'
-					? '#3A73B6'
-					: '#B6843A'};"
-				class="w-min px-1 py-0.5 capitalize text-xs font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
+					? '#6686E7'
+					: '#FD853A'};"
+				class="w-min p-0.5 py-1 whitespace-nowrap rounded-[0.1875rem] select-none flex items-center"
 			>
-				{colType}
+				<span class="capitalize text-xs font-medium px-1">
+					{colType}
+				</span>
+				<span
+					class="bg-white w-min px-1 text-xs font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
+				>
+					{draggingColumn.dtype}
+				</span>
 			</span>
 
 			<span class="font-medium text-sm text-[#666] data-dark:text-white line-clamp-1">

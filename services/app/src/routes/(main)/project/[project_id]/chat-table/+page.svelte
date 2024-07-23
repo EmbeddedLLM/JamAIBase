@@ -1,37 +1,51 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { onMount } from 'svelte';
+	import debounce from 'lodash/debounce';
 	import { page } from '$app/stores';
 	import { pastChatAgents, pastChatConversations } from '../tablesStore';
 	import logger from '$lib/logger';
 
-	import { DeleteDialogs } from '../(dialogs)';
-	import { AddAgentDialog, AddConversationDialog } from './[table_id]/(dialogs)';
+	import { AddAgentDialog, AddConversationDialog } from './(dialogs)';
+	import { DeleteTableDialog, RenameTableDialog } from '../(dialogs)';
 	import { toast } from 'svelte-sonner';
 	import FoundProjectOrgSwitcher from '$lib/components/preset/FoundProjectOrgSwitcher.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Skeleton } from '$lib/components/ui/skeleton';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
 	import AddIcon from '$lib/icons/AddIcon.svelte';
 	import ChatTableIcon from '$lib/icons/ChatTableIcon.svelte';
 	import ChatAgentIcon from '$lib/icons/ChatAgentIcon.svelte';
-	import DeleteIcon from '$lib/icons/DeleteIcon.svelte';
+	import EditIcon from '$lib/icons/EditIcon.svelte';
+	import Trash_2 from 'lucide-svelte/icons/trash-2';
+	import MoreVertIcon from '$lib/icons/MoreVertIcon.svelte';
 
 	export let data;
 	$: ({ userData } = data);
 
 	let selectedFilter: 'agents' | 'all' = 'agents';
 	let filterByAgent = '';
-	let isLoadingFilteredConversations = false;
+	let fetchFilteredConvController: AbortController | null = null;
+	let isLoadingFilteredConv = false;
+	let isLoadingMoreFilteredConv = false;
+	let moreFilteredConvFinished = false;
+	let currentOffsetFilteredConv = 0;
+	const limitFilteredConv = 100;
 	let filteredConversations: typeof $pastChatAgents = [];
 
+	let fetchAgentsController: AbortController | null = null;
 	let loadingAgentsError: { status: number; message: string; org_id?: string } | null = null;
-	let isLoadingMoreCAgents = true;
+	let isLoadingCAgents = true;
+	let isLoadingMoreCAgents = false;
 	let moreCAgentsFinished = false;
 	let currentOffsetAgents = 0;
 	const limitAgents = 100;
 
+	let fetchConvController: AbortController | null = null;
 	let loadingConvError: { status: number; message: string; org_id?: string } | null = null;
-	let isLoadingMoreCConv = true;
+	let isLoadingCConv = true;
+	let isLoadingMoreCConv = false;
 	let moreCConvFinished = false;
 	let currentOffsetConv = 0;
 	const limitConv = 100;
@@ -39,6 +53,7 @@
 	let isAddingAgent = false;
 	let isAddingConversation = false;
 	let selectedAgent = '';
+	let isEditingTableID: string | null = null;
 	let isDeletingTable: string | null = null;
 
 	onMount(() => {
@@ -46,137 +61,223 @@
 		getChatConv();
 
 		return () => {
+			fetchFilteredConvController?.abort('Navigated');
+			filteredConversations = [];
+
+			fetchAgentsController?.abort('Navigated');
 			$pastChatAgents = [];
+
+			fetchFilteredConvController?.abort('Navigated');
 			$pastChatConversations = [];
 		};
 	});
 
 	async function getChatAgents() {
-		isLoadingMoreCAgents = true;
-
-		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat?` +
-				new URLSearchParams({
-					offset: currentOffsetAgents.toString(),
-					limit: limitAgents.toString(),
-					parent_id: '_agent_'
-				}),
-			{
-				method: 'GET',
-				credentials: 'same-origin'
-			}
-		);
-		currentOffsetAgents += limitAgents;
-
-		if (response.status == 200) {
-			const moreChatAgents = await response.json();
-			if (moreChatAgents.items.length) {
-				$pastChatAgents = [...$pastChatAgents, ...moreChatAgents.items];
-			} else {
-				//* Finished loading oldest conversation
-				moreCAgentsFinished = true;
-			}
-		} else {
-			const responseBody = await response.json();
-			if (response.status !== 404) {
-				logger.error('CHATTBL_LIST_AGENT', responseBody);
-			}
-			console.error(responseBody);
-			toast.error('Failed to fetch chat agents', {
-				description: responseBody.message || JSON.stringify(responseBody)
-			});
-			loadingAgentsError = {
-				status: response.status,
-				message: responseBody.message,
-				org_id: responseBody.org_id
-			};
+		if (!isLoadingCAgents) {
+			isLoadingMoreCAgents = true;
 		}
 
+		fetchAgentsController = new AbortController();
+
+		try {
+			const response = await fetch(
+				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat?` +
+					new URLSearchParams({
+						offset: currentOffsetAgents.toString(),
+						limit: limitAgents.toString(),
+						parent_id: '_agent_'
+					}),
+				{
+					method: 'GET',
+					credentials: 'same-origin',
+					signal: fetchAgentsController.signal
+				}
+			);
+			currentOffsetAgents += limitAgents;
+
+			if (response.status == 200) {
+				const moreChatAgents = await response.json();
+				if (moreChatAgents.items.length) {
+					$pastChatAgents = [...$pastChatAgents, ...moreChatAgents.items];
+				} else {
+					//* Finished loading oldest conversation
+					moreCAgentsFinished = true;
+				}
+			} else {
+				const responseBody = await response.json();
+				if (response.status !== 404) {
+					logger.error('CHATTBL_LIST_AGENT', responseBody);
+				}
+				console.error(responseBody);
+				toast.error('Failed to fetch chat agents', {
+					description: responseBody.message || JSON.stringify(responseBody)
+				});
+				loadingAgentsError = {
+					status: response.status,
+					message: responseBody.message,
+					org_id: responseBody.org_id
+				};
+			}
+		} catch (err) {
+			//* don't show abort errors in browser
+			if (err !== 'Navigated') {
+				console.error(err);
+			}
+		}
+
+		isLoadingCAgents = false;
 		isLoadingMoreCAgents = false;
 	}
 
 	async function getChatConv() {
-		isLoadingMoreCConv = true;
-
-		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat?` +
-				new URLSearchParams({
-					offset: currentOffsetConv.toString(),
-					limit: limitConv.toString(),
-					parent_id: '_chat_'
-				}),
-			{
-				method: 'GET',
-				credentials: 'same-origin'
-			}
-		);
-		currentOffsetConv += limitConv;
-
-		if (response.status == 200) {
-			const moreChatConv = await response.json();
-			if (moreChatConv.items.length) {
-				$pastChatConversations = [...$pastChatConversations, ...moreChatConv.items];
-			} else {
-				//* Finished loading oldest conversation
-				moreCConvFinished = true;
-			}
-		} else {
-			const responseBody = await response.json();
-			if (response.status !== 404) {
-				logger.error('CHATTBL_LIST_CONV', responseBody);
-			}
-			console.error(responseBody);
-			toast.error('Failed to fetch chat conversations', {
-				description: responseBody.message || JSON.stringify(responseBody)
-			});
-			loadingConvError = {
-				status: response.status,
-				message: responseBody.message,
-				org_id: responseBody.org_id
-			};
+		if (!isLoadingCConv) {
+			isLoadingMoreCConv = true;
 		}
 
+		fetchConvController = new AbortController();
+
+		try {
+			const response = await fetch(
+				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat?` +
+					new URLSearchParams({
+						offset: currentOffsetConv.toString(),
+						limit: limitConv.toString(),
+						parent_id: '_chat_'
+					}),
+				{
+					method: 'GET',
+					credentials: 'same-origin',
+					signal: fetchConvController.signal
+				}
+			);
+			currentOffsetConv += limitConv;
+
+			if (response.status == 200) {
+				const moreChatConv = await response.json();
+				if (moreChatConv.items.length) {
+					$pastChatConversations = [...$pastChatConversations, ...moreChatConv.items];
+				} else {
+					//* Finished loading oldest conversation
+					moreCConvFinished = true;
+				}
+			} else {
+				const responseBody = await response.json();
+				if (response.status !== 404) {
+					logger.error('CHATTBL_LIST_CONV', responseBody);
+				}
+				console.error(responseBody);
+				toast.error('Failed to fetch chat conversations', {
+					description: responseBody.message || JSON.stringify(responseBody)
+				});
+				loadingConvError = {
+					status: response.status,
+					message: responseBody.message,
+					org_id: responseBody.org_id
+				};
+			}
+		} catch (err) {
+			//* don't show abort errors in browser
+			if (err !== 'Navigated') {
+				console.error(err);
+			}
+		}
+
+		isLoadingCConv = false;
 		isLoadingMoreCConv = false;
 	}
 
-	async function handleFilterByAgent(agentId: string) {
-		isLoadingFilteredConversations = true;
-
-		filterByAgent = agentId;
-
-		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat?` +
-				new URLSearchParams({
-					parent_id: filterByAgent
-				}),
-			{
-				method: 'GET',
-				credentials: 'same-origin'
-			}
-		);
-
-		const responseBody = await response.json();
-		if (response.ok) {
-			filteredConversations = responseBody.items;
+	async function getConvFilterByAgent(agentId: string) {
+		if (agentId === filterByAgent) {
+			isLoadingMoreFilteredConv = true;
 		} else {
-			if (response.status !== 404) {
-				logger.error('CHATTBL_LIST_TBL', responseBody);
-			}
-			console.error(responseBody);
-			toast.error('Failed to fetch filtered conversations', {
-				description: responseBody.message || JSON.stringify(responseBody)
-			});
+			isLoadingFilteredConv = true;
+			filteredConversations = [];
+			filterByAgent = agentId;
 		}
 
-		isLoadingFilteredConversations = false;
+		fetchFilteredConvController = new AbortController();
+
+		try {
+			const response = await fetch(
+				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat?` +
+					new URLSearchParams({
+						offset: currentOffsetFilteredConv.toString(),
+						limit: limitFilteredConv.toString(),
+						parent_id: filterByAgent
+					}),
+				{
+					method: 'GET',
+					credentials: 'same-origin',
+					signal: fetchFilteredConvController.signal
+				}
+			);
+			currentOffsetFilteredConv += limitFilteredConv;
+
+			const responseBody = await response.json();
+			if (response.ok) {
+				if (responseBody.items.length) {
+					filteredConversations = [...filteredConversations, ...responseBody.items];
+				} else {
+					//* Finished loading oldest conversation
+					moreFilteredConvFinished = true;
+				}
+			} else {
+				if (response.status !== 404) {
+					logger.error('CHATTBL_LIST_TBL', responseBody);
+				}
+				console.error(responseBody);
+				toast.error('Failed to fetch filtered conversations', {
+					description: responseBody.message || JSON.stringify(responseBody)
+				});
+			}
+		} catch (err) {
+			//* don't show abort errors in browser
+			if (err !== 'Navigated') {
+				console.error(err);
+			}
+		}
+
+		isLoadingFilteredConv = false;
+		isLoadingMoreFilteredConv = false;
 	}
+
+	const scrollHandler = async (e: Event, type: 'agent' | 'conv' | 'filtered') => {
+		const target = e.target as HTMLDivElement;
+		const offset = target.scrollHeight - target.clientHeight - target.scrollTop;
+		const LOAD_THRESHOLD = 20; //? Minimum offset scroll height to load more conversations
+
+		if (offset < LOAD_THRESHOLD && !isLoadingCAgents) {
+			switch (type) {
+				case 'agent': {
+					if (!moreCAgentsFinished) {
+						await getChatAgents();
+					}
+					break;
+				}
+				case 'conv': {
+					if (!moreCConvFinished) {
+						await getChatConv();
+					}
+					break;
+				}
+				case 'filtered': {
+					if (!moreFilteredConvFinished) {
+						await getConvFilterByAgent(filterByAgent);
+					}
+					break;
+				}
+				default:
+					break;
+			}
+		}
+	};
 </script>
 
 <svelte:head>
 	<title>Chat Table</title>
 </svelte:head>
 
-<div class="flex flex-col gap-4 h-[calc(100vh-4.25rem)]">
+<div class="flex flex-col gap-3 h-[calc(100vh-4.25rem)]">
 	<div class="flex gap-2 pt-4 pl-6">
 		<Button
 			variant="ghost"
@@ -205,9 +306,10 @@
 		{#if !loadingAgentsError}
 			<div
 				style="grid-template-columns: 2fr 5fr;"
-				class="grow grid grid-cols-2 pt-0 h-1 bg-[#FAFBFC] data-dark:bg-[#1E2024] border-t border-[#E5E5E5] data-dark:border-[#484C55]"
+				class="grow grid grid-cols-2 mt-1 h-1 bg-[#FAFBFC] data-dark:bg-[#1E2024] border-t border-[#E5E5E5] data-dark:border-[#484C55]"
 			>
 				<div
+					on:scroll={debounce((e) => scrollHandler(e, 'agent'), 300)}
 					class="flex flex-col items-center gap-4 px-6 py-3 bg-white data-dark:bg-[#303338] border-r border-[#E5E5E5] data-dark:border-[#484C55] overflow-auto"
 				>
 					<button
@@ -223,51 +325,93 @@
 						<span class="font-medium text-sm"> New Agent </span>
 					</button>
 
-					{#each $pastChatAgents as chatTable (chatTable.id)}
-						<button
-							on:click={() => handleFilterByAgent(chatTable.id)}
-							title={chatTable.id}
-							class="flex flex-col h-28 min-h-28 w-full border border-[#E5E5E5] data-dark:border-[#484C55] rounded-lg"
-						>
-							<div
-								class="grow flex items-start p-3 w-full border-b border-[#E5E5E5] data-dark:border-[#484C55]"
-							>
-								<div class="flex items-start gap-1.5">
-									<div
-										class="relative h-[18px] w-[18px] bg-secondary/[0.12] rounded-sm overflow-hidden"
-									>
-										<ChatAgentIcon
-											class="absolute -bottom-[3px] left-1/2 -translate-x-1/2 h-[20px] aspect-square text-secondary"
-										/>
-									</div>
-									<span class="font-medium text-sm text-left break-all line-clamp-2">
-										{chatTable.id}
-									</span>
-								</div>
-							</div>
-
-							<div class="flex p-3">
-								<span class="text-xs text-[#999] data-dark:text-[#C9C9C9]">
-									Updated at: {new Date(chatTable.updated_at).toLocaleString(undefined, {
-										month: 'long',
-										day: 'numeric',
-										year: 'numeric'
-									})}
-								</span>
-							</div>
-						</button>
-					{/each}
-
-					{#if isLoadingMoreCAgents}
+					{#if isLoadingCAgents}
 						{#each Array(4) as _}
 							<Skeleton
 								class="flex flex-col h-28 min-h-28 w-full bg-black/[0.09] data-dark:bg-white/[0.1] rounded-lg"
 							/>
 						{/each}
+					{:else}
+						{#each $pastChatAgents as chatTable (chatTable.id)}
+							<button
+								on:click={() => getConvFilterByAgent(chatTable.id)}
+								title={chatTable.id}
+								class="flex flex-col h-28 min-h-28 w-full bg-white data-dark:bg-[#42464E] border border-[#E4E7EC] data-dark:border-[#484C55] rounded-lg hover:-translate-y-0.5 hover:shadow-float transition-[transform,box-shadow]"
+							>
+								<div
+									class="grow flex items-start justify-between p-3 w-full border-b border-[#E5E5E5] data-dark:border-[#484C55]"
+								>
+									<div class="flex items-start gap-1.5">
+										<div
+											class="relative h-[18px] w-[18px] bg-secondary/[0.12] rounded-sm overflow-hidden"
+										>
+											<ChatAgentIcon
+												class="absolute -bottom-[3px] left-1/2 -translate-x-1/2 h-[20px] aspect-square text-secondary"
+											/>
+										</div>
+										<span class="font-medium text-sm text-left break-all line-clamp-2">
+											{chatTable.id}
+										</span>
+									</div>
+
+									<DropdownMenu.Root>
+										<DropdownMenu.Trigger asChild let:builder>
+											<Button
+												on:click={(e) => e.stopPropagation()}
+												builders={[builder]}
+												variant="ghost"
+												title="Table settings"
+												class="p-0 h-7 w-7 aspect-square rounded-full translate-x-1.5 -translate-y-1"
+											>
+												<MoreVertIcon class="h-[18px] w-[18px]" />
+											</Button>
+										</DropdownMenu.Trigger>
+										<DropdownMenu.Content alignOffset={-50} transitionConfig={{ x: 5, y: -5 }}>
+											<!-- <DropdownMenu.Group>
+											<DropdownMenu.Item on:click={() => {}}>
+												<CheckIcon class="h-4 w-4 mr-2 mb-[1px]" />
+												<span>Select</span>
+											</DropdownMenu.Item>
+										</DropdownMenu.Group>
+										<DropdownMenu.Separator /> -->
+											<DropdownMenu.Group>
+												<DropdownMenu.Item on:click={() => (isEditingTableID = chatTable.id)}>
+													<EditIcon class="h-4 w-4 mr-2 mb-[2px]" />
+													<span>Rename table</span>
+												</DropdownMenu.Item>
+												<DropdownMenu.Item on:click={() => (isDeletingTable = chatTable.id)}>
+													<Trash_2 class="h-4 w-4 mr-2 mb-[2px]" />
+													<span>Delete table</span>
+												</DropdownMenu.Item>
+											</DropdownMenu.Group>
+										</DropdownMenu.Content>
+									</DropdownMenu.Root>
+								</div>
+
+								<div class="flex p-3">
+									<span class="text-xs text-[#999] data-dark:text-[#C9C9C9]">
+										Updated at: {new Date(chatTable.updated_at).toLocaleString(undefined, {
+											month: 'long',
+											day: 'numeric',
+											year: 'numeric'
+										})}
+									</span>
+								</div>
+							</button>
+						{/each}
+
+						{#if isLoadingMoreCAgents}
+							<div class="flex items-center justify-center mx-auto p-4">
+								<LoadingSpinner class="h-5 w-5 text-secondary" />
+							</div>
+						{/if}
 					{/if}
 				</div>
 
-				<div class="flex flex-col gap-2 px-6 py-3 overflow-auto">
+				<div
+					on:scroll={debounce((e) => scrollHandler(e, 'filtered'), 300)}
+					class="flex flex-col gap-2 px-6 py-3 overflow-auto"
+				>
 					{#if filterByAgent}
 						<a
 							title={filterByAgent}
@@ -284,30 +428,16 @@
 								</div>
 								<span class="font-medium line-clamp-1">{filterByAgent}</span>
 							</div>
-
-							<Button
-								on:click={(e) => {
-									e.preventDefault();
-									isDeletingTable = filterByAgent;
-									filterByAgent = '';
-									filteredConversations = [];
-								}}
-								variant="ghost"
-								title="Delete agent"
-								class="px-1.5 py-1 h-[unset] text-xs hover:bg-black/[0.1] data-dark:hover:bg-white/[0.1] rounded-full"
-							>
-								<DeleteIcon class="h-6" />
-							</Button>
 						</a>
 
-						{#if isLoadingFilteredConversations}
+						{#if isLoadingFilteredConv}
 							{#each Array(6) as _}
 								<Skeleton
 									class="flex flex-col items-center justify-center gap-2 h-10 min-h-10 w-full bg-black/[0.09] data-dark:bg-white/[0.1] rounded-lg"
 								/>
 							{/each}
 						{:else}
-							{#each filteredConversations as chatTable (chatTable.id)}
+							{#each filteredConversations as chatTable}
 								<a
 									title={chatTable.id}
 									href="/project/{$page.params.project_id}/chat-table/{chatTable.id}"
@@ -334,6 +464,12 @@
 									</svg>
 								</a>
 							{/each}
+
+							{#if isLoadingMoreFilteredConv}
+								<div class="flex items-center justify-center mx-auto p-4">
+									<LoadingSpinner class="h-5 w-5 text-secondary" />
+								</div>
+							{/if}
 
 							<Button
 								variant="outline"
@@ -374,8 +510,9 @@
 		{/if}
 	{:else if !loadingConvError}
 		<div
+			on:scroll={debounce((e) => scrollHandler(e, 'conv'), 300)}
 			style="grid-auto-rows: 112px;"
-			class="grow grid grid-cols-2 lg:grid-cols-4 2xl:grid-cols-6 grid-flow-row gap-4 p-6 pt-0 h-1 overflow-auto"
+			class="grow grid grid-cols-2 lg:grid-cols-4 2xl:grid-cols-6 grid-flow-row gap-4 p-6 pt-1 h-1 overflow-auto"
 		>
 			<button
 				on:click={() => {
@@ -391,26 +528,59 @@
 				<span class="font-medium text-sm"> New Conversation </span>
 			</button>
 
-			{#if isLoadingMoreCConv}
+			{#if isLoadingCConv}
 				{#each Array(12) as _}
 					<Skeleton
 						class="flex flex-col items-center justify-center gap-2 bg-black/[0.09] data-dark:bg-white/[0.1] rounded-lg"
 					/>
 				{/each}
 			{:else}
-				{#each $pastChatConversations as chatTable (chatTable.id)}
+				{#each $pastChatConversations as chatTable}
 					<a
 						href={`/project/${$page.params.project_id}/chat-table/${chatTable.id}`}
 						title={chatTable.id}
-						class="flex flex-col border border-[#E5E5E5] data-dark:border-[#333] rounded-lg"
+						class="flex flex-col bg-white data-dark:bg-[#42464E] border border-[#E4E7EC] data-dark:border-[#333] rounded-lg hover:-translate-y-0.5 hover:shadow-float transition-[transform,box-shadow]"
 					>
 						<div
-							class="grow flex items-start p-3 border-b border-[#E5E5E5] data-dark:border-[#333]"
+							class="grow flex items-start justify-between p-3 border-b border-[#E4E7EC] data-dark:border-[#333]"
 						>
 							<div class="flex items-start gap-1.5">
 								<ChatTableIcon class="flex-[0_0_auto] h-5 w-5 text-secondary" />
 								<span class="font-medium text-sm break-all line-clamp-2">{chatTable.id}</span>
 							</div>
+
+							<DropdownMenu.Root>
+								<DropdownMenu.Trigger asChild let:builder>
+									<Button
+										on:click={(e) => e.preventDefault()}
+										builders={[builder]}
+										variant="ghost"
+										title="Table settings"
+										class="p-0 h-7 w-7 aspect-square rounded-full translate-x-1.5 -translate-y-1"
+									>
+										<MoreVertIcon class="h-[18px] w-[18px]" />
+									</Button>
+								</DropdownMenu.Trigger>
+								<DropdownMenu.Content alignOffset={-50} transitionConfig={{ x: 5, y: -5 }}>
+									<!-- <DropdownMenu.Group>
+										<DropdownMenu.Item on:click={() => {}}>
+											<CheckIcon class="h-4 w-4 mr-2 mb-[1px]" />
+											<span>Select</span>
+										</DropdownMenu.Item>
+									</DropdownMenu.Group>
+									<DropdownMenu.Separator /> -->
+									<DropdownMenu.Group>
+										<DropdownMenu.Item on:click={() => (isEditingTableID = chatTable.id)}>
+											<EditIcon class="h-4 w-4 mr-2 mb-[2px]" />
+											<span>Rename table</span>
+										</DropdownMenu.Item>
+										<DropdownMenu.Item on:click={() => (isDeletingTable = chatTable.id)}>
+											<Trash_2 class="h-4 w-4 mr-2 mb-[2px]" />
+											<span>Delete table</span>
+										</DropdownMenu.Item>
+									</DropdownMenu.Group>
+								</DropdownMenu.Content>
+							</DropdownMenu.Root>
 						</div>
 
 						<div class="flex items-center justify-between gap-2 p-3">
@@ -442,6 +612,12 @@
 						</div>
 					</a>
 				{/each}
+
+				{#if isLoadingMoreCConv}
+					<div class="flex items-center justify-center mx-auto p-4">
+						<LoadingSpinner class="h-5 w-5 text-secondary" />
+					</div>
+				{/if}
 			{/if}
 		</div>
 	{:else if loadingConvError.status === 404 && loadingConvError.org_id && userData?.organizations.find((org) => org.organization_id === loadingConvError?.org_id)}
@@ -465,4 +641,17 @@
 
 <AddAgentDialog bind:isAddingAgent />
 <AddConversationDialog bind:isAddingConversation {selectedAgent} bind:filteredConversations />
-<DeleteDialogs isDeletingColumn={null} isDeletingRow={null} bind:isDeletingTable tableType="chat" />
+<RenameTableDialog
+	tableType="chat"
+	bind:isEditingTableID
+	editedCb={(success, tableID) => {
+		if (selectedFilter === 'agents' && success && tableID) getConvFilterByAgent(tableID);
+	}}
+/>
+<DeleteTableDialog
+	tableType="chat"
+	bind:isDeletingTable
+	deletedCb={(success) => {
+		if (selectedFilter === 'agents' && success) filterByAgent = '';
+	}}
+/>

@@ -13,7 +13,7 @@ def filter_external_api_key(
     voyage_api_key: str = "",
 ) -> str:
     if model.startswith("ellm"):
-        key = "DUMMY_KEY"
+        key = together_api_key if together_api_key else "DUMMY_KEY"
     elif model.startswith("openai"):
         key = openai_api_key
     elif model.startswith("anthropic"):
@@ -30,8 +30,6 @@ def filter_external_api_key(
         key = jina_api_key
     elif model.startswith("voyage"):
         key = voyage_api_key
-    elif model.startswith("ellm"):
-        key = "DUMMY_KEY"
     else:
         raise ResourceNotFoundError(f"Unsupported model: {model}")
     if key == "" or not key:

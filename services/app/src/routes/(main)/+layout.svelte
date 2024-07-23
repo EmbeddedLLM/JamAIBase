@@ -1,15 +1,23 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
+	import { onMount } from 'svelte';
 	import axios, { CanceledError } from 'axios';
-	import { showDock, showLoadingOverlay, uploadQueue, uploadController } from '$globalStore';
+	import {
+		showDock,
+		showLoadingOverlay,
+		uploadQueue,
+		uploadController,
+		modelsAvailable
+	} from '$globalStore';
 	import logger from '$lib/logger';
 	import type { UploadQueue } from '$lib/types';
 
 	import SideDock from './SideDock.svelte';
 	import UploadTab from './UploadTab.svelte';
+	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
 
 	export let data;
-	$: ({ organizationData, userData } = data);
+	$: ({ organizationData } = data);
 
 	let windowWidth: number;
 
@@ -44,7 +52,8 @@
 					formData,
 					{
 						headers: {
-							'Content-Type': 'multipart/form-data'
+							'Content-Type': 'multipart/form-data',
+							'x-project-id': fileToUpload.project_id
 						},
 						withCredentials: true,
 						onUploadProgress: (progressEvent) => {
@@ -68,6 +77,7 @@
 					);
 				} else {
 					completedUploads = [...completedUploads, fileToUpload];
+					fileToUpload.invalidate?.();
 
 					if (uploadres.data.err_message) {
 						alert(
@@ -93,6 +103,22 @@
 			$uploadQueue = $uploadQueue;
 		}
 	};
+
+	onMount(() => {
+		fetch(`${PUBLIC_JAMAI_URL}/api/v1/models`, {
+			method: 'GET',
+			credentials: 'same-origin'
+		})
+			.then((res) => Promise.all([res, res.json()]))
+			.then(([response, responseBody]) => {
+				if (response.ok) {
+					$modelsAvailable = responseBody.data;
+				} else {
+					logger.error('MODELS_FETCH_FAILED', responseBody);
+					console.error(responseBody);
+				}
+			});
+	});
 </script>
 
 <svelte:window bind:innerWidth={windowWidth} />
@@ -101,7 +127,7 @@
 	<div
 		class={`grid ${
 			$showDock ? 'grid-cols-[15.5rem,_minmax(0,_auto)]' : 'grid-cols-[4.2rem,_minmax(0,_auto)]'
-		} h-screen box-border bg-[#F7F8FC] data-dark:bg-[#1E2024] transition-[grid-template-columns] duration-300`}
+		} h-screen box-border bg-[#F9FAFB] data-dark:bg-[#1E2024] transition-[grid-template-columns] duration-300`}
 	>
 		<SideDock {organizationData} />
 
@@ -111,6 +137,10 @@
 	</div>
 
 	{#if $showLoadingOverlay}
-		<!-- TODO: Add loading spinner -->
+		<div
+			class="absolute top-0 bottom-0 left-0 right-0 z-[9999] flex items-center justify-center bg-black/60"
+		>
+			<LoadingSpinner class="h-6 w-6 text-[#5b7ee5]" />
+		</div>
 	{/if}
 </main>

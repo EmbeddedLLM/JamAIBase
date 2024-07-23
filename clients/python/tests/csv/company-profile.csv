@@ -1,0 +1,19 @@
+Company Name,Department,Department Budget,Project Name,Project Status,Project Completion,Employee ID,Employee Name,Employee Role,Years of Experience,Product ID,Product Name,Product Version,Product Price,Quarterly Revenue,Quarterly Expenses,Social Initiative,Initiative Budget,Initiative Metric,Initiative Value
+TechInnovators Inc.,Research & Development,5000000.00,Project Apollo,In Progress,0.75,EMP001,Alice Johnson,Lead AI Researcher,8,,,,,,,,,,
+TechInnovators Inc.,Research & Development,5000000.00,Project Apollo,In Progress,0.75,EMP002,Bob Chen,Senior Developer,6,,,,,,,,,,
+TechInnovators Inc.,Marketing,2000000.00,AI Revolution,In Progress,N/A,EMP003,Carol Davis,Marketing Manager,10,,,,,,,,,,
+TechInnovators Inc.,Marketing,2000000.00,AI Revolution,In Progress,N/A,EMP004,David Wilson,Social Media Specialist,4,,,,,,,,,,
+TechInnovators Inc.,Sales,3000000.00,Global Expansion,Planning,0.25,EMP005,Eva Brown,Sales Director,12,,,,,,,,,,
+TechInnovators Inc.,Sales,3000000.00,Global Expansion,Planning,0.25,EMP006,Frank Lee,Account Executive,7,,,,,,,,,,
+TechInnovators Inc.,Product Development,4000000.00,AI Copilot 3.0,In Development,0.50,EMP007,Grace Kim,Product Manager,9,PROD001,AI Copilot,2.5.1,99.99,,,,,,
+TechInnovators Inc.,Product Development,4000000.00,AI Copilot 3.0,In Development,0.50,EMP008,Henry Patel,UX Designer,6,PROD001,AI Copilot,2.5.1,99.99,,,,,,
+TechInnovators Inc.,Finance,1500000.00,Q1 Reporting,Completed,1.00,EMP009,Irene Lopez,Financial Analyst,8,,,,,220000000.00,165000000.00,,,,
+TechInnovators Inc.,Finance,1500000.00,Q2 Reporting,In Progress,0.50,EMP010,Jack Thompson,Accountant,5,,,,,260000000.00,195000000.00,,,,
+TechInnovators Inc.,Human Resources,1000000.00,Talent Acquisition,Ongoing,N/A,EMP011,Karen Miller,HR Manager,11,,,,,,,,,,
+TechInnovators Inc.,Human Resources,1000000.00,Employee Training,Ongoing,N/A,EMP012,Liam O'Connor,Training Coordinator,3,,,,,,,,,,
+TechInnovators Inc.,Legal,2000000.00,Patent Filing,In Progress,0.60,EMP013,Maria Rodriguez,Corporate Lawyer,15,,,,,,,,,,
+TechInnovators Inc.,Legal,2000000.00,Compliance Review,Ongoing,N/A,EMP014,Nathan Edwards,Paralegal,4,,,,,,,,,,
+TechInnovators Inc.,Customer Support,1500000.00,24/7 Support Rollout,Completed,1.00,EMP015,Olivia Chen,Support Team Lead,7,,,,,,,,,,
+TechInnovators Inc.,Customer Support,1500000.00,24/7 Support Rollout,Completed,1.00,EMP016,Paul Wright,Technical Support Specialist,2,,,,,,,,,,
+TechInnovators Inc.,Corporate Social Responsibility,2000000.00,Green Computing,Ongoing,N/A,EMP017,Quinn Foster,Sustainability Manager,6,,,,,,,Green Computing,1000000.00,Energy Saved (kWh),500000
+TechInnovators Inc.,Corporate Social Responsibility,2000000.00,Tech Education for All,Ongoing,N/A,EMP018,Rachel Tran,Community Outreach Coordinator,4,,,,,,,Tech Education for All,500000.00,Students Trained,1000

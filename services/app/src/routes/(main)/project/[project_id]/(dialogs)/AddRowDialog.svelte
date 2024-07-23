@@ -204,6 +204,7 @@
 			<Button
 				type="submit"
 				loading={isLoadingAddRow}
+				disabled={isLoadingAddRow}
 				class="hidden relative grow px-6 rounded-full"
 			>
 				Add
@@ -221,6 +222,7 @@
 					on:click={() => form.requestSubmit()}
 					type="button"
 					loading={isLoadingAddRow}
+					disabled={isLoadingAddRow}
 					class="relative grow px-6 rounded-full"
 				>
 					Add

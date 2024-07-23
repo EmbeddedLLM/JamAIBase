@@ -1,5 +1,6 @@
 import { PUBLIC_JAMAI_URL } from '$env/static/public';
 import logger from '$lib/logger.js';
+import { knowledgeRowsPerPage } from '$lib/constants.js';
 import type { GenTable, GenTableRow } from '$lib/types.js';
 
 export const load = async ({ depends, fetch, params, parent, url }) => {
@@ -19,8 +20,8 @@ export const load = async ({ depends, fetch, params, parent, url }) => {
 			fetch(
 				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/knowledge/${params.table_id}/rows?` +
 					new URLSearchParams({
-						offset: ((page - 1) * 20).toString(),
-						limit: '20'
+						offset: ((page - 1) * knowledgeRowsPerPage).toString(),
+						limit: knowledgeRowsPerPage.toString()
 					})
 			)
 		];

@@ -31,6 +31,11 @@ export class LLM extends Base {
             }
         });
 
+        const warning = response.headers["warning"];
+        if (warning) {
+            console.warn(warning);
+        }
+
         return new Promise((resolve, reject) => {
             if (response.status == 200) {
                 const parsedData = ModelInfoResponseSchema.parse(response.data);
@@ -50,6 +55,11 @@ export class LLM extends Base {
                 indexes: false
             }
         });
+
+        const warning = response.headers["warning"];
+        if (warning) {
+            console.warn(warning);
+        }
 
         return new Promise((resolve, reject) => {
             if (response.status == 200) {
@@ -73,6 +83,11 @@ export class LLM extends Base {
                 responseType: "stream"
             }
         );
+
+        const warning = response.headers["warning"];
+        if (warning) {
+            console.warn(warning);
+        }
 
         const stream = new ReadableStream<StreamChatCompletionChunk | References>({
             async start(controller: ReadableStreamDefaultController<StreamChatCompletionChunk | References>) {
@@ -160,6 +175,11 @@ export class LLM extends Base {
             {}
         );
 
+        const warning = response.headers["warning"];
+        if (warning) {
+            console.warn(warning);
+        }
+
         return new Promise((resolve, reject) => {
             if (response.status == 200) {
                 const parsedData = ChatCompletionChunkSchema.parse(response.data);
@@ -178,6 +198,11 @@ export class LLM extends Base {
         const response = await this.httpClient.post<EmbeddingRequest>(apiURL, {
             ...parsedParams
         });
+
+        const warning = response.headers["warning"];
+        if (warning) {
+            console.warn(warning);
+        }
 
         return new Promise((resolve, reject) => {
             if (response.status == 200) {

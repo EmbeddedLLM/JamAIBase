@@ -96,7 +96,10 @@ describe("APIClient LLM", () => {
 
     const requestDataChat: ChatRequest = {
         model: "openai/gpt-3.5-turbo",
-        messages: [{ role: "user", content: "Hello, what is the capital of Bangladesh?" }],
+        messages: [
+            { role: "system", content: "you are a helpful assistant." },
+            { role: "user", content: "Hello, what is the capital of Bangladesh?" }
+        ],
         max_tokens: 100,
         tools: null,
         // tool_choice: null,

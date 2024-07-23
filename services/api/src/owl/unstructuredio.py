@@ -62,14 +62,14 @@ class UnstructuredBaseLoader(BaseLoader, ABC):
         if self.mode == "elements":
             for element in elements:
                 metadata = element["metadata"]
-                metadata["page"] = metadata["page_number"]
+                metadata["page"] = metadata.get("page_number", 1)
                 # NOTE(MthwRobinson) - the attribute check is for backward compatibility
                 # with unstructured<0.4.9. The metadata attributed was added in 0.4.9.
                 if hasattr(element, "metadata"):
                     metadata.update(element["metadata"])
                 if hasattr(element, "type"):
                     metadata["type"] = element["NarrativeText"]
-                yield Document(page_content=str(element), metadata=metadata)
+                yield Document(page_content=str(element["text"]), metadata=metadata)
         elif self.mode == "paged":
             text_dict: dict[int, str] = {}
             meta_dict: dict[int, dict] = {}

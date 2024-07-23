@@ -1,13 +1,18 @@
 <script lang="ts">
-	let className: string | undefined | null = undefined
-	export { className as class }
+	let className: string | undefined | null = undefined;
+	export { className as class };
 </script>
 
-<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class={className}>
+<svg viewBox="0 0 8 8" fill="none" xmlns="http://www.w3.org/2000/svg" class={className}>
 	<path
-		d="M15.75 15.75L20.25 20.25M17.25 11.25C17.25 14.5637 14.5637 17.25 11.25 17.25C7.93629 17.25 5.25 14.5637 5.25 11.25C5.25 7.93629 7.93629 5.25 11.25 5.25C14.5637 5.25 17.25 7.93629 17.25 11.25Z"
+		d="M3.53846 6.07692C4.94042 6.07692 6.07692 4.94042 6.07692 3.53846C6.07692 2.13651 4.94042 1 3.53846 1C2.13651 1 1 2.13651 1 3.53846C1 4.94042 2.13651 6.07692 3.53846 6.07692Z"
 		stroke="currentColor"
-		stroke-width="1.5"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+	/>
+	<path
+		d="M7.00015 7.00015L5.38477 5.38477"
+		stroke="currentColor"
 		stroke-linecap="round"
 		stroke-linejoin="round"
 	/>

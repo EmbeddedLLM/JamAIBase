@@ -4,9 +4,11 @@ import type { genTableDTypes, userRoles } from './constants';
 
 export interface AvailableModel {
 	id: string;
-	contextLength: number;
+	context_length: number;
 	languages: string[];
 	owned_by: string;
+	capabilities: string[];
+	object: string;
 }
 
 export type SideDockLink = {
@@ -43,8 +45,10 @@ export interface UploadQueue {
 	progress: number;
 	queue: {
 		file: File;
-		uploadTo: string;
+		tableType: string;
 		table_id?: string;
+		project_id: string;
+		invalidate?: () => void;
 	}[];
 }
 

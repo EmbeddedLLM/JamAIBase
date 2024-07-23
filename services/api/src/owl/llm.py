@@ -11,9 +11,10 @@ from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from litellm import Router
 from loguru import logger
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from jamaibase.protocol import (
+from owl.configs.manager import CONFIG, ENV_CONFIG
+from owl.db.gen_table import KnowledgeTable
+from owl.protocol import (
     DEFAULT_CHAT_MODEL,
     ChatCompletionChoiceDelta,
     ChatCompletionChunk,
@@ -27,18 +28,9 @@ from jamaibase.protocol import (
     RAGParams,
     References,
 )
-from owl.config import get_model_json
-from owl.db.gen_table import KnowledgeTable
 from owl.utils import filter_external_api_key, mask_string
 from owl.utils.exceptions import ContextOverflowError, ResourceNotFoundError
 
-
-class Config(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-    owl_db_dir: str = "db"
-
-
-CONFIG = Config()
 litellm.drop_params = True
 litellm.set_verbose = False
 
@@ -61,6 +53,12 @@ def _get_llm_router(model_json: str):
             for m in models
         ],
         routing_strategy="simple-shuffle",
+        num_retries=3,
+        retry_after=0.5,
+        timeout=60.0,
+        allowed_fails=2,
+        cooldown_time=0,
+        debug_level="INFO",
     )
 
 
@@ -106,38 +104,84 @@ class LLMEngine:
 
     @property
     def router(self):
-        return _get_llm_router(get_model_json())
+        return _get_llm_router(CONFIG.get_model_json())
 
     @staticmethod
-    def _prepare_messages(messages: list[ChatEntry | dict]):
-        messages = [ChatEntry.model_validate(m) for m in messages]
-        if messages[0].role in (ChatRole.SYSTEM.value, ChatRole.SYSTEM):
-            if messages[1].role in (ChatRole.ASSISTANT.value, ChatRole.ASSISTANT):
-                messages.insert(1, ChatEntry.user(content="."))
-        elif messages[0].role in (ChatRole.ASSISTANT.value, ChatRole.ASSISTANT):
-            messages.insert(0, ChatEntry.user(content="."))
+    def _prepare_hyperparams(model: str, hyperparams: dict, **kwargs) -> dict:
+        if isinstance(hyperparams.get("stop", None), list) and len(hyperparams["stop"]) == 0:
+            hyperparams["stop"] = None
+        hyperparams.update(kwargs)
+        if model.startswith("anthropic"):
+            hyperparams["extra_headers"] = {"anthropic-beta": "max-tokens-3-5-sonnet-2024-07-15"}
+        return hyperparams
+
+    @staticmethod
+    def _prepare_messages(messages: list[ChatEntry | dict]) -> list[ChatEntry]:
+        messages: list[ChatEntry] = [ChatEntry.model_validate(m) for m in messages]
+        if len(messages) == 0:
+            raise ValueError("`messages` is an empty list.")
+        elif len(messages) == 1:
+            # [user]
+            if messages[0].role in (ChatRole.USER.value, ChatRole.USER):
+                pass
+            # [system]
+            elif messages[0].role in (ChatRole.SYSTEM.value, ChatRole.SYSTEM):
+                messages.append(ChatEntry.user(content="."))
+            # [assistant]
+            else:
+                messages = [ChatEntry.system(content="."), ChatEntry.user(content=".")] + messages
+        else:
+            # [user, ...]
+            if messages[0].role in (ChatRole.USER.value, ChatRole.USER):
+                pass
+            # [system, ...]
+            elif messages[0].role in (ChatRole.SYSTEM.value, ChatRole.SYSTEM):
+                # [system, assistant, ...]
+                if messages[1].role in (ChatRole.ASSISTANT.value, ChatRole.ASSISTANT):
+                    messages.insert(1, ChatEntry.user(content="."))
+            # [assistant, ...]
+            else:
+                messages = [ChatEntry.system(content="."), ChatEntry.user(content=".")] + messages
         return messages
 
     @staticmethod
-    def _log_completion(
+    def _log_completion_masked(
         request: Request,
         model: str,
         messages: list[ChatEntry],
+        api_key: str,
         **hyperparams,
     ):
         body = dict(
             model=model,
-            messages=[{"role": m.role, "content": mask_string(m.content)} for m in messages],
+            messages=[{"role": m["role"], "content": mask_string(m["content"])} for m in messages],
+            api_key=mask_string(api_key),
             **hyperparams,
         )
         logger.info(f"{request.state.id} - Generating chat completions: {body}")
+
+    @staticmethod
+    def _log_exception(
+        request: Request,
+        model: str,
+        messages: list[ChatEntry],
+        api_key: str = "",
+        **hyperparams,
+    ):
+        body = dict(
+            model=model,
+            messages=[{"role": m["role"], "content": m["content"]} for m in messages],
+            api_key=mask_string(api_key),
+            **hyperparams,
+        )
+        logger.exception(f"{request.state.id} - Chat completion errored !!! {body}")
 
     def model_info(
         self,
         model: str = "",
         capabilities: list[str] | None = None,
     ) -> ModelInfoResponse:
-        all_models = ModelListConfig.model_validate_json(get_model_json())
+        all_models = ModelListConfig.model_validate_json(CONFIG.get_model_json())
         # Chat models
         models = [m for m in all_models.llm_models if m.owned_by == "ellm"]
         if self.openai_api_key != "":
@@ -197,21 +241,20 @@ class LLMEngine:
         messages: list[ChatEntry | dict],
         **hyperparams,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
-        messages = self._prepare_messages(messages)
-        self._log_completion(request, model, messages, **hyperparams)
         try:
-            hyperparams.pop("stream", False)
+            hyperparams = self._prepare_hyperparams(model, hyperparams, stream=True)
+            messages = self._prepare_messages(messages)
             input_len = message_len(messages)
-            messages = [m.model_dump(mode="json", exclude_none=True) for m in messages]
-
             output_len = 0
-
-            if len(model) == 0:
+            messages = [m.model_dump(mode="json", exclude_none=True) for m in messages]
+            if not model:
                 models = self.model_names(
                     prefer=DEFAULT_CHAT_MODEL,
                     capabilities=["chat"],
                 )
                 model = models[0]
+                logger.info(f"{request.state.id} - Empty model changed to: {model}")
+
             api_key = filter_external_api_key(
                 model,
                 openai_api_key=self.openai_api_key,
@@ -223,11 +266,11 @@ class LLMEngine:
                 jina_api_key=self.jina_api_key,
                 voyage_api_key=self.voyage_api_key,
             )
+            self._log_completion_masked(request, model, messages, api_key=api_key, **hyperparams)
             response = await self.router.acompletion(
                 model=model,
                 messages=messages,
                 api_key=api_key,
-                stream=True,
                 **hyperparams,
             )
             output_text = ""
@@ -265,6 +308,7 @@ class LLMEngine:
                 output_tokens=output_len,
             )
         except Exception as exc:
+            self._log_exception(request, model, messages, **hyperparams)
             yield ChatCompletionChunk(
                 id=request.state.id,
                 object="chat.completion.chunk",
@@ -273,7 +317,7 @@ class LLMEngine:
                 usage=None,
                 choices=[
                     ChatCompletionChoiceDelta(
-                        message=ChatEntry.assistant(f"[ERROR] {exc}"),
+                        message=ChatEntry.assistant(f"[ERROR] {repr(exc)}"),
                         index=0,
                         finish_reason="error",
                     )
@@ -287,17 +331,18 @@ class LLMEngine:
         messages: list[ChatEntry | dict],
         **hyperparams,
     ) -> ChatCompletionChunk:
-        messages = self._prepare_messages(messages)
-        self._log_completion(request, model, messages, **hyperparams)
-        hyperparams.pop("stream", False)
-        messages = [m.model_dump(mode="json", exclude_none=True) for m in messages]
         try:
+            messages = self._prepare_messages(messages)
+            hyperparams.pop("stream", False)
+            hyperparams = self._prepare_hyperparams(model, hyperparams)
+            messages = [m.model_dump(mode="json", exclude_none=True) for m in messages]
             if len(model) == 0:
                 models = self.model_names(
                     prefer=DEFAULT_CHAT_MODEL,
                     capabilities=["chat"],
                 )
                 model = models[0]
+                logger.info(f"{request.state.id} - Empty model changed to: {model}")
             api_key = filter_external_api_key(
                 model,
                 openai_api_key=self.openai_api_key,
@@ -309,6 +354,7 @@ class LLMEngine:
                 jina_api_key=self.jina_api_key,
                 voyage_api_key=self.voyage_api_key,
             )
+            self._log_completion_masked(request, model, messages, api_key=api_key, **hyperparams)
             response = await self.router.acompletion(
                 model=model,
                 messages=messages,
@@ -338,11 +384,6 @@ class LLMEngine:
                 output_tokens=output_len,
             )
             return completion
-
-        except litellm.exceptions.ContextWindowExceededError:
-            logger.info(f"{request.state.id} - Context overflow for model: {model}")
-            raise ContextOverflowError(f"Context overflow for model: {model}")
-
         except openai.BadRequestError as e:
             err_mssg = e.message
             err_code = e.code if e.code else None
@@ -362,6 +403,23 @@ class LLMEngine:
                 raise RuntimeError(
                     f"LLM server error: model={model}  code={err_code}  error={err_mssg}"
                 )
+        except Exception:
+            self._log_exception(request, model, messages, **hyperparams)
+            # return ChatCompletionChunk(
+            #     id=request.state.id,
+            #     object="chat.completion",
+            #     created=int(time()),
+            #     model=model,
+            #     usage=None,
+            #     choices=[
+            #         ChatCompletionChoiceDelta(
+            #             message=ChatEntry.assistant(f"[ERROR] {repr(exc)}"),
+            #             index=0,
+            #             finish_reason="error",
+            #         )
+            #     ],
+            # )
+            raise
 
     async def retrieve_references(
         self,
@@ -374,6 +432,7 @@ class LLMEngine:
         if rag_params is None:
             return messages, None
 
+        hyperparams = self._prepare_hyperparams(model, hyperparams)
         messages = self._prepare_messages(messages)
         rag_params = RAGParams.model_validate(rag_params)
         search_query = rag_params.search_query
@@ -381,7 +440,9 @@ class LLMEngine:
         if search_query == "":
             hyperparams.update(temperature=0.01, top_p=0.01, max_tokens=512)
             rewriter_messages = deepcopy(messages)
-            rewriter_messages[0] = ChatEntry.system("You are a concise assistant.")
+            if rewriter_messages[0].role not in (ChatRole.SYSTEM.value, ChatRole.SYSTEM):
+                logger.warning(f"{request.state.id} - `messages[0].role` is not `system` !!!")
+                rewriter_messages.insert(0, ChatEntry.system("You are a concise assistant."))
             query_ori = rewriter_messages[-1].content
 
             # Search query rewriter
@@ -417,7 +478,7 @@ class LLMEngine:
         rag_params.search_query = search_query
         logger.info(f"{request.state.id} - Querying table: {rag_params}")
         lance_path = (
-            f"{CONFIG.owl_db_dir}/{request.state.org_id}/{request.state.project_id}/knowledge"
+            f"{ENV_CONFIG.owl_db_dir}/{request.state.org_id}/{request.state.project_id}/knowledge"
         )
         sqlite_path = f"sqlite:///{lance_path}.db"
         table = KnowledgeTable(sqlite_path, lance_path)
@@ -429,6 +490,8 @@ class LLMEngine:
                 query=search_query,
                 limit=rag_params.k,
                 remove_state_cols=True,
+                float_decimals=0,
+                vec_decimals=0,
                 openai_api_key=self.openai_api_key,
                 anthropic_api_key=self.anthropic_api_key,
                 gemini_api_key=self.gemini_api_key,
@@ -513,22 +576,40 @@ Answer the question.
         rag_params: RAGParams | None = None,
         **hyperparams,
     ) -> AsyncGenerator[References | ChatCompletionChunk, None]:
-        messages, references = await self.retrieve_references(
-            request=request,
-            model=model,
-            messages=messages,
-            rag_params=rag_params,
-            **hyperparams,
-        )
-        if references is not None:
-            yield references
-        async for chunk in self.generate_stream(
-            request=request,
-            model=model,
-            messages=messages,
-            **hyperparams,
-        ):
-            yield chunk
+        try:
+            hyperparams = self._prepare_hyperparams(model, hyperparams)
+            messages, references = await self.retrieve_references(
+                request=request,
+                model=model,
+                messages=messages,
+                rag_params=rag_params,
+                **hyperparams,
+            )
+            if references is not None:
+                yield references
+            async for chunk in self.generate_stream(
+                request=request,
+                model=model,
+                messages=messages,
+                **hyperparams,
+            ):
+                yield chunk
+        except Exception as exc:
+            self._log_exception(request, model, messages, **hyperparams)
+            yield ChatCompletionChunk(
+                id=request.state.id,
+                object="chat.completion.chunk",
+                created=int(time()),
+                model=model,
+                usage=None,
+                choices=[
+                    ChatCompletionChoiceDelta(
+                        message=ChatEntry.assistant(f"[ERROR] {repr(exc)}"),
+                        index=0,
+                        finish_reason="error",
+                    )
+                ],
+            )
 
     async def rag(
         self,
@@ -538,6 +619,7 @@ Answer the question.
         rag_params: RAGParams | dict | None = None,
         **hyperparams,
     ) -> ChatCompletionChunk:
+        hyperparams = self._prepare_hyperparams(model, hyperparams)
         messages, references = await self.retrieve_references(
             request=request,
             model=model,
