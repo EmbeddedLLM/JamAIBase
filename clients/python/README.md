@@ -10,7 +10,7 @@ The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that y
 
 ### Cloud 🚀
 
-1. First, register an account on [JamAI Base Cloud](https://cloud.jamaibase.com/).
+1. First, [sign up for a free account on JamAI Base Cloud!](https://cloud.jamaibase.com/)
 2. Create a project and give it any name that you want.
 3. Create a Python (>= 3.10) environment and install `jamaibase` (here we use [micromamba](https://mamba.readthedocs.io/en/latest/user_guide/micromamba.html) but you can use other tools such as [conda](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html), virtualenv, etc):
 

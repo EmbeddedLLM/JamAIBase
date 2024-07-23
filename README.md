@@ -103,65 +103,18 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
 
 ## Getting Started
 
-### Install Python Client
-
-1. Create a Python (>= 3.10) environment and install `jamaibase`:
-   ```shell
-   $ mm create -n jam310 python=3.10 -y
-   $ pip install jamaibase
-   ```
-
-### Install JS Client
-
-1. Create a Python (>= 3.10) environment and install `jamaibase`:
-   ```shell
-   $ npm install jamaibase
-   ```
-
 ### Option 1: Use the JamAI Base Cloud
 
-Get free LLM tokens on JamAI Base Cloud. [Sign up now.](https://cloud.jamaibase.com/)
+[Sign up for a free account!](https://cloud.jamaibase.com/) Did we mention that you can get free LLM tokens?
 
 ### Option 2: Launch self-hosted services
 
-1. Clone the repository:
-
-   ```shell
-   $ git clone https://github.com/EmbeddedLLM/JamAIBase.git
-   $ cd JamAIBase
-   ```
-
-2. Add your API keys into `.env`:
-
-   ```
-   OPENAI_API_KEY=your_key
-   ```
-
-3. Launch the Docker containers by running one of these:
-
-   ```shell
-   # CPU-only
-   $ docker compose -f docker/compose.cpu.yml up --quiet-pull -d
-
-   # With NVIDIA GPU
-   $ docker compose -f docker/compose.nvidia.yml up --quiet-pull -d
-   ```
-
-<!-- prettier-ignore -->
-> [!TIP]
-> By default, frontend and backend are accessible at ports 4000 and 6969.
-> You can change the ports exposed to host by setting env var like so `API_PORT=6970 FRONTEND_PORT=4001 docker compose -f docker/compose.cpu.yml up --quiet-pull -d`
-
-4. Try the command below in your terminal, or open your browser and go to `localhost:4000`.
-
-   ```shell
-   $ curl localhost:6969/api/v1/models
-   ```
+[Follow our step-by-step guide.](https://docs.jamaibase.com/sdk/python-sdk-documentation#oss)
 
 ### Explore the Documentation:
 
+- [SDK and Platform Documentation](https://docs.jamaibase.com)
 - [API Documentation](https://jamaibase.readme.io)
-- [Platform Documentation](https://docs.jamaibase.com)
 - [Changelog](CHANGELOG.md)
 - [Versioning](VERSIONING.md)
 
@@ -173,6 +126,7 @@ Here are a couple of cool frontend examples:
 
 1. [Simple Chatbot Bot using NLUX](https://docs.jamaibase.com/getting-started/quick-start/nlux-frontend-only): Build a basic chatbot without any backend setup. It's a great way to dip your toes in!
 2. [Simple Chatbot Bot using NLUX + Express.js](https://docs.jamaibase.com/getting-started/quick-start/nlux-+-express.js): Take it a step further and add some backend power with Express.js.
+3. [Simple Chatbot Bot using Streamlit](https://docs.jamaibase.com/sdk/python-sdk-documentation#streamlit-chat-app): Are you a Python dev? Checkout this Streamlit demo!
 
 Let us know if you have any questions – we're here to help! Happy coding! 😊
 
