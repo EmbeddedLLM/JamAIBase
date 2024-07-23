@@ -118,11 +118,15 @@
 
 	async function handleFilesSelectUpload(e: CustomEvent<any>) {
 		const { acceptedFiles, fileRejections } = e.detail;
-		const acceptedFilesWithPath = (acceptedFiles as any[]).map((file: File) => ({
-			file,
-			uploadTo: 'knowledge-table',
-			table_id: $page.params.table_id
-		}));
+		const acceptedFilesWithPath = (acceptedFiles as any[]).map<(typeof $uploadQueue.queue)[number]>(
+			(file: File) => ({
+				file,
+				tableType: 'knowledge-table',
+				table_id: $page.params.table_id,
+				project_id: $page.params.project_id,
+				invalidate: refetchTable
+			})
+		);
 
 		//? Show then hide graphic
 		isUploadingFile = true;
@@ -142,12 +146,6 @@
 				alert('Some files were rejected');
 			}
 		}
-	}
-
-	//! Listen to state update
-	$: if (typeof $uploadQueue.queue.length === 'number' && browser) {
-		// FIXME: Table wont refetch if rows are streaming while uploading
-		refetchTable();
 	}
 
 	function handleUploadClick() {

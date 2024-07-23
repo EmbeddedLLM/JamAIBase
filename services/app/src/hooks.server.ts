@@ -36,7 +36,7 @@ const handleApiProxy: Handle = async ({ event }) => {
 		if (event.locals.user) {
 			const activeOrganizationId = event.cookies.get('activeOrganizationId');
 			const projectId =
-				event.cookies.get('activeProjectId') || event.request.headers.get('x-project-id');
+				event.request.headers.get('x-project-id') || event.cookies.get('activeProjectId');
 
 			if (!projectId) {
 				return json({ message: 'Missing project ID' }, { status: 400 });

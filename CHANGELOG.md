@@ -60,6 +60,7 @@ UI
 - Added button to delete projects
 - Added title to dashboard
 - Added config for building frontend into single-page application
+- Added dialogue to import files and match columns
 - Setup frontend auth test for future tests
 
 CI/CD
@@ -132,19 +133,27 @@ Generative Table
 
 UI
 
-- Standardize & improve UI errors, including validation errors
 - UI design changes
-- Obfuscate org secrets
-- Allow org members to view jamai keys
 - Refactor UI code
-- Fix edge case where organization team page would fail to load
-- Fix change password button not working
+- Standardize & improve UI errors, including validation errors
+- Fix issue where incorrect models would show in select menu
+- Fix issue when navigating table tabs quickly, resulting in duplicate fetch requests
 - Fix missing project ID error when performing certain actions
-- Fix pagination arrows not working in large tables
-- Improve file upload status component
-- Display column dtype on the header
-- Fix tables page not redirecting after switching organizations
-- Improve UX for renaming table columns
+- Fix multiple bugs related to infinite scrolling
+- Organization settings
+  - Obfuscate org secrets
+  - Allow org members to view jamai keys
+  - Fix edge case where organization team page would fail to load
+- User settings
+  - Fix change password button not working
+- Generative Tables
+  - Display column dtype on the header
+  - Improve file upload status component
+  - Improve UX for renaming table columns
+  - Fix pagination arrows not working in large tables
+  - Fix tables page not redirecting after switching organizations
+  - Fix incorrect project ID error when queueing multiple file uploads
+  - Fix unnecessary data invalidation during upload
 
 Backend - owl (API server)
 

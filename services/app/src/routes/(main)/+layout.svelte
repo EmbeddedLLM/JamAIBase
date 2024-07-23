@@ -52,7 +52,8 @@
 					formData,
 					{
 						headers: {
-							'Content-Type': 'multipart/form-data'
+							'Content-Type': 'multipart/form-data',
+							'x-project-id': fileToUpload.project_id
 						},
 						withCredentials: true,
 						onUploadProgress: (progressEvent) => {
@@ -76,6 +77,7 @@
 					);
 				} else {
 					completedUploads = [...completedUploads, fileToUpload];
+					fileToUpload.invalidate?.();
 
 					if (uploadres.data.err_message) {
 						alert(
