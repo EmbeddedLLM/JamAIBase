@@ -812,7 +812,6 @@ GEN_CONFIG_VAR_PATTERN = r"(?<!\\)\${(.*?)}"
 
 
 class MetaEnum(EnumMeta):
-
     def __contains__(cls, x):
         try:
             cls[x]
@@ -853,6 +852,9 @@ class TableType(str, Enum, metaclass=MetaEnum):
     """Knowledge table."""
     chat = "chat"
     """Chat table."""
+
+    def __str__(self) -> str:
+        return self.value
 
 
 class ColumnSchema(BaseModel):
