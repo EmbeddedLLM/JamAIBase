@@ -38,7 +38,6 @@ from jamaibase.protocol import (
     RowUpdateRequest,
     SearchRequest,
     TableDataImportRequest,
-    TableImportRequest,
     TableMetaResponse,
     TableType,
 )
@@ -1213,62 +1212,6 @@ class JamAI:
         )
         return response.content
 
-    def import_table(
-        self,
-        table_type: str | TableType,
-        request: TableImportRequest,
-    ) -> TableMetaResponse:
-        """
-        Imports a table with its schema and data from a parquet file.
-
-        Args:
-            file_path (str): The parquet file path.
-            table_type (str | TableType): Table type.
-            request (TableImportRequest): Table import request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        mime_type = "application/octet-stream"
-        filename = split(request.file_path)[-1]
-        data = {"table_id_dst": request.table_id_dst}
-        # Open the file in binary mode
-        with open(request.file_path, "rb") as f:
-            return self._post(
-                self.api_base,
-                f"/v1/gen_tables/{table_type}/import",
-                request=None,
-                response_model=TableMetaResponse,
-                files={
-                    "file": (filename, f, mime_type),
-                },
-                data=data,
-                timeout=None,
-            )
-
-    def export_table(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-    ) -> bytes:
-        """
-        Exports the row data of a table as a parquet file.
-
-        Args:
-            table_type (str | TableType): Table type.
-            table_id (str): ID or name of the table to be exported.
-
-        Returns:
-            response (list[dict[str, Any]]): The search results.
-        """
-        response = self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}/export",
-            params=None,
-            response_model=None,
-        )
-        return response.content
-
 
 class JamAIAsync(JamAI):
     def __init__(
@@ -2357,62 +2300,6 @@ class JamAIAsync(JamAI):
             self.api_base,
             f"/v1/gen_tables/{table_type}/{quote(table_id)}/export_data",
             params=dict(delimiter=delimiter, columns=columns),
-            response_model=None,
-        )
-        return response.content
-
-    async def import_table(
-        self,
-        table_type: str | TableType,
-        request: TableImportRequest,
-    ) -> TableMetaResponse:
-        """
-        Imports a table with its schema and data from a parquet file.
-
-        Args:
-            file_path (str): The parquet file path.
-            table_type (str | TableType): Table type.
-            request (TableImportRequest): Table import request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        mime_type = "application/octet-stream"
-        filename = split(request.file_path)[-1]
-        data = {"table_id_dst": request.table_id_dst}
-        # Open the file in binary mode
-        with open(request.file_path, "rb") as f:
-            return await self._post(
-                self.api_base,
-                f"/v1/gen_tables/{table_type}/import",
-                request=None,
-                response_model=TableMetaResponse,
-                files={
-                    "file": (filename, f, mime_type),
-                },
-                data=data,
-                timeout=None,
-            )
-
-    async def export_table(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-    ) -> bytes:
-        """
-        Exports the row data of a table as a parquet file.
-
-        Args:
-            table_type (str | TableType): Table type.
-            table_id (str): ID or name of the table to be exported.
-
-        Returns:
-            response (list[dict[str, Any]]): The search results.
-        """
-        response = await self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}/export",
-            params=None,
             response_model=None,
         )
         return response.content
