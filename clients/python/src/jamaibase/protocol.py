@@ -16,14 +16,7 @@ from enum import Enum, EnumMeta
 from typing import Annotated, Any, Generic, Literal, Sequence, TypeVar
 
 import numpy as np
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    computed_field,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 from pydantic.functional_validators import AfterValidator
 from typing_extensions import Self
 
@@ -435,8 +428,7 @@ class CompletionUsage(BaseModel):
         default=0, description="Number of tokens in the generated completion."
     )
     total_tokens: int = Field(
-        default=0,
-        description="Total number of tokens used in the request (prompt + completion).",
+        default=0, description="Total number of tokens used in the request (prompt + completion)."
     )
 
 
@@ -960,10 +952,7 @@ class TableSchema(TableBase):
                         f"`gen_config.messages` must be a list of at least length 1, received: {num_prompts:,d}"
                     )
                 gen_config = ChatRequest.model_validate(self.cols[i].gen_config)
-                if gen_config.messages[0].role not in (
-                    ChatRole.SYSTEM,
-                    ChatRole.SYSTEM.value,
-                ):
+                if gen_config.messages[0].role not in (ChatRole.SYSTEM, ChatRole.SYSTEM.value):
                     raise ValueError(
                         (
                             f"Table '{self.id}': "
@@ -972,10 +961,7 @@ class TableSchema(TableBase):
                             f"Saw {gen_config.messages[0].role} message."
                         )
                     )
-                if gen_config.messages[1].role not in (
-                    ChatRole.USER,
-                    ChatRole.USER.value,
-                ):
+                if gen_config.messages[1].role not in (ChatRole.USER, ChatRole.USER.value):
                     raise ValueError(
                         (
                             f"Table '{self.id}': "
@@ -1344,12 +1330,10 @@ class EmbedFileRequest(BaseModel):
     table_id: str = Field(description="Table name or ID.")
     file_id: str = Field(description="ID of the file.")
     chunk_size: Annotated[
-        int,
-        Field(description="Maximum chunk size (number of characters). Must be > 0.", gt=0),
+        int, Field(description="Maximum chunk size (number of characters). Must be > 0.", gt=0)
     ] = 1000
     chunk_overlap: Annotated[
-        int,
-        Field(description="Overlap in characters between chunks. Must be >= 0.", ge=0),
+        int, Field(description="Overlap in characters between chunks. Must be >= 0.", ge=0)
     ] = 200
     # stream: Annotated[bool, Field(description="Whether or not to stream the LLM generation.")] = (
     #     True
@@ -1367,8 +1351,7 @@ class SearchRequest(BaseModel):
         description="_Optional_. SQL where clause. If not provided, will match all rows.",
     )
     limit: Annotated[int, Field(gt=0, le=1_000)] = Field(
-        default=100,
-        description="_Optional_. Min 1, max 1000. Number of rows to return.",
+        default=100, description="_Optional_. Min 1, max 1000. Number of rows to return."
     )
     metric: str = Field(
         default="cosine",
@@ -1418,12 +1401,10 @@ class FileUploadRequest(BaseModel):
     file_path: Annotated[str, Field(description="File path of the document to be uploaded.")]
     table_id: Annotated[str, Field(description="Knowledge Table name / ID.")]
     chunk_size: Annotated[
-        int,
-        Field(description="Maximum chunk size (number of characters). Must be > 0.", gt=0),
+        int, Field(description="Maximum chunk size (number of characters). Must be > 0.", gt=0)
     ] = 1000
     chunk_overlap: Annotated[
-        int,
-        Field(description="Overlap in characters between chunks. Must be >= 0.", ge=0),
+        int, Field(description="Overlap in characters between chunks. Must be >= 0.", ge=0)
     ] = 200
     # overwrite: Annotated[
     #     bool,
@@ -1453,6 +1434,5 @@ class TableDataImportRequest(BaseModel):
     #     ),
     # ] = None
     delimiter: Annotated[
-        str,
-        Field(description='The delimiter of the file: can be "," or "\\t". Defaults to ",".'),
+        str, Field(description='The delimiter of the file: can be "," or "\\t". Defaults to ",".')
     ] = ","
