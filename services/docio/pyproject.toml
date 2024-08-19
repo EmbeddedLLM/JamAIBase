@@ -86,7 +86,7 @@ dependencies = [
     "python-multipart",
     "s3fs",
     "timm",
-    "torch",
+    "torch~=2.2.0",
     "transformers>=4.38.2",
     "unstructured-client @ git+https://github.com/EmbeddedLLM/unstructured-python-client.git@fix-nested-asyncio-conflict-with-uvloop#egg=unstructured-client",
     "unstructured~=0.14.9",
