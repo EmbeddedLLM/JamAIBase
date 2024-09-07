@@ -137,6 +137,11 @@ Join our vibrant developer community for comprehensive documentation, tutorials,
 - **Discord**: [Join our Discord](https://discord.gg/rV6DECA8Dw)
 - **GitHub**: [Star our GitHub repository](https://github.com/EmbeddedLLM/JamAIBase)
 
+### Community Videos
+
+- [Build Mixture of Agents (MoA) & RAG with Open Source Models in Minutes with JamAI Base](https://www.youtube.com/watch?v=PWNEYUkFYog)
+- [Llama 3.1 405B & 70B vs MacBook Pro. Apple Silicon is overpowered! Bonus: Apple's OpenELM](https://www.youtube.com/watch?v=fXHje7gFGK4)
+
 ## Contributing
 
 We welcome contributions! Please read our [Contributing Guide](Contributing_Guide_Link) to get started.
