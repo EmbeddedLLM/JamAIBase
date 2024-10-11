@@ -1,11 +1,13 @@
 services:
   infinity:
+    # see: https://github.com/truefoundry/cognita/blob/main/docker-compose.yaml
     image: michaelf34/infinity:0.0.63
     container_name: jamai_infinity
     environment:
       - INFINITY_MODEL_ID=${EMBEDDING_MODEL};${RERANKER_MODEL};
       - INFINITY_DEVICE=cpu
-    command: infinity_emb v2      
+      - INFINITY_PORT=6909
+    command: v2      
     healthcheck:
       test: ["CMD-SHELL", "curl --fail http://localhost:6909/health || exit 1"]
       interval: 10s
