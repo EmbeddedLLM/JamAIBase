@@ -1,15 +1,13 @@
 services:
   infinity:
-    image: michaelf34/infinity:0.0.32
+    image: michaelf34/infinity:0.0.63
     container_name: jamai_infinity
-    entrypoint:
-      [
-        "/bin/sh",
-        "-c",
-        "(. /app/.venv/bin/activate && infinity_emb --port 6909 --model-name-or-path $${EMBEDDING_MODEL} --model-warmup --device cpu &);(. /app/.venv/bin/activate && infinity_emb --port 6919 --model-name-or-path $${RERANKER_MODEL} --model-warmup --device cpu )",
-      ]
+    environment:
+      - INFINITY_MODEL_ID=${EMBEDDING_MODEL};${RERANKER_MODEL};
+      - INFINITY_DEVICE=cpu
+    command: infinity_emb v2      
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail http://localhost:6909/health && curl --fail http://localhost:6919/health || exit 1"]
+      test: ["CMD-SHELL", "curl --fail http://localhost:6909/health || exit 1"]
       interval: 10s
       timeout: 2s
       retries: 20
