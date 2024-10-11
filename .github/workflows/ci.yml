@@ -55,7 +55,7 @@ jobs:
         run: |
           set -e
           export API_DEVICE=cpu
-          export EMBEDDING_MODEL=michaelfeil/bge-small-en-v1.5
+          export EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
           export RERANKER_MODEL=mixedbread-ai/mxbai-rerank-xsmall-v1
 
           # Edit .env file
