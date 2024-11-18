@@ -1,6 +1,6 @@
 services:
   infinity:
-    image: michaelf34/infinity:0.0.63
+    image: michaelf34/infinity:0.0.70
     container_name: jamai_infinity
     entrypoint:
       [
