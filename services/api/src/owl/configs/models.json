@@ -135,6 +135,15 @@
       "owned_by": "cohere"
     },
     {
+      "id": "ellm/sentence-transformers/all-MiniLM-L6-v2",
+      "litellm_id": "openai/sentence-transformers/all-MiniLM-L6-v2",
+      "context_length": 8192,
+      "embedding_size": 1024,
+      "languages": ["en"],
+      "api_base": "http://infinity:6909",
+      "owned_by": "ellm"
+    },
+    {
       "id": "ellm/BAAI/bge-small-en-v1.5",
       "litellm_id": "openai/BAAI/bge-small-en-v1.5",
       "context_length": 512,
