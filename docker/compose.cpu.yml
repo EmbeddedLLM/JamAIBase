@@ -5,7 +5,7 @@ services:
     command:
       [
         "v2",
-        "--engine", "torch"
+        "--engine", "torch",
         "--port", "6909",
         "--model-warmup",
         "--model-id", "${EMBEDDING_MODEL}", 
