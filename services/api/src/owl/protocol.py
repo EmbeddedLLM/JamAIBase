@@ -11,33 +11,40 @@ NOTES:
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from datetime import datetime, timezone
 from enum import Enum, EnumMeta
-from functools import reduce
-from typing import Annotated, Any, Generic, Literal, Sequence, Type, TypeVar
+from functools import cached_property, reduce
+from os.path import splitext
+from typing import Annotated, Any, Generic, Literal, Sequence, Type, TypeVar, Union
 
 import numpy as np
 import pyarrow as pa
 from loguru import logger
+from natsort import natsorted
 from pydantic import (
+    AfterValidator,
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Discriminator,
     Field,
+    Tag,
     ValidationError,
     computed_field,
     create_model,
     field_validator,
     model_validator,
 )
-from pydantic.functional_validators import AfterValidator
-from sqlmodel import JSON, Column
+from sqlmodel import JSON, Column, MetaData, SQLModel
 from sqlmodel import Field as sql_Field
-from sqlmodel import MetaData, SQLModel
 from typing_extensions import Self
-from uuid_extensions import uuid7str
 
+from jamaibase import protocol as p
+from jamaibase.exceptions import ResourceNotFoundError
 from jamaibase.utils.io import json_dumps
+from owl.utils import datetime_now_iso, uuid7_draft2_str
+from owl.version import __version__ as owl_version
 
 PositiveInt = Annotated[int, Field(ge=0, description="Positive integer.")]
 PositiveNonZeroInt = Annotated[int, Field(gt=0, description="Positive non-zero integer.")]
@@ -56,50 +63,554 @@ def sanitise_document_id_list(v: list[str]) -> list[str]:
 DocumentID = Annotated[str, AfterValidator(sanitise_document_id)]
 DocumentIDList = Annotated[list[str], AfterValidator(sanitise_document_id_list)]
 
+EXAMPLE_CHAT_MODEL = "openai/gpt-4o-mini"
+
+# for openai embedding models doc: https://platform.openai.com/docs/guides/embeddings
+# for cohere embedding models doc: https://docs.cohere.com/reference/embed
+# for jina embedding models doc: https://jina.ai/embeddings/
+# for voyage embedding models doc: https://docs.voyageai.com/docs/embeddings
+# for hf embedding models doc: check the respective hf model page, name should be ellm/{org}/{model}
+EXAMPLE_EMBEDDING_MODEL = "openai/text-embedding-3-small-512"
+
+# for cohere reranking models doc: https://docs.cohere.com/reference/rerank-1
+# for jina reranking models doc: https://jina.ai/reranker
+# for colbert reranking models doc: https://docs.voyageai.com/docs/reranker
+# for hf embedding models doc: check the respective hf model page, name should be ellm/{org}/{model}
+EXAMPLE_RERANKING_MODEL = "cohere/rerank-multilingual-v3.0"
+
+IMAGE_FILE_EXTENSIONS = [".jpeg", ".jpg", ".png", ".gif", ".webp"]
+DOCUMENT_FILE_EXTENSIONS = [
+    ".pdf",
+    ".txt",
+    ".md",
+    ".docx",
+    ".xml",
+    ".html",
+    ".json",
+    ".csv",
+    ".tsv",
+    ".jsonl",
+    ".xlsx",
+    ".xls",
+]
+
+Name = Annotated[
+    str,
+    BeforeValidator(lambda v, _: v.strip() if isinstance(v, str) else v),
+    Field(
+        pattern=r"\w+",
+        max_length=100,
+        description=(
+            "Name or ID. Must be unique with at least 1 non-symbol character and up to 100 characters."
+        ),
+    ),
+]
+
+
+class UserAgent(BaseModel):
+    is_browser: bool = Field(
+        default=True,
+        description="Whether the request originates from a browser or an app.",
+        examples=[True, False],
+    )
+    agent: str = Field(
+        description="The agent, such as 'SDK', 'Chrome', 'Firefox', 'Edge', or an empty string if it cannot be determined.",
+        examples=["", "SDK", "Chrome", "Firefox", "Edge"],
+    )
+    agent_version: str = Field(
+        default="",
+        description="The agent version, or an empty string if it cannot be determined.",
+        examples=["", "5.0", "0.3.0"],
+    )
+    os: str = Field(
+        default="",
+        description="The system/OS name and release, such as 'Windows NT 10.0', 'Linux 5.15.0-113-generic', or an empty string if it cannot be determined.",
+        examples=["", "Windows NT 10.0", "Linux 5.15.0-113-generic"],
+    )
+    architecture: str = Field(
+        default="",
+        description="The machine type, such as 'AMD64', 'x86_64', or an empty string if it cannot be determined.",
+        examples=["", "AMD64", "x86_64"],
+    )
+    language: str = Field(
+        default="",
+        description="The SDK language, such as 'TypeScript', 'Python', or an empty string if it is not applicable.",
+        examples=["", "TypeScript", "Python"],
+    )
+    language_version: str = Field(
+        default="",
+        description="The SDK language version, such as '4.9', '3.10.14', or an empty string if it is not applicable.",
+        examples=["", "4.9", "3.10.14"],
+    )
+
+    @computed_field(
+        description="The system/OS name, such as 'Linux', 'Darwin', 'Java', 'Windows', or an empty string if it cannot be determined.",
+        examples=["", "Windows NT", "Linux"],
+    )
+    @property
+    def system(self) -> str:
+        return self._split_os_string()[0]
+
+    @computed_field(
+        description="The system's release, such as '2.2.0', 'NT', or an empty string if it cannot be determined.",
+        examples=["", "10", "5.15.0-113-generic"],
+    )
+    @property
+    def system_version(self) -> str:
+        return self._split_os_string()[1]
+
+    def _split_os_string(self) -> tuple[str, str]:
+        match = re.match(r"([^\d]+) ([\d.]+).*$", self.os)
+        if match:
+            os_name = match.group(1).strip()
+            os_version = match.group(2).strip()
+            return os_name, os_version
+        else:
+            return "", ""
+
+    @classmethod
+    def from_user_agent_string(cls, ua_string: str) -> Self:
+        if not ua_string:
+            return cls(is_browser=False, agent="")
+
+        # SDK pattern
+        sdk_match = re.match(r"SDK/(\S+) \((\w+)/(\S+); ([^;]+); (\w+)\)", ua_string)
+        if sdk_match:
+            return cls(
+                is_browser=False,
+                agent="SDK",
+                agent_version=sdk_match.group(1),
+                os=sdk_match.group(4),
+                architecture=sdk_match.group(5),
+                language=sdk_match.group(2),
+                language_version=sdk_match.group(3),
+            )
+
+        # Browser pattern
+        browser_match = re.match(r"Mozilla/5.0 \(([^)]+)\).*", ua_string)
+        if browser_match:
+            os_info = browser_match.group(1).split(";")
+            # Microsoft Edge
+            match = re.match(r".+(Edg/.+)$", ua_string)
+            if match:
+                return cls(
+                    agent="Edge",
+                    agent_version=match.group(1).split("/")[-1].strip(),
+                    os=os_info[0].strip(),
+                    architecture=os_info[-1].strip() if len(os_info) == 3 else "",
+                    language="",
+                    language_version="",
+                )
+            # Firefox
+            match = re.match(r".+(Firefox/.+)$", ua_string)
+            if match:
+                return cls(
+                    agent="Firefox",
+                    agent_version=match.group(1).split("/")[-1].strip(),
+                    os=os_info[0].strip(),
+                    architecture=os_info[-1].strip() if len(os_info) == 3 else "",
+                    language="",
+                    language_version="",
+                )
+            # Chrome
+            match = re.match(r".+(Chrome/.+)$", ua_string)
+            if match:
+                return cls(
+                    agent="Chrome",
+                    agent_version=match.group(1).split("/")[-1].strip(),
+                    os=os_info[0].strip(),
+                    architecture=os_info[-1].strip() if len(os_info) == 3 else "",
+                    language="",
+                    language_version="",
+                )
+        return cls(is_browser="mozilla" in ua_string.lower(), agent="")
+
+
+class ExternalKeys(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    custom: str = ""
+    openai: str = ""
+    anthropic: str = ""
+    gemini: str = ""
+    cohere: str = ""
+    groq: str = ""
+    together_ai: str = ""
+    jina: str = ""
+    voyage: str = ""
+    hyperbolic: str = ""
+    cerebras: str = ""
+    sambanova: str = ""
+
 
 class OkResponse(BaseModel):
     ok: bool = True
 
 
-class Document(BaseModel):
-    """Document class for use in DocIO."""
-
-    page_content: str
-    metadata: dict = {}
-
-
-class Chunk(BaseModel):
-    """Class for storing a piece of text and associated metadata."""
-
-    text: str = Field(description="Document chunk text.")
-    title: str = Field(default="", description='Document title. Defaults to "".')
-    page: int = Field(default=0, description="Page number. Defaults to 0.")
-    file_name: str = Field(default="", description="Document file name.")
-    file_path: str = Field(default="", description="Document file path.")
-    document_id: str = Field(default="", description="Document ID.")
-    chunk_id: str = Field(default="", description="Chunk ID.")
-    metadata: dict = Field(
-        default_factory=dict,
-        description="Arbitrary metadata about the page content (e.g., source, relationships to other documents, etc.).",
+class StringResponse(BaseModel):
+    object: Literal["string"] = Field(
+        default="string",
+        description='The object type, which is always "string".',
+        examples=["string"],
+    )
+    data: str = Field(
+        description="The string data.",
+        examples=["text"],
     )
 
 
-class SplitChunksParams(BaseModel):
-    method: str = Field(
-        default="RecursiveCharacterTextSplitter",
-        description="Name of the splitter.",
-        examples=["RecursiveCharacterTextSplitter"],
+class AdminOrderBy(str, Enum):
+    ID = "id"
+    """Sort by `id` column."""
+    NAME = "name"
+    """Sort by `name` column."""
+    CREATED_AT = "created_at"
+    """Sort by `created_at` column."""
+    UPDATED_AT = "updated_at"
+    """Sort by `updated_at` column."""
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class GenTableOrderBy(str, Enum):
+    ID = "id"
+    """Sort by `id` column."""
+    UPDATED_AT = "updated_at"
+    """Sort by `updated_at` column."""
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class TemplateMeta(BaseModel):
+    """Template metadata."""
+
+    name: Name
+    description: str
+    tags: list[str]
+    created_at: str = Field(
+        default_factory=datetime_now_iso,
+        description="Creation datetime (ISO 8601 UTC).",
     )
-    chunk_size: PositiveNonZeroInt = Field(
-        default=1000,
-        description="Maximum chunk size (number of characters). Must be > 0.",
-        examples=[1000],
+
+
+class ModelCapability(str, Enum):
+    COMPLETION = "completion"
+    CHAT = "chat"
+    IMAGE = "image"
+    EMBED = "embed"
+    RERANK = "rerank"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class ModelInfo(BaseModel):
+    id: str = Field(
+        description=(
+            'Unique identifier in the form of "{provider}/{model_id}". '
+            "Users will specify this to select a model."
+        ),
+        examples=[EXAMPLE_CHAT_MODEL],
     )
-    chunk_overlap: PositiveInt = Field(
-        default=200,
-        description="Overlap in characters between chunks. Must be >= 0.",
-        examples=[200],
+    object: str = Field(
+        default="model",
+        description="Type of API response object.",
+        examples=["model"],
     )
+    name: str = Field(
+        description="Name of the model.",
+        examples=["OpenAI GPT-4o Mini"],
+    )
+    context_length: int = Field(
+        description="Context length of model.",
+        examples=[16384],
+    )
+    languages: list[str] = Field(
+        description="List of languages which the model is well-versed in.",
+        examples=[["en"]],
+    )
+    owned_by: str = Field(
+        default="",
+        description="The organization that owns the model. Defaults to the provider in model ID.",
+        examples=["openai"],
+    )
+    capabilities: list[ModelCapability] = Field(
+        description="List of capabilities of model.",
+        examples=[[ModelCapability.CHAT]],
+    )
+
+    @model_validator(mode="after")
+    def check_owned_by(self) -> Self:
+        if self.owned_by.strip() == "":
+            self.owned_by = self.id.split("/")[0]
+        return self
+
+
+class ModelInfoResponse(BaseModel):
+    object: str = Field(
+        default="chat.model_info",
+        description="Type of API response object.",
+        examples=["chat.model_info"],
+    )
+    data: list[ModelInfo] = Field(
+        description="List of model information.",
+    )
+
+
+class ModelDeploymentConfig(BaseModel):
+    litellm_id: str = Field(
+        default="",
+        description=(
+            "LiteLLM routing / mapping ID. "
+            'For example, you can map "openai/gpt-4o" calls to "openai/gpt-4o-2024-08-06". '
+            'For vLLM with OpenAI compatible server, use "openai/<vllm_model_id>".'
+        ),
+        examples=[EXAMPLE_CHAT_MODEL],
+    )
+    api_base: str = Field(
+        default="",
+        description="Hosting url for the model.",
+    )
+    provider: str = Field(
+        default="",
+        description="Provider of the model.",
+    )
+
+
+class ModelConfig(ModelInfo):
+    priority: int = Field(
+        default=0,
+        ge=0,
+        description="Priority when assigning default model. Larger number means higher priority.",
+    )
+    deployments: list[ModelDeploymentConfig] = Field(
+        [],
+        description="List of model deployment configs.",
+    )
+    litellm_id: str = Field(
+        default="",
+        deprecated=True,
+        description=(
+            "Deprecated. Retained for compatibility. "
+            "LiteLLM routing / mapping ID. "
+            'For example, you can map "openai/gpt-4o" calls to "openai/gpt-4o-2024-08-06". '
+            'For vLLM with OpenAI compatible server, use "openai/<vllm_model_id>".'
+        ),
+        examples=[EXAMPLE_CHAT_MODEL],
+    )
+    api_base: str = Field(
+        default="",
+        deprecated=True,
+        description="Deprecated. Retained for compatibility. Hosting url for the model.",
+    )
+
+    @model_validator(mode="after")
+    def compat_deployments(self) -> Self:
+        if len(self.deployments) > 0:
+            return self
+        self.deployments = [
+            ModelDeploymentConfig(
+                litellm_id=self.litellm_id,
+                api_base=self.api_base,
+                provider=self.id.split("/")[0],
+            )
+        ]
+        return self
+
+
+class LLMModelConfig(ModelConfig):
+    input_cost_per_mtoken: float = Field(
+        default=-1.0,
+        description="Cost in USD per million (mega) input / prompt token.",
+    )
+    output_cost_per_mtoken: float = Field(
+        default=-1.0,
+        description="Cost in USD per million (mega) output / completion token.",
+    )
+    capabilities: list[ModelCapability] = Field(
+        default=[ModelCapability.CHAT],
+        description="List of capabilities of model.",
+        examples=[[ModelCapability.CHAT]],
+    )
+
+    @model_validator(mode="after")
+    def check_cost_per_mtoken(self) -> Self:
+        # GPT-4o-mini pricing (2024-08-10)
+        if self.input_cost_per_mtoken <= 0:
+            self.input_cost_per_mtoken = 0.150
+        if self.output_cost_per_mtoken <= 0:
+            self.output_cost_per_mtoken = 0.600
+        return self
+
+
+class EmbeddingModelConfig(ModelConfig):
+    id: str = Field(
+        description=(
+            'Unique identifier in the form of "{provider}/{model_id}". '
+            'For self-hosted models with Infinity, use "ellm/{org}/{model}". '
+            "Users will specify this to select a model."
+        ),
+        examples=["ellm/sentence-transformers/all-MiniLM-L6-v2", EXAMPLE_EMBEDDING_MODEL],
+    )
+    embedding_size: int = Field(
+        description="Embedding size of the model",
+    )
+    # Currently only useful for openai
+    dimensions: int | None = Field(
+        default=None,
+        description="Dimensions, a reduced embedding size (openai specs).",
+    )
+    # Most likely only useful for hf models
+    transform_query: str | None = Field(
+        default=None,
+        description="Transform query that might be needed, esp. for hf models",
+    )
+    capabilities: list[ModelCapability] = Field(
+        default=[ModelCapability.EMBED],
+        description="List of capabilities of model.",
+        examples=[[ModelCapability.EMBED]],
+    )
+    cost_per_mtoken: float = Field(
+        default=-1,
+        description="Cost in USD per million embedding tokens.",
+    )
+
+    @model_validator(mode="after")
+    def check_cost_per_mtoken(self) -> Self:
+        # OpenAI text-embedding-3-small pricing (2024-09-09)
+        if self.cost_per_mtoken < 0:
+            self.cost_per_mtoken = 0.022
+        return self
+
+
+class RerankingModelConfig(ModelConfig):
+    id: str = Field(
+        description=(
+            'Unique identifier in the form of "{provider}/{model_id}". '
+            'For self-hosted models with Infinity, use "ellm/{org}/{model}". '
+            "Users will specify this to select a model."
+        ),
+        examples=["ellm/cross-encoder/ms-marco-TinyBERT-L-2", EXAMPLE_RERANKING_MODEL],
+    )
+    capabilities: list[ModelCapability] = Field(
+        default=[ModelCapability.RERANK],
+        description="List of capabilities of model.",
+        examples=[[ModelCapability.RERANK]],
+    )
+    cost_per_ksearch: float = Field(
+        default=-1,
+        description="Cost in USD for a thousand searches.",
+    )
+
+    @model_validator(mode="after")
+    def check_cost_per_ksearch(self) -> Self:
+        # Cohere rerank-multilingual-v3.0 pricing (2024-09-09)
+        if self.cost_per_ksearch < 0:
+            self.cost_per_ksearch = 2.0
+        return self
+
+
+class ModelListConfig(BaseModel):
+    object: str = Field(
+        default="configs.models",
+        description="Type of API response object.",
+        examples=["configs.models"],
+    )
+    llm_models: list[LLMModelConfig] = []
+    embed_models: list[EmbeddingModelConfig] = []
+    rerank_models: list[RerankingModelConfig] = []
+
+    @cached_property
+    def models(self) -> list[LLMModelConfig | EmbeddingModelConfig | RerankingModelConfig]:
+        """A list of all the models."""
+        return self.llm_models + self.embed_models + self.rerank_models
+
+    @cached_property
+    def model_map(self) -> dict[str, LLMModelConfig | EmbeddingModelConfig | RerankingModelConfig]:
+        """A map of all the models."""
+        return {m.id: m for m in self.models}
+
+    def get_model_info(
+        self, model_id: str
+    ) -> LLMModelConfig | EmbeddingModelConfig | RerankingModelConfig:
+        try:
+            return self.model_map[model_id]
+        except KeyError:
+            raise ValueError(
+                f"Invalid model ID: {model_id}. Available models: {[m.id for m in self.models]}"
+            ) from None
+
+    def get_llm_model_info(self, model_id: str) -> LLMModelConfig:
+        return self.get_model_info(model_id)
+
+    def get_embed_model_info(self, model_id: str) -> EmbeddingModelConfig:
+        return self.get_model_info(model_id)
+
+    def get_rerank_model_info(self, model_id: str) -> RerankingModelConfig:
+        return self.get_model_info(model_id)
+
+    def get_default_model(self, capabilities: list[str] | None = None) -> str:
+        models = self.models
+        if capabilities is not None:
+            for capability in capabilities:
+                models = [m for m in models if capability in m.capabilities]
+        if len(models) == 0:
+            raise ResourceNotFoundError(f"No model found with capabilities: {capabilities}")
+        model = natsorted(models, key=self._sort_key_with_priority)[0]
+        return model.id
+
+    @staticmethod
+    def _sort_key_with_priority(
+        x: LLMModelConfig | EmbeddingModelConfig | RerankingModelConfig,
+    ) -> str:
+        return (int(not x.id.startswith("ellm")), -x.priority, x.name)
+
+    @model_validator(mode="after")
+    def sort_models(self) -> Self:
+        self.llm_models = list(natsorted(self.llm_models, key=self._sort_key))
+        self.embed_models = list(natsorted(self.embed_models, key=self._sort_key))
+        self.rerank_models = list(natsorted(self.rerank_models, key=self._sort_key))
+        return self
+
+    @model_validator(mode="after")
+    def unique_model_ids(self) -> Self:
+        if len(set(m.id for m in self.models)) != len(self.models):
+            raise ValueError("There are repeated model IDs in the config.")
+        return self
+
+    @staticmethod
+    def _sort_key(
+        x: LLMModelConfig | EmbeddingModelConfig | RerankingModelConfig,
+    ) -> str:
+        return (int(not x.id.startswith("ellm")), x.name)
+
+    def __add__(self, other: ModelListConfig) -> ModelListConfig:
+        if isinstance(other, ModelListConfig):
+            self_ids = set(m.id for m in self.models)
+            other_ids = set(m.id for m in other.models)
+            repeated_ids = self_ids.intersection(other_ids)
+            if len(repeated_ids) != 0:
+                raise ValueError(
+                    f"There are repeated model IDs among the two configs: {list(repeated_ids)}"
+                )
+            return ModelListConfig(
+                llm_models=self.llm_models + other.llm_models,
+                embed_models=self.embed_models + other.embed_models,
+                rerank_models=self.rerank_models + other.rerank_models,
+            )
+        else:
+            raise TypeError(
+                f"Unsupported operand type(s) for +: 'ModelListConfig' and '{type(other)}'"
+            )
+
+
+class Chunk(p.Chunk):
+    pass
+
+
+class SplitChunksParams(p.SplitChunksParams):
+    pass
 
 
 class SplitChunksRequest(BaseModel):
@@ -145,9 +656,11 @@ class SplitChunksRequest(BaseModel):
 
 class RAGParams(BaseModel):
     table_id: str = Field(description="Knowledge Table ID", examples=["my-dataset"], min_length=2)
-    reranking_model: Annotated[
-        str | None, Field(description="Reranking model to use for hybrid search.")
-    ] = None
+    reranking_model: str | None = Field(
+        default=None,
+        description="Reranking model to use for hybrid search.",
+        examples=[EXAMPLE_RERANKING_MODEL, None],
+    )
     search_query: str = Field(
         default="",
         description="Query used to retrieve items from the KB database. If not provided (default), it will be generated using LLM.",
@@ -214,164 +727,6 @@ class VectorSearchResponse(BaseModel):
     )
 
 
-class ModelCapability(str, Enum):
-    completion = "completion"
-    chat = "chat"
-    image = "image"
-    embed = "embed"
-    rerank = "rerank"
-
-
-DEFAULT_CHAT_MODEL = "openai/gpt-3.5-turbo"
-
-# for openai embedding models doc: https://platform.openai.com/docs/guides/embeddings
-# for cohere embedding models doc: https://docs.cohere.com/reference/embed
-# for jina embedding models doc: https://jina.ai/embeddings/
-# for voyage embedding models doc: https://docs.voyageai.com/docs/embeddings
-# for hf embedding models doc: check the respective hf model page, name should be ellm/{org}/{model}
-DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small-512"
-
-# for cohere reranking models doc: https://docs.cohere.com/reference/rerank-1
-# for jina reranking models doc: https://jina.ai/reranker
-# for colbert reranking models doc: https://docs.voyageai.com/docs/reranker
-# for hf embedding models doc: check the respective hf model page, name should be ellm/{org}/{model}
-DEFAULT_RERANKING_MODEL = "cohere/rerank-multilingual-v3.0"
-
-
-class ModelInfo(BaseModel):
-    id: str = Field(
-        description="Unique identifier of the model.",
-        examples=[DEFAULT_CHAT_MODEL],
-    )
-    object: str = Field(
-        default="model",
-        description="Type of API response object.",
-        examples=["model"],
-    )
-    name: str = Field(
-        default=DEFAULT_CHAT_MODEL,
-        description="Name of model.",
-        examples=[DEFAULT_CHAT_MODEL],
-    )
-    context_length: int = Field(
-        description="Context length of model.",
-        examples=[16384],
-    )
-    languages: list[str] = Field(
-        description="List of languages which the model is well-versed in.",
-        examples=[["en"]],
-    )
-    capabilities: list[Literal["completion", "chat", "image", "embed", "rerank"]] = Field(
-        description="List of capabilities of model.",
-        examples=[["chat"]],
-    )
-    owned_by: str = Field(
-        description="The organization that owns the model.",
-        examples=["openai"],
-    )
-
-
-class ModelInfoResponse(BaseModel):
-    object: str = Field(
-        default="chat.model_info",
-        description="Type of API response object.",
-        examples=["chat.model_info"],
-    )
-    data: list[ModelInfo] = Field(
-        description="List of model information.",
-    )
-
-
-class LLMModelConfig(ModelInfo):
-    litellm_id: str = Field(
-        default="",
-        description="LiteLLM routing name for self-hosted models.",
-        # exclude=True,
-    )
-    api_base: str = Field(
-        default="",
-        description="Hosting url for the model.",
-    )
-
-
-class EmbeddingModelConfig(BaseModel):
-    id: str = Field(
-        description=(
-            "Provider and model name in this format {provider}/{model}, "
-            "for self-host model with infinity do ellm/{org}/{model}"
-        )
-    )
-    litellm_id: str = Field(
-        description="LiteLLM compatible model ID.",
-    )
-    owned_by: str = Field(
-        description="The organization that owns the model.",
-        examples=["openai"],
-    )
-    context_length: int = Field(
-        description="Max context length of the model.",
-    )
-    embedding_size: int = Field(
-        description="Embedding size of the model",
-    )
-    dimensions: int | None = Field(
-        default=None,
-        description="Dimensions, a reduced embedding size (openai specs).",
-    )  # currently only useful for openai
-    languages: list[str] | None = Field(
-        default=["en"],
-        description="Supported language",
-    )
-    transform_query: str | None = Field(
-        default=None,
-        description="Transform query that might be needed, esp. for hf models",
-    )  # most likely only useful for hf models
-    api_base: str = Field(
-        default="",
-        description="Hosting url for the model.",
-    )
-    capabilities: list[Literal["embed"]] = Field(
-        default=["embed"],
-        description="List of capabilities of model.",
-        examples=[["embed"]],
-    )
-
-
-class RerankingModelConfig(BaseModel):
-    id: str = Field(
-        description=(
-            "Provider and model name in this format {provider}/{model}, "
-            "for self-host model with infinity do ellm/{org}/{model}"
-        )
-    )
-    owned_by: str = Field(
-        description="The organization that owns the model.",
-        examples=["openai"],
-    )
-    context_length: int = Field(
-        description="Max context length of the model.",
-    )
-    languages: list[str] | None = Field(
-        default=["en"],
-        description="Supported language.",
-    )
-    api_base: str = Field(
-        default="",
-        description="Hosting url for the model.",
-    )
-    capabilities: list[Literal["rerank"]] = Field(
-        default=["rerank"],
-        description="List of capabilities of model.",
-        examples=[["rerank"]],
-    )
-
-
-class ModelListConfig(BaseModel):
-    llm_models: list[LLMModelConfig]
-    embed_models: list[EmbeddingModelConfig]
-    rerank_models: list[RerankingModelConfig]
-
-
 class ChatRole(str, Enum):
     """Represents who said a chat message."""
 
@@ -384,8 +739,8 @@ class ChatRole(str, Enum):
     # FUNCTION = "function"
     # """The message is the result of a function call."""
 
-
-pat = re.compile(r"[^a-zA-Z0-9_-]")
+    def __str__(self) -> str:
+        return self.value
 
 
 def sanitise_name(v: str) -> str:
@@ -397,7 +752,7 @@ def sanitise_name(v: str) -> str:
     Returns:
         out (str): Sanitised name string that is safe for OpenAI.
     """
-    return re.sub(pat, "_", v).strip()
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", v).strip()
 
 
 MessageName = Annotated[str, AfterValidator(sanitise_name)]
@@ -406,14 +761,11 @@ MessageName = Annotated[str, AfterValidator(sanitise_name)]
 class ChatEntry(BaseModel):
     """Represents a message in the chat context."""
 
-    model_config = ConfigDict(
-        use_enum_values=True,
-        frozen=True,
-    )
+    model_config = ConfigDict(use_enum_values=True)
 
     role: ChatRole
     """Who said the message?"""
-    content: str
+    content: str | list[dict[str, str | dict[str, str]]]
     """The content of the message."""
     name: MessageName | None = None
     """The name of the user who sent the message, if set (user messages only)."""
@@ -429,14 +781,22 @@ class ChatEntry(BaseModel):
         return cls(role=ChatRole.USER, content=content, **kwargs)
 
     @classmethod
-    def assistant(cls, content: str | None, **kwargs):
+    def assistant(cls, content: str | list[dict[str, str]] | None, **kwargs):
         """Create a new assistant message."""
         return cls(role=ChatRole.ASSISTANT, content=content, **kwargs)
 
     @field_validator("content", mode="before")
     @classmethod
-    def handle_null_content(cls, v: Any) -> Any:
-        return "" if v is None else v
+    def coerce_input(cls, value: Any) -> str | list[dict[str, str | dict[str, str]]]:
+        if isinstance(value, list):
+            return [cls.coerce_input(v) for v in value]
+        if isinstance(value, dict):
+            return {k: cls.coerce_input(v) for k, v in value.items()}
+        if isinstance(value, str):
+            return value
+        if value is None:
+            return ""
+        return str(value)
 
 
 class ChatThread(BaseModel):
@@ -495,7 +855,7 @@ class ChatCompletionChoiceDelta(ChatCompletionChoice):
 class References(BaseModel):
     object: str = Field(
         default="chat.references",
-        description="The object type, which is always `chat.references`.",
+        description="Type of API response object.",
         examples=["chat.references"],
     )
     chunks: list[Chunk] = Field(
@@ -542,41 +902,13 @@ Otherwise, it will be None or null.
         return copy
 
 
-class GenTableStreamReferences(References):
-    object: str = Field(
-        default="gen_table.references",
-        description="The object type, which is always `gen_table.references`.",
-        examples=["gen_table.references"],
-    )
-    output_column_name: str
-
-
-class GenTableChatCompletionChunks(BaseModel):
-    object: str = Field(
-        default="gen_table.completion.chunks",
-        description="The object type, which is always `gen_table.completion.chunks`.",
-        examples=["gen_table.completion.chunks"],
-    )
-    columns: dict[str, ChatCompletionChunk]
-    row_id: str
-
-
-class GenTableRowsChatCompletionChunks(BaseModel):
-    object: str = Field(
-        default="gen_table.completion.rows",
-        description="The object type, which is always `gen_table.completion.rows`.",
-        examples=["gen_table.completion.rows"],
-    )
-    rows: list[GenTableChatCompletionChunks]
-
-
 class ChatCompletionChunk(BaseModel):
     id: str = Field(
         description="A unique identifier for the chat completion. Each chunk has the same ID."
     )
     object: str = Field(
         default="chat.completion.chunk",
-        description="The object type, which is always `chat.completion.chunk`.",
+        description="Type of API response object.",
         examples=["chat.completion.chunk"],
     )
     created: int = Field(
@@ -608,19 +940,47 @@ class ChatCompletionChunk(BaseModel):
         return self.usage.completion_tokens
 
     @property
-    def text(self) -> str | None:
+    def text(self) -> str:
         """The text of the most recent chat completion."""
-        return self.message.content if len(self.choices) > 0 else None
+        return self.message.content if len(self.choices) > 0 else ""
 
     @property
     def finish_reason(self) -> str | None:
         return self.choices[0].finish_reason if len(self.choices) > 0 else None
 
 
+class GenTableStreamReferences(References):
+    object: str = Field(
+        default="gen_table.references",
+        description="Type of API response object.",
+        examples=["gen_table.references"],
+    )
+    output_column_name: str
+
+
+class GenTableChatCompletionChunks(BaseModel):
+    object: str = Field(
+        default="gen_table.completion.chunks",
+        description="Type of API response object.",
+        examples=["gen_table.completion.chunks"],
+    )
+    columns: dict[str, ChatCompletionChunk]
+    row_id: str
+
+
+class GenTableRowsChatCompletionChunks(BaseModel):
+    object: str = Field(
+        default="gen_table.completion.rows",
+        description="Type of API response object.",
+        examples=["gen_table.completion.rows"],
+    )
+    rows: list[GenTableChatCompletionChunks]
+
+
 class GenTableStreamChatCompletionChunk(ChatCompletionChunk):
     object: str = Field(
         default="gen_table.completion.chunk",
-        description="The object type, which is always `gen_table.completion.chunk`.",
+        description="Type of API response object.",
         examples=["gen_table.completion.chunk"],
     )
     output_column_name: str
@@ -633,7 +993,7 @@ class ChatRequest(BaseModel):
         description="Chat ID. Must be unique against document ID for it to be embeddable. Defaults to ''.",
     )
     model: str = Field(
-        default=DEFAULT_CHAT_MODEL,
+        default="",
         description="ID of the model to use. See the model endpoint compatibility table for details on which models work with the Chat API.",
     )
     messages: list[ChatEntry] = Field(
@@ -646,23 +1006,23 @@ class ChatRequest(BaseModel):
         examples=[None],
     )
     temperature: Annotated[float, Field(ge=0.001, le=2.0)] = Field(
-        default=1.0,
+        default=0.2,
         description="""
 What sampling temperature to use, in [0.001, 2.0].
 Higher values like 0.8 will make the output more random,
 while lower values like 0.2 will make it more focused and deterministic.
 """,
-        examples=[1.0],
+        examples=[0.2],
     )
     top_p: Annotated[float, Field(ge=0.001, le=1.0)] = Field(
-        default=1.0,
+        default=0.6,
         description="""
 An alternative to sampling with temperature, called nucleus sampling,
 where the model considers the results of the tokens with top_p probability mass.
 So 0.1 means only the tokens comprising the top 10% probability mass are considered.
 Must be in [0.001, 1.0].
 """,
-        examples=[1.0],
+        examples=[0.6],
     )
     n: int = Field(
         default=1,
@@ -726,14 +1086,12 @@ values like -100 or 100 should result in a ban or exclusive selection of the rel
         examples=[""],
     )
 
-    @model_validator(mode="after")
-    def convert_stop(self) -> Self:
-        # TODO: Introduce this in v0.3
-        # if isinstance(self.stop, list) and len(self.stop) == 0:
-        #     self.stop = None
-        if self.stop is None:
-            self.stop = []
-        return self
+    @field_validator("stop", mode="after")
+    @classmethod
+    def convert_stop(cls, v: list[str] | None) -> list[str] | None:
+        if isinstance(v, list) and len(v) == 0:
+            v = None
+        return v
 
 
 class EmbeddingRequest(BaseModel):
@@ -750,7 +1108,7 @@ class EmbeddingRequest(BaseModel):
             "The ID of the model to use. "
             "You can use the List models API to see all of your available models."
         ),
-        examples=["openai/text-embedding-3-small-512"],
+        examples=[EXAMPLE_EMBEDDING_MODEL],
     )
     type: Literal["query", "document"] = Field(
         default="document",
@@ -773,7 +1131,7 @@ class EmbeddingRequest(BaseModel):
 class EmbeddingResponseData(BaseModel):
     object: str = Field(
         default="embedding",
-        description="The object type, which is always `embedding`.",
+        description="Type of API response object.",
         examples=["embedding"],
     )
     embedding: list[float] | str = Field(
@@ -793,7 +1151,7 @@ class EmbeddingResponseData(BaseModel):
 class EmbeddingResponse(BaseModel):
     object: str = Field(
         default="list",
-        description="The object type, which is always `list`.",
+        description="Type of API response object.",
         examples=["list"],
     )
     data: list[EmbeddingResponseData] = Field(
@@ -830,6 +1188,9 @@ class Page(BaseModel, Generic[T]):
     offset: Annotated[int, Field(description="Number of skipped items.", examples=[0])] = 0
     limit: Annotated[int, Field(description="Number of items per page.", examples=[0])] = 0
     total: Annotated[int, Field(description="Total number of items.", examples=[0])] = 0
+    starting_after: Annotated[
+        str | int | None, Field(description="Pagination cursor.", examples=["31a0552", 0, None])
+    ] = None
 
 
 def nd_array_before_validator(x):
@@ -840,8 +1201,8 @@ def datetime_str_before_validator(x):
     return x.isoformat() if isinstance(x, datetime) else str(x)
 
 
-COL_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_ \-]{0,98}[a-zA-Z0-9]$"
-TABLE_NAME_PATTERN = r"^[a-zA-Z0-9][a-zA-Z0-9_\-\.]{0,98}[a-zA-Z0-9]$"
+COL_NAME_PATTERN = r"^[A-Za-z0-9]([A-Za-z0-9 _-]{0,98}[A-Za-z0-9])?$"
+TABLE_NAME_PATTERN = r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$"
 ODD_SINGLE_QUOTE = r"(?<!')'(?!')"
 GEN_CONFIG_VAR_PATTERN = r"(?<!\\)\${(.*?)}"
 NdArray = Annotated[
@@ -857,10 +1218,11 @@ ColName = Annotated[
     Field(
         pattern=COL_NAME_PATTERN,
         description=(
-            "Column name or ID. Must be unique. "
-            "Must has at least 2 characters and up to 100 characters."
-            "First and last characters must be an alphanumeric. "
-            "Characters in the middle can include `_` (underscore), `-` (dash), ` ` (space)."
+            "Column name or ID. "
+            "Must be unique with at least 1 character and up to 100 characters. "
+            "Must start and end with an alphabet or number. "
+            "Characters in the middle can include `_` (underscore), `-` (dash), ` ` (space). "
+            'Cannot be called "ID" or "Updated at" (case-insensitive).'
         ),
     ),
 ]
@@ -869,10 +1231,10 @@ TableName = Annotated[
     Field(
         pattern=TABLE_NAME_PATTERN,
         description=(
-            "Table name or ID. Must be unique. "
-            "Must has at least 2 characters and up to 100 characters."
-            "First and last characters must be an alphanumeric. "
-            "Characters in the middle can include `_` (underscore), `-` (dash), ` ` (space)."
+            "Table name or ID. "
+            "Must be unique with at least 1 character and up to 100 characters. "
+            "Must start and end with an alphabet or number. "
+            "Characters in the middle can include `_` (underscore), `-` (dash), `.` (dot)."
         ),
     ),
 ]
@@ -885,6 +1247,8 @@ _str_to_arrow = {
     "float16": pa.float16(),
     "bool": pa.bool_(),
     "str": pa.utf8(),  # Alias for `pa.string()`
+    "chat": pa.utf8(),
+    "file": pa.utf8(),
 }
 _str_to_py_type = {
     "int": int,
@@ -896,8 +1260,8 @@ _str_to_py_type = {
     "bool": bool,
     "str": str,
     "date-time": datetime,
+    "chat": str,
     "file": str,
-    "bytes": bytes,
 }
 
 
@@ -908,7 +1272,6 @@ def str_to_py_type(py_type: str, vlen: int = 0, json_safe: bool = False):
 
 
 class MetaEnum(EnumMeta):
-
     def __contains__(cls, x):
         try:
             cls[x]
@@ -918,44 +1281,228 @@ class MetaEnum(EnumMeta):
 
 
 class CSVDelimiter(Enum, metaclass=MetaEnum):
-    comma = ","
+    COMMA = ","
     """Comma-separated"""
-    tab = "\t"
+    TAB = "\t"
     """Tab-separated"""
 
-
-class DtypeEnum(str, Enum, metaclass=MetaEnum):
-    int_ = "int"
-    int8 = "int8"
-    float_ = "float"
-    float32 = "float32"
-    float16 = "float16"
-    bool_ = "bool"
-    str_ = "str"
-    date_time = "date-time"
+    def __str__(self) -> str:
+        return self.value
 
 
-class DtypeCreateEnum(str, Enum, metaclass=MetaEnum):
-    int_ = "int"
-    float_ = "float"
-    bool_ = "bool"
-    str_ = "str"
+class ColumnDtype(str, Enum, metaclass=MetaEnum):
+    INT = "int"
+    INT8 = "int8"
+    FLOAT = "float"
+    FLOAT32 = "float32"
+    FLOAT16 = "float16"
+    BOOL = "bool"
+    STR = "str"
+    DATE_TIME = "date-time"
+    FILE = "file"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class ColumnDtypeCreate(str, Enum, metaclass=MetaEnum):
+    INT = "int"
+    FLOAT = "float"
+    BOOL = "bool"
+    STR = "str"
+    FILE = "file"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 class TableType(str, Enum, metaclass=MetaEnum):
-    action = "action"
+    ACTION = "action"
     """Action table."""
-    knowledge = "knowledge"
+    KNOWLEDGE = "knowledge"
     """Knowledge table."""
-    chat = "chat"
+    CHAT = "chat"
     """Chat table."""
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class LLMGenConfig(BaseModel):
+    object: Literal["gen_config.llm"] = Field(
+        default="gen_config.llm",
+        description='The object type, which is always "gen_config.llm".',
+        examples=["gen_config.llm"],
+    )
+    model: str = Field(
+        default="",
+        description="ID of the model to use. See the model endpoint compatibility table for details on which models work with the Chat API.",
+    )
+    system_prompt: str = Field(
+        default="",
+        description="System prompt for the LLM.",
+    )
+    prompt: str = Field(
+        default="",
+        description="Prompt for the LLM.",
+    )
+    multi_turn: bool = Field(
+        default=False,
+        description="Whether this column is a multi-turn chat with history along the entire column.",
+    )
+    rag_params: RAGParams | None = Field(
+        default=None,
+        description="Retrieval Augmented Generation search params. Defaults to None (disabled).",
+        examples=[None],
+    )
+    temperature: Annotated[float, Field(ge=0.001, le=2.0)] = Field(
+        default=0.2,
+        description="""
+What sampling temperature to use, in [0.001, 2.0].
+Higher values like 0.8 will make the output more random,
+while lower values like 0.2 will make it more focused and deterministic.
+""",
+        examples=[0.2],
+    )
+    top_p: Annotated[float, Field(ge=0.001, le=1.0)] = Field(
+        default=0.6,
+        description="""
+An alternative to sampling with temperature, called nucleus sampling,
+where the model considers the results of the tokens with top_p probability mass.
+So 0.1 means only the tokens comprising the top 10% probability mass are considered.
+Must be in [0.001, 1.0].
+""",
+        examples=[0.6],
+    )
+    stop: list[str] | None = Field(
+        default=None,
+        description="Up to 4 sequences where the API will stop generating further tokens.",
+        examples=[None],
+    )
+    max_tokens: PositiveNonZeroInt = Field(
+        default=2048,
+        description="""
+The maximum number of tokens to generate in the chat completion.
+Must be in [1, context_length - 1). Default is 2048.
+The total length of input tokens and generated tokens is limited by the model's context length.
+""",
+        examples=[2048],
+    )
+    presence_penalty: float = Field(
+        default=0.0,
+        description="""
+Number between -2.0 and 2.0. Positive values penalize new tokens based on whether they appear in the text so far,
+increasing the model's likelihood to talk about new topics.
+""",
+        examples=[0.0],
+    )
+    frequency_penalty: float = Field(
+        default=0.0,
+        description="""
+Number between -2.0 and 2.0. Positive values penalize new tokens based on their existing frequency in the text so far,
+decreasing the model's likelihood to repeat the same line verbatim.
+""",
+        examples=[0.0],
+    )
+    logit_bias: dict = Field(
+        default={},
+        description="""
+Modify the likelihood of specified tokens appearing in the completion.
+Accepts a json object that maps tokens (specified by their token ID in the tokenizer)
+to an associated bias value from -100 to 100.
+Mathematically, the bias is added to the logits generated by the model prior to sampling.
+The exact effect will vary per model, but values between -1 and 1 should decrease or increase likelihood of selection;
+values like -100 or 100 should result in a ban or exclusive selection of the relevant token.
+""",
+        examples=[{}],
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def compat(cls, data: Any) -> Any:
+        if isinstance(data, BaseModel):
+            data = data.model_dump()
+        if not isinstance(data, dict):
+            raise TypeError(
+                f"Input to `LLMGenConfig` must be a dict or BaseModel, received: {type(data)}"
+            )
+        if data.get("system_prompt", None) or data.get("prompt", None):
+            return data
+        messages: list[dict[str, Any]] = data.get("messages", [])
+        num_prompts = len(messages)
+        if num_prompts >= 2:
+            data["system_prompt"] = messages[0]["content"]
+            data["prompt"] = messages[1]["content"]
+        elif num_prompts == 1:
+            if messages[0]["role"] == "system":
+                data["system_prompt"] = messages[0]["content"]
+                data["prompt"] = ""
+            elif messages[0]["role"] == "user":
+                data["system_prompt"] = ""
+                data["prompt"] = messages[0]["content"]
+            else:
+                raise ValueError(
+                    f'Attribute "messages" cannot contain only assistant messages: {messages}'
+                )
+        data["object"] = "gen_config.llm"
+        return data
+
+    @field_validator("stop", mode="after")
+    @classmethod
+    def convert_stop(cls, v: list[str] | None) -> list[str] | None:
+        if isinstance(v, list) and len(v) == 0:
+            v = None
+        return v
+
+
+class EmbedGenConfig(BaseModel):
+    object: Literal["gen_config.embed"] = Field(
+        default="gen_config.embed",
+        description='The object type, which is always "gen_config.embed".',
+        examples=["gen_config.embed"],
+    )
+    embedding_model: str = Field(
+        description="The embedding model to use.",
+        examples=[EXAMPLE_EMBEDDING_MODEL],
+    )
+    source_column: str = Field(
+        description="The source column for embedding.",
+        examples=["text_column"],
+    )
+
+
+def _gen_config_discriminator(x: Any) -> str | None:
+    object_attr = getattr(x, "object", None)
+    if object_attr:
+        return object_attr
+    if isinstance(x, BaseModel):
+        x = x.model_dump()
+    if isinstance(x, dict):
+        if "object" in x:
+            return x["object"]
+        if "embedding_model" in x:
+            return "gen_config.embed"
+        else:
+            return "gen_config.llm"
+    return None
+
+
+GenConfig = LLMGenConfig | EmbedGenConfig
+DiscriminatedGenConfig = Annotated[
+    Union[
+        Annotated[LLMGenConfig, Tag("gen_config.llm")],
+        Annotated[LLMGenConfig, Tag("gen_config.chat")],
+        Annotated[EmbedGenConfig, Tag("gen_config.embed")],
+    ],
+    Discriminator(_gen_config_discriminator),
+]
 
 
 class ColumnSchema(BaseModel):
     id: str = Field(description="Column name.")
-    dtype: DtypeEnum = Field(
-        default=DtypeEnum.str_,
-        description='Column data type, one of ["int", "int8", "float", "float32", "float16", "bool", "str", "date-time"]',
+    dtype: ColumnDtype = Field(
+        default=ColumnDtype.STR,
+        description='Column data type, one of ["int", "int8", "float", "float32", "float16", "bool", "str", "date-time", "file"]',
     )
     vlen: PositiveInt = Field(  # type: ignore
         default=0,
@@ -971,37 +1518,33 @@ class ColumnSchema(BaseModel):
             "Only applies to string and vector columns. Defaults to True."
         ),
     )
-    gen_config: dict[str, Any] | None = Field(
+    gen_config: DiscriminatedGenConfig | None = Field(
         default=None,
         description=(
-            '_Optional_. Generation config in the form of `ChatRequest`. If provided, then this column will be an "Output Column". '
+            '_Optional_. Generation config. If provided, then this column will be an "Output Column". '
             "Table columns on its left can be referenced by `${column-name}`."
         ),
     )
 
     @model_validator(mode="after")
     def check_vector_column_dtype(self) -> Self:
-        if self.vlen > 0 and self.dtype not in (DtypeEnum.float32, DtypeEnum.float16):
+        if self.vlen > 0 and self.dtype not in (ColumnDtype.FLOAT32, ColumnDtype.FLOAT16):
             raise ValueError("Vector columns must contain float32 or float16 only.")
-        return self
-
-    @model_validator(mode="after")
-    def validate_gen_config(self) -> Self:
-        if self.gen_config is not None:
-            # Validate
-            if "embedding_model" in self.gen_config:
-                self.gen_config = EmbedGenConfig.model_validate(self.gen_config).model_dump()
-            else:
-                self.gen_config = ChatRequest.model_validate(self.gen_config).model_dump()
         return self
 
 
 class ColumnSchemaCreate(ColumnSchema):
     id: ColName = Field(description="Column name.")
-    dtype: DtypeCreateEnum = Field(
-        default=DtypeCreateEnum.str_,
-        description='Column data type, one of ["int", "float", "bool", "str"]',
+    dtype: ColumnDtypeCreate = Field(
+        default=ColumnDtypeCreate.STR,
+        description='Column data type, one of ["int", "float", "bool", "str", "file"]',
     )
+
+    @model_validator(mode="after")
+    def check_output_column_dtype(self) -> Self:
+        if self.gen_config is not None and self.vlen == 0 and self.dtype != ColumnDtype.STR:
+            raise ValueError("Output column must be string column.")
+        return self
 
 
 class TableSQLModel(SQLModel):
@@ -1010,7 +1553,14 @@ class TableSQLModel(SQLModel):
 
 class TableBase(TableSQLModel):
     id: str = sql_Field(primary_key=True, description="Table name.")
-    # version: int = 0
+    version: str = sql_Field(
+        default=owl_version, description="Table version, following owl version."
+    )
+    meta: dict[str, Any] = sql_Field(
+        sa_column=Column(JSON),
+        default={},
+        description="Additional metadata about the table.",
+    )
 
 
 class TableSchema(TableBase):
@@ -1052,7 +1602,7 @@ class TableSchema(TableBase):
         for c in self.cols:
             cols.append(c)
             if c.id.lower() not in ("id", "updated at"):
-                cols.append(ColumnSchema(id=f"{c.id}_", dtype=DtypeEnum.str_))
+                cols.append(ColumnSchema(id=f"{c.id}_", dtype=ColumnDtype.STR))
         self.cols = cols
         return self
 
@@ -1064,10 +1614,40 @@ class TableSchema(TableBase):
             self (TableSchemaCreate): TableSchemaCreate
         """
         self.cols = [
-            ColumnSchema(id="ID", dtype=DtypeEnum.str_),
-            ColumnSchema(id="Updated at", dtype=DtypeEnum.date_time),
+            ColumnSchema(id="ID", dtype=ColumnDtype.STR),
+            ColumnSchema(id="Updated at", dtype=ColumnDtype.DATE_TIME),
         ] + self.cols
         return self
+
+    @staticmethod
+    def get_default_prompts(
+        table_id: str,
+        curr_column: ColumnSchema,
+        column_ids: list[str],
+    ) -> tuple[str, str]:
+        input_cols = "\n\n".join(c + ": ${" + c + "}" for c in column_ids)
+        if getattr(curr_column.gen_config, "multi_turn", False):
+            system_prompt = (
+                f'You are an agent named "{table_id}". Be helpful. Provide answers based on the information given. '
+                "Ensuring that your reply is easy to understand and is accessible to all users. "
+                "Be factual and do not hallucinate."
+            )
+            user_prompt = "${User}"
+        else:
+            system_prompt = (
+                "You are a versatile data generator. "
+                "Your task is to process information from input data and generate appropriate responses "
+                "based on the specified column name and input data. "
+                "Adapt your output format and content according to the column name provided."
+            )
+            user_prompt = (
+                f'Table name: "{table_id}"\n\n'
+                f"{input_cols}\n\n"
+                f'Based on the available information, provide an appropriate response for the column "{curr_column.id}".\n'
+                "Remember to act as a cell in a spreadsheet and provide concise, "
+                "relevant information without explanations unless specifically requested."
+            )
+        return system_prompt, user_prompt
 
     @model_validator(mode="after")
     def check_gen_configs(self) -> Self:
@@ -1075,62 +1655,48 @@ class TableSchema(TableBase):
             gen_config = col.gen_config
             if gen_config is None:
                 continue
-            col_ids = set(col.id for col in self.cols[:i] if not col.id.endswith("_"))
-            if col.vlen > 0:
-                gen_config = EmbedGenConfig.model_validate(gen_config)
-                if gen_config.source_column not in col_ids:
+            available_cols = [
+                col
+                for col in self.cols[:i]
+                if (not col.id.endswith("_"))
+                and col.id.lower() not in ("id", "updated at")
+                and col.vlen == 0
+            ]
+            col_ids = [col.id for col in available_cols]
+            col_ids_set = set(col_ids)
+            if isinstance(gen_config, EmbedGenConfig):
+                if gen_config.source_column not in col_ids_set:
                     raise ValueError(
                         (
                             f"Table '{self.id}': "
                             f"Embedding config of column '{col.id}' referenced "
                             f"an invalid source column '{gen_config.source_column}'. "
                             "Make sure you only reference columns on its left. "
-                            f"Available columns: {list(col_ids)}."
+                            f"Available columns: {col_ids}."
                         )
                     )
-            else:
-                num_prompts = len(gen_config["messages"])
-                if num_prompts > 2:
-                    self.cols[i].gen_config["messages"] = self.cols[i].gen_config["messages"][:2]
-                elif num_prompts == 2:
-                    pass
-                elif num_prompts == 1:
-                    self.cols[i].gen_config["messages"].append(
-                        ChatEntry.user(content=".").model_dump()
-                    )
-                else:
-                    raise ValueError(
-                        f"`gen_config.messages` must be a list of at least length 1, received: {num_prompts:,d}"
-                    )
-                gen_config = ChatRequest.model_validate(self.cols[i].gen_config)
-                if gen_config.messages[0].role not in (ChatRole.SYSTEM, ChatRole.SYSTEM.value):
-                    raise ValueError(
-                        (
-                            f"Table '{self.id}': "
-                            "The first `ChatEntry` in `gen_config.messages` "
-                            f"of column '{col.id}' is not a system prompt. "
-                            f"Saw {gen_config.messages[0].role} message."
-                        )
-                    )
-                if gen_config.messages[1].role not in (ChatRole.USER, ChatRole.USER.value):
-                    raise ValueError(
-                        (
-                            f"Table '{self.id}': "
-                            "The second `ChatEntry` in `gen_config.messages` "
-                            f"of column '{col.id}' is not a user prompt. "
-                            f"Saw {gen_config.messages[1].role} message."
-                        )
-                    )
-                for message in gen_config.messages:
-                    for key in re.findall(GEN_CONFIG_VAR_PATTERN, message.content):
-                        if key not in col_ids:
+            elif isinstance(gen_config, LLMGenConfig):
+                # Insert default prompts if needed
+                system_prompt, user_prompt = self.get_default_prompts(
+                    table_id=self.id,
+                    curr_column=col,
+                    column_ids=[col.id for col in available_cols if col.gen_config is None],
+                )
+                if not gen_config.system_prompt.strip():
+                    gen_config.system_prompt = system_prompt
+                if not gen_config.prompt.strip():
+                    gen_config.prompt = user_prompt
+                # Check references
+                for message in (gen_config.system_prompt, gen_config.prompt):
+                    for key in re.findall(GEN_CONFIG_VAR_PATTERN, message):
+                        if key not in col_ids_set:
                             raise ValueError(
                                 (
                                     f"Table '{self.id}': "
                                     f"Generation prompt of column '{col.id}' referenced "
                                     f"an invalid source column '{key}'. "
                                     "Make sure you only reference columns on its left. "
-                                    f"Available columns: {list(col_ids)}."
+                                    f"Available columns: {col_ids}."
                                 )
                             )
         return self
@@ -1148,13 +1714,6 @@ class TableSchemaCreate(TableSchema):
             raise ValueError("Schema cannot contain column names: 'ID' or 'Updated at'.")
         if sum(c.vlen > 0 for c in self.cols) > 0:
             raise ValueError("Schema cannot contain columns with `vlen` > 0.")
-        return self
-
-
-class AddColumnSchema(TableSchemaCreate):
-    @model_validator(mode="after")
-    def check_gen_configs(self) -> Self:
-        # Check gen config using TableSchema
         return self
 
 
@@ -1180,6 +1739,11 @@ class KnowledgeTableSchemaCreate(TableSchemaCreate):
             raise ValueError("Schema cannot contain column names: 'Text', 'Title', 'File ID'.")
         return self
 
+    @staticmethod
+    def get_default_prompts(*args, **kwargs) -> tuple[str, str]:
+        # This should act as if its AddKnowledgeColumnSchema
+        return "", ""
+
 
 class AddKnowledgeColumnSchema(TableSchemaCreate):
     @model_validator(mode="after")
@@ -1203,6 +1767,9 @@ class ChatTableSchemaCreate(TableSchemaCreate):
         num_text_cols = sum(c.id.lower() in ("user", "ai") for c in self.cols)
         if num_text_cols != 2:
             raise ValueError("Schema must contain column names: 'User' and 'AI'.")
+        for c in self.cols:
+            if c.id.lower() == "ai":
+                c.gen_config.multi_turn = True
         return self
 
 
@@ -1231,7 +1798,7 @@ class TableMeta(TableBase, table=True):
         description="Chat title. Defaults to ''.",
     )
     updated_at: str = sql_Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        default_factory=datetime_now_iso,
         description="Table last update timestamp (ISO 8601 UTC).",
     )  # SQLite does not support TZ
     indexed_at_fts: str | None = sql_Field(
@@ -1246,7 +1813,7 @@ class TableMeta(TableBase, table=True):
 
     @property
     def cols_schema(self) -> list[ColumnSchema]:
-        return [ColumnSchema.model_validate(c) for c in self.cols]
+        return [ColumnSchema.model_validate(c) for c in deepcopy(self.cols)]
 
     @property
     def regular_cols(self) -> list[ColumnSchema]:
@@ -1270,7 +1837,10 @@ class TableMetaResponse(TableSchema):
     indexed_at_sca: str | None = Field(
         description="Table last scalar index timestamp (ISO 8601 UTC)."
     )
-    num_rows: int = Field(description="Number of rows in the table.")
+    num_rows: int = Field(
+        default=-1,
+        description="Number of rows in the table. Defaults to -1 (not counted).",
+    )
 
     @model_validator(mode="after")
     def check_gen_configs(self) -> Self:
@@ -1334,7 +1904,7 @@ class RowAddData(BaseModel):
         self.errors = [[] for _ in self.data]
 
         # Validate
-        for d, err in zip(self.data, self.errors):
+        for d, err in zip(self.data, self.errors, strict=True):
             # Fill in missing cols
             if check_missing_cols:
                 for k in cols:
@@ -1360,13 +1930,13 @@ class RowAddData(BaseModel):
                     d[k] = None
                     # state["error"] = True
                 if d[k] is None:
-                    if col.dtype == DtypeEnum.int_:
+                    if col.dtype == ColumnDtype.INT:
                         d[k] = 0
-                    elif col.dtype == DtypeEnum.float_:
+                    elif col.dtype == ColumnDtype.FLOAT:
                         d[k] = 0.0
-                    elif col.dtype == DtypeEnum.bool_:
+                    elif col.dtype == ColumnDtype.BOOL:
                         d[k] = False
-                    elif col.dtype == DtypeEnum.str_:
+                    elif col.dtype in (ColumnDtype.STR, ColumnDtype.FILE):
                         # Store null string as ""
                         # https://github.com/lancedb/lancedb/issues/1160
                         d[k] = ""
@@ -1393,14 +1963,14 @@ class RowAddData(BaseModel):
         """
         for d in self.data:
             if "ID" not in d:
-                d["ID"] = uuid7str()
+                d["ID"] = uuid7_draft2_str()
         return self
 
     def sql_escape(self) -> Self:
         cols = {c.id: c for c in self.table_meta.cols_schema}
         for d in self.data:
             for k in list(d.keys()):
-                if cols[k].dtype == DtypeEnum.str_:
+                if cols[k].dtype == ColumnDtype.STR:
                     d[k] = re.sub(ODD_SINGLE_QUOTE, "''", d[k])
         return self
 
@@ -1417,16 +1987,11 @@ class RowUpdateData(RowAddData):
         return self._handle_nulls_and_validate(check_missing_cols=False)
 
 
-class EmbedGenConfig(BaseModel):
-    embedding_model: str
-    source_column: str
-
-
 class GenConfigUpdateRequest(BaseModel):
     table_id: TableName = Field(description="Table name or ID.")
-    column_map: dict[ColName, dict | None] = Field(
+    column_map: dict[ColName, DiscriminatedGenConfig | None] = Field(
         description=(
-            "Mapping of column ID to generation config JSON in the form of `ChatRequest`. "
+            "Mapping of column ID to generation config JSON in the form of `GenConfig`. "
             "Table columns on its left can be referenced by `${column-name}`."
         )
     )
@@ -1434,7 +1999,7 @@ class GenConfigUpdateRequest(BaseModel):
     @model_validator(mode="after")
     def check_column_map(self) -> Self:
         if sum(n.lower() in ("id", "updated at") for n in self.column_map) > 0:
-            raise ValueError("`column_map` cannot contain keys: 'ID' or 'Updated at'.")
+            raise ValueError("column_map cannot contain keys: 'ID' or 'Updated at'.")
         return self
 
 
@@ -1455,6 +2020,13 @@ class ColumnReorderRequest(BaseModel):
     table_id: TableName = Field(description="Table name or ID.")
     column_names: list[ColName] = Field(description="List of column ID in the desired order.")
 
+    @field_validator("column_names", mode="after")
+    @classmethod
+    def check_unique_column_names(cls, value: list[ColName]) -> list[ColName]:
+        if len(set(n.lower() for n in value)) != len(value):
+            raise ValueError("Column names must be unique (case-insensitive).")
+        return value
+
 
 class ColumnDropRequest(BaseModel):
     table_id: TableName = Field(description="Table name or ID.")
@@ -1469,7 +2041,7 @@ class ColumnDropRequest(BaseModel):
 
 class Task(BaseModel):
     output_column_name: str
-    body: ChatRequest
+    body: LLMGenConfig
 
 
 class RowAdd(BaseModel):
@@ -1533,7 +2105,8 @@ class RowAddRequest(BaseModel):
                     else v
                 )
             }
-            for k, v in self.data.items()
+            for row in self.data
+            for k, v in row.items()
         ]
         return (
             f"{self.__class__.__name__}("
@@ -1541,6 +2114,22 @@ class RowAddRequest(BaseModel):
             f"concurrent={self.concurrent}  data={_data}"
             ")"
         )
+
+    @model_validator(mode="after")
+    def check_data(self) -> Self:
+        for row in self.data:
+            for value in row.values():
+                if isinstance(value, str) and (
+                    value.startswith("s3://") or value.startswith("file://")
+                ):
+                    extension = splitext(value)[1].lower()
+                    if extension not in IMAGE_FILE_EXTENSIONS:
+                        raise ValueError(
+                            "Unsupported file type. Make sure the file belongs to "
+                            "one of the following formats: \n"
+                            f"[Image File Types]: \n{IMAGE_FILE_EXTENSIONS}"
+                        )
+        return self
 
 
 class RowAddRequestWithLimit(RowAddRequest):
@@ -1573,6 +2162,33 @@ class RowUpdateRequest(BaseModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def check_data(self) -> Self:
+        for value in self.data.values():
+            if isinstance(value, str) and (
+                value.startswith("s3://") or value.startswith("file://")
+            ):
+                extension = splitext(value)[1].lower()
+                if extension not in IMAGE_FILE_EXTENSIONS:
+                    raise ValueError(
+                        "Unsupported file type. Make sure the file belongs to "
+                        "one of the following formats: \n"
+                        f"[Image File Types]: \n{IMAGE_FILE_EXTENSIONS}"
+                    )
+        return self
+
+
+class RegenStrategy(str, Enum):
+    """Strategies for selecting columns during row regeneration."""
+
+    RUN_ALL = "run_all"
+    RUN_BEFORE = "run_before"
+    RUN_SELECTED = "run_selected"
+    RUN_AFTER = "run_after"
+
+    def __str__(self) -> str:
+        return self.value
+
 
 class RowRegen(BaseModel):
     table_id: TableName = Field(
@@ -1580,6 +2196,27 @@ class RowRegen(BaseModel):
     )
     row_id: str = Field(
         description="ID of the row to regenerate.",
+    )
+    regen_strategy: RegenStrategy = Field(
+        default=RegenStrategy.RUN_ALL,
+        description=(
+            "_Optional_. Strategy for selecting columns to regenerate."
+            "Choose `run_all` to regenerate all columns in the specified row; "
+            "Choose `run_before` to regenerate columns up to the specified column_id; "
+            "Choose `run_selected` to regenerate only the specified column_id; "
+            "Choose `run_after` to regenerate columns starting from the specified column_id; "
+        ),
+    )
+    output_column_id: str | None = Field(
+        default=None,
+        description=(
+            "_Optional_. Output column name to indicate the starting or ending point of regen for `run_before`, "
+            "`run_selected` and `run_after` strategies. Required if `regen_strategy` is not 'run_all'. "
+            "Given columns are 'C1', 'C2', 'C3' and 'C4', if column_id is 'C3': "
+            "`run_before` regenerate columns 'C1', 'C2' and 'C3'; "
+            "`run_selected` regenerate only column 'C3'; "
+            "`run_after` regenerate columns 'C3' and 'C4'; "
+        ),
     )
     stream: bool = Field(
         description="Whether or not to stream the LLM generation.",
@@ -1606,6 +2243,27 @@ class RowRegenRequest(BaseModel):
         max_length=100,
         description="List of ID of the row to regenerate. Minimum 1 row, maximum 100 rows.",
     )
+    regen_strategy: RegenStrategy = Field(
+        default=RegenStrategy.RUN_ALL,
+        description=(
+            "_Optional_. Strategy for selecting columns to regenerate."
+            "Choose `run_all` to regenerate all columns in the specified row; "
+            "Choose `run_before` to regenerate columns up to the specified column_id; "
+            "Choose `run_selected` to regenerate only the specified column_id; "
+            "Choose `run_after` to regenerate columns starting from the specified column_id; "
+        ),
+    )
+    output_column_id: str | None = Field(
+        default=None,
+        description=(
+            "_Optional_. Output column name to indicate the starting or ending point of regen for `run_before`, "
+            "`run_selected` and `run_after` strategies. Required if `regen_strategy` is not 'run_all'. "
+            "Given columns are 'C1', 'C2', 'C3' and 'C4', if column_id is 'C3': "
+            "`run_before` regenerate columns 'C1', 'C2' and 'C3'; "
+            "`run_selected` regenerate only column 'C3'; "
+            "`run_after` regenerate columns 'C3' and 'C4'; "
+        ),
+    )
     stream: bool = Field(
         description="Whether or not to stream the LLM generation.",
     )
@@ -1620,6 +2278,19 @@ class RowRegenRequest(BaseModel):
         default=True,
         description="_Optional_. Whether or not to concurrently generate the output rows and columns.",
     )
+
+    @model_validator(mode="after")
+    def check_output_column_id_provided(self) -> Self:
+        if self.regen_strategy != RegenStrategy.RUN_ALL and self.output_column_id is None:
+            raise ValueError(
+                "`output_column_id` is required for regen_strategy other than 'run_all'."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def sort_row_ids(self) -> Self:
+        self.row_ids = sorted(self.row_ids)
+        return self
 
 
 class RowDeleteRequest(BaseModel):
@@ -1707,7 +2378,7 @@ class SearchRequest(BaseModel):
     )
     vec_decimals: int = Field(
         default=0,
-        description="_Optional_. Number of decimals for vectors. Defaults to 0 (no rounding).",
+        description="_Optional_. Number of decimals for vectors. If its negative, exclude vector columns. Defaults to 0 (no rounding).",
     )
     reranking_model: Annotated[
         str | None, Field(description="Reranking model to use for hybrid search.")
@@ -1751,5 +2422,18 @@ class TableDataImportRequest(BaseModel):
     #     ),
     # ] = None
     delimiter: Annotated[
-        str, Field(description='The delimiter of the file: can be "," or "\\t". Defaults to ",".')
+        str,
+        Field(description='The delimiter of the file: can be "," or "\\t". Defaults to ",".'),
     ] = ","
+
+
+class FileUploadResponse(p.FileUploadResponse):
+    pass
+
+
+class GetURLRequest(p.GetURLRequest):
+    pass
+
+
+class GetURLResponse(p.GetURLResponse):
+    pass

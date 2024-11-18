@@ -4,10 +4,12 @@ select = C,E,F,W,B,B950
 extend-ignore = E203,E402,E501,F541,W503,F401
 extend-exclude =
     .vscode/,
+    __ref__/
     archive/,
     build/,
-    configs/,
+    clients/typescript/,
     dependencies/,
+    services/app/,
     venv/,
     **/dist
     **/build

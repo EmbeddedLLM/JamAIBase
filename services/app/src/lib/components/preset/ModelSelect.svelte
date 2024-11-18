@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
+	import { page } from '$app/stores';
 	import throttle from 'lodash/throttle';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
 	import { modelsAvailable } from '$globalStore';
 	import { cn } from '$lib/utils';
 	import logger from '$lib/logger';
 
-	import { toast } from 'svelte-sonner';
+	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
+	import Portal from '$lib/components/Portal.svelte';
+	import Tooltip from '$lib/components/Tooltip.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Select from '$lib/components/ui/select';
 
@@ -14,6 +17,7 @@
 	export let selectCb: (modelId: string) => void = (modelId) => (selectedModel = modelId);
 	export let capabilityFilter: 'completion' | 'chat' | 'image' | 'embed' | 'rerank' | undefined =
 		undefined;
+	export let showCapabilities = false;
 
 	/** Additional trigger button class */
 	let className: string | undefined = undefined;
@@ -25,9 +29,13 @@
 	export let buttonText: string;
 
 	async function getModels() {
+		if (disabled) return;
+
 		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/models`, {
-			method: 'GET',
-			credentials: 'same-origin'
+			credentials: 'same-origin',
+			headers: {
+				'x-project-id': $page.params.project_id
+			}
 		});
 
 		const responseBody = await response.json();
@@ -37,11 +45,45 @@
 			logger.error('MODELS_FETCH_FAILED', responseBody);
 			console.error(responseBody);
 			toast.error('Failed to fetch models', {
-				description: responseBody.message || JSON.stringify(responseBody)
+				id: responseBody.message || JSON.stringify(responseBody),
+				description: CustomToastDesc,
+				componentProps: {
+					description: responseBody.message || JSON.stringify(responseBody),
+					requestID: responseBody.request_id
+				}
 			});
 		}
 	}
 	const throttledInvalidateModels = throttle(getModels, 5000);
+
+	let animationFrameId: ReturnType<typeof requestAnimationFrame> | null;
+	let tooltip: HTMLDivElement;
+	let tooltipPos = { x: 0, y: 0, visible: false };
+	function handleMouseOver(event: MouseEvent) {
+		if (animationFrameId) {
+			cancelAnimationFrame(animationFrameId);
+		}
+
+		animationFrameId = requestAnimationFrame(() => {
+			let x = event.clientX;
+			let y = event.clientY;
+
+			if (window.innerWidth - event.clientX - 15 < tooltip.offsetWidth) {
+				x -= tooltip.offsetWidth;
+			} else {
+				x += 10;
+				y += 10;
+			}
+
+			if (window.innerHeight - event.clientY < tooltip.offsetHeight) {
+				y -= tooltip.offsetHeight;
+			}
+
+			tooltipPos = { x, y, visible: true };
+
+			animationFrameId = null;
+		});
+	}
 </script>
 
 <Select.Root
@@ -57,10 +99,11 @@
 			<Button
 				{disabled}
 				builders={[builder]}
-				variant="outline"
-				title="Select model"
+				variant="outline-neutral"
+				title={buttonText}
 				class={cn(
-					'flex items-center justify-between gap-8 pl-3 pr-2 h-10 min-w-full bg-white data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1]',
+					selectedModel ? '' : 'italic text-muted-foreground hover:text-muted-foreground',
+					'grid grid-cols-[minmax(0,1fr)_min-content] gap-2 pl-3 pr-2 h-10 min-w-full rounded-md',
 					className
 				)}
 			>
@@ -68,21 +111,47 @@
 					{buttonText}
 				</span>
 
-				<ChevronDown class="h-4 w-4" />
+				<ChevronDown class="flex-[0_0_auto] h-4 w-4" />
 			</Button>
 		</Select.Trigger>
 	</div>
-	<Select.Content {sameWidth} side="bottom" class="max-h-96 overflow-y-auto">
-		{#each $modelsAvailable as { id, languages, capabilities }}
+	<Select.Content {sameWidth} side="bottom" class="max-h-64 overflow-y-auto">
+		{#each $modelsAvailable as { id, name, languages, capabilities, owned_by }}
+			{@const isDisabled =
+				owned_by !== 'ellm' &&
+				$page.data.organizationData?.tier === 'free' &&
+				!$page.data.organizationData?.credit &&
+				!$page.data.organizationData?.external_keys?.[owned_by]}
 			{#if !capabilityFilter || capabilities.includes(capabilityFilter)}
 				<Select.Item
+					disabled={isDisabled}
+					title={!isDisabled ? id : undefined}
 					value={id}
 					label={id}
 					labelSelected
-					class="flex justify-between gap-10 cursor-pointer"
+					class="relative grid grid-cols-[minmax(0,1fr)_45px] gap-2 cursor-pointer"
 				>
-					{id}
-					<span class="uppercase">{languages.join(', ')}</span>
+					{#if isDisabled}
+						<!-- svelte-ignore a11y-no-static-element-interactions -->
+						<!-- svelte-ignore a11y-mouse-events-have-key-events -->
+						<div
+							on:mousemove={handleMouseOver}
+							on:mouseleave={() => {
+								if (animationFrameId) cancelAnimationFrame(animationFrameId);
+								tooltipPos.visible = false;
+							}}
+							class="absolute -top-1 -bottom-1 left-0 right-0 pointer-events-auto cursor-default"
+						></div>
+					{/if}
+					{name}
+
+					{#if showCapabilities}
+						<span class="ml-auto uppercase place-self-center text-xs text-right">
+							{capabilities.join('\n')}
+						</span>
+					{:else}
+						<span class="ml-auto uppercase place-self-center">{languages.join(', ')}</span>
+					{/if}
 				</Select.Item>
 			{/if}
 		{/each}
@@ -93,3 +162,16 @@
 		{/if}
 	</Select.Content>
 </Select.Root>
+
+<Portal>
+	<Tooltip
+		bind:tooltip
+		class="z-[9999]"
+		style="--arrow-size: 10px; left: {tooltipPos.x}px; top: {tooltipPos.y}px; visibility: {tooltipPos.visible
+			? 'visible'
+			: 'hidden'}"
+		showArrow={false}
+	>
+		Upgrade your plan, purchase credits, or provide an API key to use this model
+	</Tooltip>
+</Portal>

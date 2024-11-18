@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import IO, Any, Callable, Iterator
+from typing import Any, Callable, Iterator
 
 from langchain_community.document_loaders.base import BaseLoader
 from langchain_core.documents import Document
@@ -74,7 +74,7 @@ class UnstructuredBaseLoader(BaseLoader, ABC):
             text_dict: dict[int, str] = {}
             meta_dict: dict[int, dict] = {}
 
-            for idx, element in enumerate(elements):
+            for element in elements:
                 metadata = element["metadata"]
                 if hasattr(element, "metadata"):
                     metadata.update(element["metadata"])
@@ -180,7 +180,7 @@ class UnstructuredAPIFileLoader(UnstructuredBaseLoader):
 
 
 if __name__ == "__main__":
-    filename = "clients/python/tests/docx/Recommendation Letter.docx"
+    filename = "clients/python/tests/files/docx/Recommendation Letter.docx"
     doc_loader = UnstructuredAPIFileLoader(
         filename,
         mode="single",

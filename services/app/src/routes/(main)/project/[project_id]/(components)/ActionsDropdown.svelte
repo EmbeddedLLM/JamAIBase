@@ -1,42 +1,40 @@
 <script lang="ts">
-	import { PUBLIC_JAMAI_URL } from '$env/static/public';
+	import { PUBLIC_IS_LOCAL, PUBLIC_JAMAI_URL } from '$env/static/public';
 	import toUpper from 'lodash/toUpper';
 	import xorWith from 'lodash/xorWith';
 	import { v4 as uuidv4 } from 'uuid';
 	import axios from 'axios';
 	import Papa from 'papaparse';
 	import Fuse from 'fuse.js';
-	import Trash_2 from 'lucide-svelte/icons/trash-2';
+	import { DropdownMenu as DropdownMenuPrimitive } from 'bits-ui';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import { showLoadingOverlay } from '$globalStore';
 	import { extendArray, textToFileDownload } from '$lib/utils';
 	import logger from '$lib/logger';
-	import type { GenTable, GenTableStreamEvent } from '$lib/types';
+	import type { GenTable } from '$lib/types';
 
-	import { ColumnMatchDialog } from '../(dialogs)';
-	import { toast } from 'svelte-sonner';
+	import { ColumnMatchDialog, DeleteTableDialog } from '../(dialogs)';
+	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import ArrowFilledRightIcon from '$lib/icons/ArrowFilledRightIcon.svelte';
-	import ColumnIcon from '$lib/icons/ColumnIcon.svelte';
 	import ImportIcon from '$lib/icons/ImportIcon.svelte';
 	import ExportIcon from '$lib/icons/ExportIcon.svelte';
-	import RegenerateIcon from '$lib/icons/RegenerateIcon.svelte';
-	import { genTableRows } from '../tablesStore';
-	import { page } from '$app/stores';
+	import HamburgerIcon from '$lib/icons/HamburgerIcon.svelte';
+	import AddColumnIcon from '$lib/icons/AddColumnIcon.svelte';
+	import Trash_2 from 'lucide-svelte/icons/trash-2';
 
 	export let tableType: 'action' | 'knowledge' | 'chat';
 	export let tableData: GenTable | undefined;
-	export let selectedRows: string[];
-	export let streamingRows: Record<string, boolean>;
 	export let isAddingColumn: { type: 'input' | 'output'; showDialog: boolean };
-	export let isDeletingRow: string[] | null;
-	export let refetchTable: () => void;
+	export let refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
 
 	let isMatchingImportCols: {
 		filename: string;
 		rows: Record<string, string>[];
 		cols: { id: string; name: string }[];
 	} | null = null;
+	let isDeletingTable: string | null = null;
 
 	function handleImportTable() {
 		if (!tableData) return;
@@ -120,8 +118,7 @@
 		if (!tableData) return;
 
 		const formData = new FormData();
-		formData.append('file', file);
-		formData.append('file_name', file.name);
+		formData.append('file', file, file.name);
 		formData.append('table_id', tableData.id);
 
 		$showLoadingOverlay = true;
@@ -132,19 +129,25 @@
 				formData,
 				{
 					headers: {
-						'Content-Type': 'multipart/form-data'
+						'Content-Type': 'multipart/form-data',
+						'x-project-id': $page.params.project_id
 					}
 				}
 			);
 			if (response.status != 200) {
 				logger.error(toUpper(`${tableType}TBL_TBL_IMPORT`), response.data);
-				alert('Failed to import data: ' + (response.data.message || JSON.stringify(response.data)));
+				alert(
+					'Failed to import data: ' +
+						(response.data.message || JSON.stringify(response.data)) +
+						`\nRequest ID: ${response.data.request_id}`
+				);
 			} else {
-				refetchTable();
+				await refetchTable();
 
 				if (response.data.err_message) {
 					alert(
-						'Error while uploading file: ' + response.data.message || JSON.stringify(response.data)
+						'Error while uploading file: ' + response.data.message ||
+							JSON.stringify(response.data) + `\nRequest ID: ${response.data.request_id}`
 					);
 				}
 			}
@@ -155,9 +158,45 @@
 				alert(
 					'Failed to upload file: ' +
 						//@ts-expect-error AxiosError
-						(err?.response?.data.message || JSON.stringify(err?.response?.data))
+						(err?.response?.data.message || JSON.stringify(err?.response?.data)) +
+						//@ts-expect-error AxiosError
+						`\nRequest ID: ${err?.response?.data?.request_id}`
 				);
 			}
+		}
+
+		$showLoadingOverlay = false;
+	}
+
+	async function handleExportRows() {
+		if (!tableData || $showLoadingOverlay) return;
+
+		$showLoadingOverlay = true;
+
+		const response = await fetch(
+			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableData.id}/export_data`,
+			{
+				headers: {
+					'x-project-id': $page.params.project_id
+				}
+			}
+		);
+
+		if (response.ok) {
+			const responseBody = await response.text();
+			textToFileDownload(`${tableData.id}`, responseBody);
+		} else {
+			const responseBody = await response.json();
+			logger.error(toUpper(`${tableType}TBL_TBL_EXPORTROWS`), responseBody);
+			console.error(responseBody);
+			toast.error('Failed to export rows', {
+				id: responseBody.message || JSON.stringify(responseBody),
+				description: CustomToastDesc,
+				componentProps: {
+					description: responseBody.message || JSON.stringify(responseBody),
+					requestID: responseBody.request_id
+				}
+			});
 		}
 
 		$showLoadingOverlay = false;
@@ -166,148 +205,46 @@
 	async function handleExportTable() {
 		if (!tableData || $showLoadingOverlay) return;
 
-		$showLoadingOverlay = true;
-
-		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableData.id}/export_data`
-		);
-
-		if (response.ok) {
-			const responseBody = await response.text();
-			textToFileDownload(`${tableData.id}`, responseBody);
+		if (PUBLIC_IS_LOCAL === 'false') {
+			window
+				.open(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableData.id}/export`, '_blank')
+				?.focus();
 		} else {
-			const responseBody = await response.json();
-			logger.error(toUpper(`${tableType}TBL_TBL_EXPORTCSV`), responseBody);
-			console.error(responseBody);
-			toast.error('Failed to export table', {
-				description: responseBody.message || JSON.stringify(responseBody)
-			});
-		}
+			$showLoadingOverlay = true;
 
-		$showLoadingOverlay = false;
-	}
-
-	async function handleRegenRow(toRegenRowIds: string[]) {
-		if (!tableData || !$genTableRows) return;
-
-		streamingRows = {
-			...streamingRows,
-			...toRegenRowIds.reduce((acc, curr) => ({ ...acc, [curr]: true }), {})
-		};
-
-		//? Optimistic update, clear row
-		const originalValues = toRegenRowIds.map((toRegenRowId) => ({
-			id: toRegenRowId,
-			value: $genTableRows!.find((row) => row.ID === toRegenRowId)!
-		}));
-		genTableRows.clearOutputs(tableData, toRegenRowIds);
-
-		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/rows/regen`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				table_id: $page.params.table_id,
-				row_ids: toRegenRowIds,
-				stream: true
-			})
-		});
-
-		if (response.status != 200) {
-			const responseBody = await response.json();
-			logger.error(toUpper(`${tableType}TBL_ROW_REGEN`), responseBody);
-			console.error(responseBody);
-			toast.error('Failed to regenerate rows', {
-				description: responseBody.message || JSON.stringify(responseBody)
-			});
-
-			//? Revert back to original value
-			genTableRows.revert(originalValues);
-		} else {
-			//Delete all data except for inputs
-			genTableRows.clearOutputs(tableData, toRegenRowIds);
-
-			const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
-
-			let isStreaming = true;
-			let lastMessage = '';
-			while (isStreaming) {
-				try {
-					const { value, done } = await reader.read();
-					if (done) break;
-
-					if (value.endsWith('\n\n')) {
-						const lines = (lastMessage + value)
-							.split('\n\n')
-							.filter((i) => i.trim())
-							.flatMap((line) => line.split('\n')); //? Split by \n to handle collation
-
-						lastMessage = '';
-
-						for (const line of lines) {
-							const sumValue = line.replace(/^data: /, '').replace(/data: \[DONE\]\s+$/, '');
-
-							if (sumValue.trim() == '[DONE]') break;
-
-							let parsedValue;
-							try {
-								parsedValue = JSON.parse(sumValue) as GenTableStreamEvent;
-							} catch (err) {
-								console.error('Error parsing:', sumValue);
-								logger.error(toUpper(`${tableType}TBL_ROW_REGENSTREAMPARSE`), {
-									parsing: sumValue,
-									error: err
-								});
-								continue;
-							}
-
-							if (parsedValue.object === 'gen_table.completion.chunk') {
-								if (
-									parsedValue.choices[0].finish_reason &&
-									parsedValue.choices[0].finish_reason === 'error'
-								) {
-									logger.error(toUpper(`${tableType}TBL_ROW_REGENSTREAM`), parsedValue);
-									console.error('STREAMING_ERROR', parsedValue);
-									alert(`Error while streaming: ${parsedValue.choices[0].message.content}`);
-								} else {
-									//* Add chunk to active row'
-									genTableRows.stream(
-										parsedValue.row_id,
-										parsedValue.output_column_name,
-										parsedValue.choices[0].message.content ?? ''
-									);
-								}
-							} else {
-								console.log('Unknown message:', parsedValue);
-							}
-						}
-					} else {
-						lastMessage += value;
+			const response = await fetch(
+				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableData.id}/export`,
+				{
+					headers: {
+						'x-project-id': $page.params.project_id
 					}
-				} catch (err) {
-					// logger.error(toUpper(`${tableType}TBL_ROW_REGENSTREAM`), err);
-					console.error(err);
-
-					//? Below necessary for retry
-					for (const toRegenRowId of toRegenRowIds) {
-						delete streamingRows[toRegenRowId];
-					}
-					streamingRows = streamingRows;
-
-					refetchTable();
-
-					throw err;
 				}
+			);
+
+			if (response.ok) {
+				const contentDisposition = response.headers.get('content-disposition');
+				const responseBody = await response.blob();
+				textToFileDownload(
+					/filename="(?<filename>.*)"/.exec(contentDisposition ?? '')?.groups?.filename ||
+						`${tableData.id}.parquet`,
+					responseBody
+				);
+			} else {
+				const responseBody = await response.json();
+				logger.error(toUpper(`${tableType}TBL_TBL_EXPORTTBL`), responseBody);
+				console.error(responseBody);
+				toast.error('Failed to export rows', {
+					id: responseBody.message || JSON.stringify(responseBody),
+					description: CustomToastDesc,
+					componentProps: {
+						description: responseBody.message || JSON.stringify(responseBody),
+						requestID: responseBody.request_id
+					}
+				});
 			}
 
-			refetchTable();
+			$showLoadingOverlay = false;
 		}
-
-		for (const toRegenRowId of toRegenRowIds) {
-			delete streamingRows[toRegenRowId];
-		}
-		streamingRows = streamingRows;
-
-		refetchTable();
 	}
 </script>
 
@@ -315,65 +252,130 @@
 	<DropdownMenu.Trigger asChild let:builder>
 		<Button
 			builders={[builder]}
-			variant="action"
-			class="flex gap-3 p-0 px-3.5 h-9 border border-[#E5E5E5] data-dark:border-[#666] bg-white"
+			variant="ghost"
+			title="Table actions"
+			class="p-0 h-8 sm:h-9 w-auto aspect-square"
 		>
-			Actions
-			<ArrowFilledRightIcon class="h-2.5 w-2.5" />
+			<HamburgerIcon class="h-6 text-[#667085]" />
 		</Button>
 	</DropdownMenu.Trigger>
-	<DropdownMenu.Content alignOffset={-40} transitionConfig={{ x: 5, y: -5 }}>
-		<DropdownMenu.Group>
-			<DropdownMenu.Item on:click={() => (isAddingColumn = { type: 'input', showDialog: true })}>
-				<ColumnIcon class="h-3.5 w-3.5 mr-2 mb-[1px]" />
-				<span>
-					Add
-					<span class="text-[#3A73B6] data-dark:text-[#4B91E4]">input</span>
-					column
-				</span>
-			</DropdownMenu.Item>
-			<DropdownMenu.Item on:click={() => (isAddingColumn = { type: 'output', showDialog: true })}>
-				<ColumnIcon class="h-3.5 w-3.5 mr-2 mb-[1px]" />
-				<span>
-					Add
-					<span class="text-[#A67835] data-dark:text-[#DA9F47]">output</span>
-					column
-				</span>
-			</DropdownMenu.Item>
+	<DropdownMenu.Content
+		data-testid="table-actions-dropdown"
+		alignOffset={-40}
+		transitionConfig={{ x: 5, y: -10 }}
+		class="p-2 text-[#344054]"
+	>
+		<DropdownMenu.Group class="flex flex-col gap-2 py-1 text-sm">
+			<span class="ml-1 text-[#98A2B3]">
+				Order by
+				<span class="font-medium text-[#667085]">Last modified</span>
+			</span>
+
+			<div
+				style="grid-template-columns: repeat(2, minmax(5rem, 1fr));"
+				class="relative grid place-items-center w-full bg-[#E4E7EC] data-dark:bg-gray-700 rounded-[3px] p-0.5 after:content-[''] after:absolute after:left-0.5 after:top-1/2 after:-translate-y-1/2 after:z-0 after:h-[calc(100%_-_4px)] after:w-1/2 after:pointer-events-none after:bg-white after:rounded-[3px] after:transition-transform after:duration-200 {$page.url.searchParams.get(
+					'asc'
+				) === '1'
+					? 'after:translate-x-0'
+					: 'after:translate-x-[calc(100%_-_4px)]'}"
+			>
+				<DropdownMenuPrimitive.Item
+					on:click={() => {
+						const query = new URLSearchParams($page.url.searchParams.toString());
+						query.set('asc', '1');
+						goto(`?${query.toString()}`, { replaceState: true });
+					}}
+					class="z-10 transition-colors ease-in-out rounded-[3px] px-4 py-1 w-full text-center {$page.url.searchParams.get(
+						'asc'
+					) === '1'
+						? 'text-[#667085]'
+						: 'text-[#98A2B3]'} cursor-pointer"
+				>
+					Ascending
+				</DropdownMenuPrimitive.Item>
+
+				<DropdownMenuPrimitive.Item
+					on:click={() => {
+						const query = new URLSearchParams($page.url.searchParams.toString());
+						query.delete('asc');
+						goto(`?${query.toString()}`, { replaceState: true });
+					}}
+					class="z-10 transition-colors ease-in-out rounded-[3px] px-4 py-1 w-full text-center {$page.url.searchParams.get(
+						'asc'
+					) !== '1'
+						? 'text-[#667085]'
+						: 'text-[#98A2B3]'} cursor-pointer"
+				>
+					Descending
+				</DropdownMenuPrimitive.Item>
+			</div>
 		</DropdownMenu.Group>
-		<DropdownMenu.Separator />
-		<DropdownMenu.Group>
-			<DropdownMenu.Item on:click={handleImportTable}>
-				<ImportIcon class="h-3.5 w-3.5 mr-2 mb-[2px]" />
-				Import rows
-			</DropdownMenu.Item>
-			<DropdownMenu.Item on:click={handleExportTable}>
-				<ExportIcon class="h-3.5 w-3.5 mr-2 mb-[2px]" />
-				Export rows (.csv)
-			</DropdownMenu.Item>
-		</DropdownMenu.Group>
-		{#if selectedRows.length}
-			<DropdownMenu.Separator />
-			<DropdownMenu.Group>
-				{#if selectedRows.length}
-					<DropdownMenu.Item
-						on:click={() => {
-							handleRegenRow(selectedRows.filter((i) => !streamingRows[i]));
-							selectedRows = [];
-						}}
-						class="pl-[5px]"
-					>
-						<RegenerateIcon class="h-5 w-5 mr-[5px]" />
-						Regenerate row
-					</DropdownMenu.Item>
-				{/if}
-				<DropdownMenu.Item on:click={() => (isDeletingRow = selectedRows)}>
-					<Trash_2 class="h-3.5 w-3.5 mr-2 mb-[2px]" />
-					Delete row(s)
+
+		<DropdownMenu.Separator class="-mx-2 my-2" />
+
+		{#if tableType !== 'chat' || !tableData?.parent_id}
+			<DropdownMenu.Group
+				class="grid grid-cols-2 gap-2 py-1 [&>*]:border [&>*]:border-[#E4E7EC] [&>*]:flex-col [&>*]:px-5 [&>*]:py-3"
+			>
+				<DropdownMenu.Item on:click={() => (isAddingColumn = { type: 'input', showDialog: true })}>
+					<AddColumnIcon class="mb-1" />
+					<span class="text-center">
+						Add
+						<span class="text-[#3A73B6] data-dark:text-[#4B91E4]">input</span>
+						<br />
+						column
+					</span>
+				</DropdownMenu.Item>
+				<DropdownMenu.Item on:click={() => (isAddingColumn = { type: 'output', showDialog: true })}>
+					<AddColumnIcon class="mb-1" />
+					<span class="text-center">
+						Add
+						<span class="text-[#950048] data-dark:text-[#950048]">output</span>
+						<br />
+						column
+					</span>
 				</DropdownMenu.Item>
 			</DropdownMenu.Group>
+
+			<DropdownMenu.Separator class="-mx-2 my-2" />
 		{/if}
+
+		<DropdownMenu.Group class="flex flex-col gap-1 py-1 [&>*]:border [&>*]:border-[#E4E7EC]">
+			<DropdownMenu.Item on:click={handleImportTable}>
+				<ImportIcon class="h-4 w-4 mr-2 mb-[2px]" />
+				<span class="grow text-center"> Import rows </span>
+			</DropdownMenu.Item>
+			<DropdownMenu.Item on:click={handleExportRows}>
+				<ExportIcon class="h-4 w-4 mr-2 mb-[2px]" />
+				<span class="grow text-center"> Export rows (.csv) </span>
+			</DropdownMenu.Item>
+			<DropdownMenu.Item on:click={handleExportTable}>
+				<ExportIcon class="h-4 w-4 mr-2 mb-[2px]" />
+				<span class="grow text-center"> Export table </span>
+			</DropdownMenu.Item>
+		</DropdownMenu.Group>
+
+		<DropdownMenu.Separator class="-mx-2 my-2" />
+
+		<DropdownMenu.Group class="flex flex-col gap-1 py-1 [&>*]:border [&>*]:border-[#E4E7EC]">
+			<DropdownMenu.Item
+				on:click={() => (isDeletingTable = $page.params.table_id)}
+				class="text-[#D92D20] hover:!text-[#D92D20] hover:!bg-[#FEF3F2]"
+			>
+				<Trash_2 class="h-4 w-4 mr-2 mb-[2px]" />
+				<span class="grow text-center"> Delete table </span>
+			</DropdownMenu.Item>
+		</DropdownMenu.Group>
 	</DropdownMenu.Content>
 </DropdownMenu.Root>
 
 <ColumnMatchDialog bind:isMatchingImportCols {tableData} {uploadImportFile} />
+<DeleteTableDialog
+	{tableType}
+	bind:isDeletingTable
+	deletedCb={(success) => {
+		if (success) {
+			goto(`/project/${$page.params.project_id}/${tableType}-table`);
+		}
+	}}
+/>

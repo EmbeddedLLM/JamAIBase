@@ -28,7 +28,7 @@ The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that y
    ```python
    from jamaibase import JamAI, protocol as p
 
-   jamai = JamAI(api_key="your_api_key", project_id="your_project_id")
+   jamai = JamAI(token="your_pat", project_id="your_project_id")
    ```
 
    Async is supported too:
@@ -36,7 +36,7 @@ The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that y
    ```python
    from jamaibase import JamAIAsync, protocol as p
 
-   jamai = JamAIAsync(api_key="your_api_key", project_id="your_project_id")
+   jamai = JamAIAsync(token="your_pat", project_id="your_project_id")
    ```
 
 ### OSS
@@ -91,7 +91,7 @@ The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that y
    ```python
    from jamaibase import JamAI, protocol as p
 
-   jamai = JamAI(api_base="http://localhost:6969")
+   jamai = JamAI(api_base="http://localhost:6969/api")
    ```
 
    Async is supported too:
@@ -99,7 +99,7 @@ The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that y
    ```python
    from jamaibase import JamAIAsync, protocol as p
 
-   jamai = JamAIAsync(api_base="http://localhost:6969")
+   jamai = JamAIAsync(api_base="http://localhost:6969/api")
    ```
 
 ### Tips
@@ -112,7 +112,7 @@ The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that y
   from jamaibase import JamAI
 
   # Cloud
-  client = JamAI(project_id="...", api_key="...")
+  client = JamAI(project_id="...", token="...")
   print(client.api_base)
 
   # OSS
@@ -137,12 +137,13 @@ We will guide you through the steps of leveraging Generative Tables to unleash t
 
 Let's start with creating simple tables. Create a table by defining a schema.
 
-<!-- prettier-ignore -->
+<!-- prettier-ignore-start -->
+
 > [!NOTE]
 > When it comes to table names, there are some restrictions:
 > 
-> - At most 100 characters
-> - Must start and end with alphabets
+> - Must have at least 1 character and up to 100 characters
+> - Must start and end with an alphabet or number
 > - Middle characters can contain alphabets, numbers, underscores `_`, dashes `-`, dots `.`
 > 
 > Column names have almost the same restrictions, except that:
@@ -151,28 +152,28 @@ Let's start with creating simple tables. Create a table by defining a schema.
 > - Dots `.` are not accepted
 > - Cannot be called "ID" or "Updated at" (case-insensitive)
 
+<!-- prettier-ignore-end -->
+
 ```python
 # Create an Action Table
-table = jamai.create_action_table(
+table = jamai.table.create_action_table(
     p.ActionTableSchemaCreate(
         id="action-simple",
         cols=[
-            p.ColumnSchemaCreate(id="length", dtype=p.DtypeCreateEnum.int_),
-            p.ColumnSchemaCreate(id="text", dtype=p.DtypeCreateEnum.str_),
+            p.ColumnSchemaCreate(id="length", dtype="int"),
+            p.ColumnSchemaCreate(id="text", dtype="str"),
             p.ColumnSchemaCreate(
                 id="summary",
-                dtype=p.DtypeCreateEnum.str_,
-                gen_config=p.ChatRequest(
-                    model="openai/gpt-4o",
-                    messages=[
-                        p.ChatEntry.system("You are a concise assistant."),
-                        # Interpolate string and non-string input columns
-                        p.ChatEntry.user("Summarise this in ${length} words:\n\n${text}"),
-                    ],
+                dtype="str",
+                gen_config=p.LLMGenConfig(
+                    model="openai/gpt-4o-mini",  # Leave this out to use a default model
+                    system_prompt="You are a concise assistant.",
+                    # Interpolate string and non-string input columns
+                    prompt="Summarise this in ${length} words:\n\n${text}",
                     temperature=0.001,
                     top_p=0.001,
                     max_tokens=100,
-                ).model_dump(),
+                ),
             ),
         ],
     )
@@ -180,7 +181,7 @@ table = jamai.create_action_table(
 print(table)
 
 # Create a Knowledge Table
-table = jamai.create_knowledge_table(
+table = jamai.table.create_knowledge_table(
     p.KnowledgeTableSchemaCreate(
         id="knowledge-simple",
         cols=[],
@@ -190,21 +191,21 @@ table = jamai.create_knowledge_table(
 print(table)
 
 # Create a Chat Table
-table = jamai.create_chat_table(
+table = jamai.table.create_chat_table(
     p.ChatTableSchemaCreate(
         id="chat-simple",
         cols=[
-            p.ColumnSchemaCreate(id="User", dtype=p.DtypeCreateEnum.str_),
+            p.ColumnSchemaCreate(id="User", dtype="str"),
             p.ColumnSchemaCreate(
                 id="AI",
-                dtype=p.DtypeCreateEnum.str_,
-                gen_config=p.ChatRequest(
-                    model="openai/gpt-4o",
-                    messages=[p.ChatEntry.system("You are a pirate.")],
+                dtype="str",
+                gen_config=p.LLMGenConfig(
+                    model="openai/gpt-4o-mini",  # Leave this out to use a default model
+                    system_prompt="You are a pirate.",
                     temperature=0.001,
                     top_p=0.001,
                     max_tokens=100,
-                ).model_dump(),
+                ),
             ),
         ],
     )
@@ -223,7 +224,7 @@ text_a = '"Arrival" is a 2016 science fiction drama film directed by Denis Ville
 text_b = "Dune: Part Two is a 2024 epic science fiction film directed by Denis Villeneuve."
 
 # Streaming
-completion = jamai.add_table_rows(
+completion = jamai.table.add_table_rows(
     "action",
     p.RowAddRequest(
         table_id="action-simple",
@@ -238,7 +239,7 @@ for chunk in completion:
 print("")
 
 # Non-streaming
-completion = jamai.add_table_rows(
+completion = jamai.table.add_table_rows(
     "action",
     p.RowAddRequest(
         table_id="action-simple",
@@ -253,7 +254,7 @@ Next let's try adding to Chat Table:
 
 ```python
 # Streaming
-completion = jamai.add_table_rows(
+completion = jamai.table.add_table_rows(
     "chat",
     p.RowAddRequest(
         table_id="chat-simple",
@@ -268,7 +269,7 @@ for chunk in completion:
 print("")
 
 # Non-streaming
-completion = jamai.add_table_rows(
+completion = jamai.table.add_table_rows(
     "chat",
     p.RowAddRequest(
         table_id="chat-simple",
@@ -281,13 +282,16 @@ print(completion.rows[0].columns["AI"].text)
 
 Finally we can add rows to Knowledge Table too:
 
-<!-- prettier-ignore -->
+<!-- prettier-ignore-start -->
+
 > [!TIP]
 > Uploading files is the main way to add data into a Knowledge Table. Having said so, adding rows works too!
 
+<!-- prettier-ignore-end -->
+
 ```python
 # Streaming
-completion = jamai.add_table_rows(
+completion = jamai.table.add_table_rows(
     "knowledge",
     p.RowAddRequest(
         table_id="knowledge-simple",
@@ -298,7 +302,7 @@ completion = jamai.add_table_rows(
 assert len(list(completion)) == 0
 
 # Non-streaming
-completion = jamai.add_table_rows(
+completion = jamai.table.add_table_rows(
     "knowledge",
     p.RowAddRequest(
         table_id="knowledge-simple",
@@ -316,31 +320,31 @@ We can retrieve table rows by listing the rows or by fetching a specific row.
 ```python
 # --- List rows -- #
 # Action
-rows = jamai.list_table_rows("action", "action-simple")
+rows = jamai.table.list_table_rows("action", "action-simple")
 assert len(rows.items) == 2
 # Paginated items
 for row in rows.items:
     print(row["ID"], row["summary"]["value"])
 
 # Knowledge
-rows = jamai.list_table_rows("knowledge", "knowledge-simple")
+rows = jamai.table.list_table_rows("knowledge", "knowledge-simple")
 assert len(rows.items) == 2
 for row in rows.items:
     print(row["ID"], row["Title"]["value"])
     print(row["Title Embed"]["value"][:3])  # Knowledge Table has embeddings
 
 # Chat
-rows = jamai.list_table_rows("chat", "chat-simple")
+rows = jamai.table.list_table_rows("chat", "chat-simple")
 assert len(rows.items) == 2
 for row in rows.items:
     print(row["ID"], row["User"]["value"], row["AI"]["value"])
 
 # --- Fetch a specific row -- #
-row = jamai.get_table_row("chat", "chat-simple", rows.items[0]["ID"])
+row = jamai.table.get_table_row("chat", "chat-simple", rows.items[0]["ID"])
 print(row["ID"], row["AI"]["value"])
 
 # --- Filter using a search term -- #
-rows = jamai.list_table_rows("action", "action-simple", search_query="Dune")
+rows = jamai.table.list_table_rows("action", "action-simple", search_query="Dune")
 assert len(rows.items) == 1
 for row in rows.items:
     print(row["ID"], row["summary"]["value"])
@@ -352,7 +356,7 @@ We can retrieve columns by filtering them.
 
 ```python
 # --- Only fetch specific columns -- #
-rows = jamai.list_table_rows("action", "action-simple", columns=["length"])
+rows = jamai.table.list_table_rows("action", "action-simple", columns=["length"])
 assert len(rows.items) == 2
 for row in rows.items:
     # "ID" and "Updated at" will always be fetched
@@ -373,7 +377,7 @@ with TemporaryDirectory() as tmp_dir:
         f.write("I bought a Mofusand book in 2024.\n\n")
         f.write("I went to Italy in 2018.\n\n")
 
-    response = jamai.upload_file(
+    response = jamai.table.embed_file(
         p.FileUploadRequest(
             file_path=file_path,
             table_id="knowledge-simple",
@@ -382,20 +386,18 @@ with TemporaryDirectory() as tmp_dir:
     assert response.ok
 
 # Create an Action Table with RAG
-table = jamai.create_action_table(
+table = jamai.table.create_action_table(
     p.ActionTableSchemaCreate(
         id="action-rag",
         cols=[
-            p.ColumnSchemaCreate(id="question", dtype=p.DtypeCreateEnum.str_),
+            p.ColumnSchemaCreate(id="question", dtype="str"),
             p.ColumnSchemaCreate(
                 id="answer",
-                dtype=p.DtypeCreateEnum.str_,
-                gen_config=p.ChatRequest(
-                    model="openai/gpt-4o",
-                    messages=[
-                        p.ChatEntry.system("You are a concise assistant."),
-                        p.ChatEntry.user("${question}"),
-                    ],
+                dtype="str",
+                gen_config=p.LLMGenConfig(
+                    model="openai/gpt-4o-mini",  # Leave this out to use a default model
+                    system_prompt="You are a concise assistant.",
+                    prompt="${question}",
                     rag_params=p.RAGParams(
                         table_id="knowledge-simple",
                         k=2,
@@ -403,7 +405,7 @@ table = jamai.create_action_table(
                     temperature=0.001,
                     top_p=0.001,
                     max_tokens=100,
-                ).model_dump(),
+                ),
             ),
         ],
     )
@@ -411,7 +413,7 @@ table = jamai.create_action_table(
 print(table)
 
 # Ask a question with streaming
-completion = jamai.add_table_rows(
+completion = jamai.table.add_table_rows(
     "action",
     p.RowAddRequest(
         table_id="action-rag",
@@ -439,26 +441,26 @@ We can retrieve tables by listing the tables or by fetching a specific tables.
 ```python
 # --- List tables -- #
 # Action
-tables = jamai.list_tables("action")
+tables = jamai.table.list_tables("action")
 assert len(tables.items) == 2
 # Paginated items
 for table in tables.items:
     print(table.id, table.num_rows)
 
 # Knowledge
-tables = jamai.list_tables("knowledge")
+tables = jamai.table.list_tables("knowledge")
 assert len(tables.items) == 1
 for table in tables.items:
     print(table.id, table.num_rows)
 
 # Chat
-tables = jamai.list_tables("chat")
+tables = jamai.table.list_tables("chat")
 assert len(tables.items) == 1
 for table in tables.items:
     print(table.id, table.num_rows)
 
 # --- Fetch a specific table -- #
-table = jamai.get_table("action", "action-rag")
+table = jamai.table.get_table("action", "action-rag")
 print(table.id, table.num_rows)
 ```
 
@@ -468,8 +470,8 @@ Now that you know how to add rows into tables, let's see how to delete them inst
 
 ```python
 # Delete all rows
-rows = jamai.list_table_rows("action", "action-simple")
-response = jamai.delete_table_rows(
+rows = jamai.table.list_table_rows("action", "action-simple")
+response = jamai.table.delete_table_rows(
     "action",
     p.RowDeleteRequest(
         table_id="action-simple",
@@ -478,7 +480,7 @@ response = jamai.delete_table_rows(
 )
 assert response.ok
 # Assert that the table is empty
-rows = jamai.list_table_rows("action", "action-simple")
+rows = jamai.table.list_table_rows("action", "action-simple")
 assert len(rows.items) == 0
 ```
 
@@ -486,19 +488,22 @@ assert len(rows.items) == 0
 
 Let's see how to delete tables.
 
-<!-- prettier-ignore -->
+<!-- prettier-ignore-start -->
+
 > [!TIP]
 > Deletion will return "OK" even if the table does not exist.
 
+<!-- prettier-ignore-end -->
+
 ```python
 # Delete tables
-response = jamai.delete_table("action", "action-simple")
+response = jamai.table.delete_table("action", "action-simple")
 assert response.ok
-response = jamai.delete_table("knowledge", "knowledge-simple")
+response = jamai.table.delete_table("knowledge", "knowledge-simple")
 assert response.ok
-response = jamai.delete_table("chat", "chat-simple")
+response = jamai.table.delete_table("chat", "chat-simple")
 assert response.ok
-response = jamai.delete_table("action", "action-rag")
+response = jamai.table.delete_table("action", "action-rag")
 assert response.ok
 ```
 
@@ -509,10 +514,10 @@ batch_size = 100
 for table_type in ["action", "knowledge", "chat"]:
     offset, total = 0, 1
     while offset < total:
-        tables = jamai.list_tables(table_type, offset, batch_size)
+        tables = jamai.table.list_tables(table_type, offset, batch_size)
         assert isinstance(tables.items, list)
         for table in tables.items:
-            jamai.delete_table(table_type, table.id)
+            jamai.table.delete_table(table_type, table.id)
         total = tables.total
         offset += batch_size
 ```
@@ -530,26 +535,23 @@ from jamaibase import protocol as p
 
 def create_tables(jamai: JamAI):
     # Create an Action Table
-    table = jamai.create_action_table(
+    table = jamai.table.create_action_table(
         p.ActionTableSchemaCreate(
             id="action-simple",
             cols=[
-                p.ColumnSchemaCreate(id="length", dtype=p.DtypeCreateEnum.int_),
-                p.ColumnSchemaCreate(id="text", dtype=p.DtypeCreateEnum.str_),
+                p.ColumnSchemaCreate(id="length", dtype="int"),
+                p.ColumnSchemaCreate(id="text", dtype="str"),
                 p.ColumnSchemaCreate(
                     id="summary",
-                    dtype=p.DtypeCreateEnum.str_,
-                    gen_config=p.ChatRequest(
-                        model="openai/gpt-4o",
-                        messages=[
-                            p.ChatEntry.system("You are a concise assistant."),
-                            # Interpolate string and non-string input columns
-                            p.ChatEntry.user("Summarise this in ${length} words:\n\n${text}"),
-                        ],
+                    dtype="str",
+                    gen_config=p.LLMGenConfig(
+                        model="openai/gpt-4o-mini",  # Leave this out to use a default model
+                        system_prompt="You are a concise assistant.",
+                        prompt="Summarise this in ${length} words:\n\n${text}",
                         temperature=0.001,
                         top_p=0.001,
                         max_tokens=100,
-                    ).model_dump(),
+                    ),
                 ),
             ],
         )
@@ -557,7 +559,7 @@ def create_tables(jamai: JamAI):
     print(table)
 
     # Create a Knowledge Table
-    table = jamai.create_knowledge_table(
+    table = jamai.table.create_knowledge_table(
         p.KnowledgeTableSchemaCreate(
             id="knowledge-simple",
             cols=[],
@@ -567,21 +569,21 @@ def create_tables(jamai: JamAI):
     print(table)
 
     # Create a Chat Table
-    table = jamai.create_chat_table(
+    table = jamai.table.create_chat_table(
         p.ChatTableSchemaCreate(
             id="chat-simple",
             cols=[
-                p.ColumnSchemaCreate(id="User", dtype=p.DtypeCreateEnum.str_),
+                p.ColumnSchemaCreate(id="User", dtype="str"),
                 p.ColumnSchemaCreate(
                     id="AI",
-                    dtype=p.DtypeCreateEnum.str_,
-                    gen_config=p.ChatRequest(
-                        model="openai/gpt-4o",
-                        messages=[p.ChatEntry.system("You are a pirate.")],
+                    dtype="str",
+                    gen_config=p.LLMGenConfig(
+                        model="openai/gpt-4o-mini",  # Leave this out to use a default model
+                        system_prompt="You are a pirate.",
                         temperature=0.001,
                         top_p=0.001,
                         max_tokens=100,
-                    ).model_dump(),
+                    ),
                 ),
             ],
         )
@@ -594,7 +596,7 @@ def add_rows(jamai: JamAI):
     text_b = "Dune: Part Two is a 2024 epic science fiction film directed by Denis Villeneuve."
 
     # Streaming
-    completion = jamai.add_table_rows(
+    completion = jamai.table.add_table_rows(
         "action",
         p.RowAddRequest(
             table_id="action-simple",
@@ -609,7 +611,7 @@ def add_rows(jamai: JamAI):
     print("")
 
     # Non-streaming
-    completion = jamai.add_table_rows(
+    completion = jamai.table.add_table_rows(
         "action",
         p.RowAddRequest(
             table_id="action-simple",
@@ -620,7 +622,7 @@ def add_rows(jamai: JamAI):
     print(completion.rows[0].columns["summary"].text)
 
     # Streaming
-    completion = jamai.add_table_rows(
+    completion = jamai.table.add_table_rows(
         "chat",
         p.RowAddRequest(
             table_id="chat-simple",
@@ -635,7 +637,7 @@ def add_rows(jamai: JamAI):
     print("")
 
     # Non-streaming
-    completion = jamai.add_table_rows(
+    completion = jamai.table.add_table_rows(
         "chat",
         p.RowAddRequest(
             table_id="chat-simple",
@@ -646,7 +648,7 @@ def add_rows(jamai: JamAI):
     print(completion.rows[0].columns["AI"].text)
 
     # Streaming
-    completion = jamai.add_table_rows(
+    completion = jamai.table.add_table_rows(
         "knowledge",
         p.RowAddRequest(
             table_id="knowledge-simple",
@@ -657,7 +659,7 @@ def add_rows(jamai: JamAI):
     assert len(list(completion)) == 0
 
     # Non-streaming
-    completion = jamai.add_table_rows(
+    completion = jamai.table.add_table_rows(
         "knowledge",
         p.RowAddRequest(
             table_id="knowledge-simple",
@@ -671,31 +673,31 @@ def add_rows(jamai: JamAI):
 def fetch_rows(jamai: JamAI):
     # --- List rows -- #
     # Action
-    rows = jamai.list_table_rows("action", "action-simple")
+    rows = jamai.table.list_table_rows("action", "action-simple")
     assert len(rows.items) == 2
     # Paginated items
     for row in rows.items:
         print(row["ID"], row["summary"]["value"])
 
     # Knowledge
-    rows = jamai.list_table_rows("knowledge", "knowledge-simple")
+    rows = jamai.table.list_table_rows("knowledge", "knowledge-simple")
     assert len(rows.items) == 2
     for row in rows.items:
         print(row["ID"], row["Title"]["value"])
         print(row["Title Embed"]["value"][:3])  # Knowledge Table has embeddings
 
     # Chat
-    rows = jamai.list_table_rows("chat", "chat-simple")
+    rows = jamai.table.list_table_rows("chat", "chat-simple")
     assert len(rows.items) == 2
     for row in rows.items:
         print(row["ID"], row["User"]["value"], row["AI"]["value"])
 
     # --- Fetch a specific row -- #
-    row = jamai.get_table_row("chat", "chat-simple", rows.items[0]["ID"])
+    row = jamai.table.get_table_row("chat", "chat-simple", rows.items[0]["ID"])
     print(row["ID"], row["AI"]["value"])
 
     # --- Filter using a search term -- #
-    rows = jamai.list_table_rows("action", "action-simple", search_query="Dune")
+    rows = jamai.table.list_table_rows("action", "action-simple", search_query="Dune")
     assert len(rows.items) == 1
     for row in rows.items:
         print(row["ID"], row["summary"]["value"])
@@ -703,7 +705,7 @@ def fetch_rows(jamai: JamAI):
 
 def fetch_columns(jamai: JamAI):
     # --- Only fetch specific columns -- #
-    rows = jamai.list_table_rows("action", "action-simple", columns=["length"])
+    rows = jamai.table.list_table_rows("action", "action-simple", columns=["length"])
     assert len(rows.items) == 2
     for row in rows.items:
         # "ID" and "Updated at" will always be fetched
@@ -720,7 +722,7 @@ def rag(jamai: JamAI):
             f.write("I bought a Mofusand book in 2024.\n\n")
             f.write("I went to Italy in 2018.\n\n")
 
-        response = jamai.upload_file(
+        response = jamai.table.embed_file(
             p.FileUploadRequest(
                 file_path=file_path,
                 table_id="knowledge-simple",
@@ -729,21 +731,18 @@ def rag(jamai: JamAI):
         assert response.ok
 
     # Create an Action Table with RAG
-    table = jamai.create_action_table(
+    table = jamai.table.create_action_table(
         p.ActionTableSchemaCreate(
             id="action-rag",
             cols=[
-                p.ColumnSchemaCreate(id="question", dtype=p.DtypeCreateEnum.str_),
+                p.ColumnSchemaCreate(id="question", dtype="str"),
                 p.ColumnSchemaCreate(
                     id="answer",
-                    dtype=p.DtypeCreateEnum.str_,
-                    gen_config=p.ChatRequest(
-                        model="openai/gpt-4o",
-                        messages=[
-                            p.ChatEntry.system("You are a concise assistant."),
-                            # Interpolate string and non-string input columns
-                            p.ChatEntry.user("${question}"),
-                        ],
+                    dtype="str",
+                    gen_config=p.LLMGenConfig(
+                        model="openai/gpt-4o-mini",  # Leave this out to use a default model
+                        system_prompt="You are a concise assistant.",
+                        prompt="${question}",
                         rag_params=p.RAGParams(
                             table_id="knowledge-simple",
                             k=2,
@@ -751,7 +750,7 @@ def rag(jamai: JamAI):
                         temperature=0.001,
                         top_p=0.001,
                         max_tokens=100,
-                    ).model_dump(),
+                    ),
                 ),
             ],
         )
@@ -759,7 +758,7 @@ def rag(jamai: JamAI):
     print(table)
 
     # Ask a question with streaming
-    completion = jamai.add_table_rows(
+    completion = jamai.table.add_table_rows(
         "action",
         p.RowAddRequest(
             table_id="action-rag",
@@ -783,33 +782,33 @@ def rag(jamai: JamAI):
 def fetch_tables(jamai: JamAI):
     # --- List tables -- #
     # Action
-    tables = jamai.list_tables("action")
+    tables = jamai.table.list_tables("action")
     assert len(tables.items) == 2
     # Paginated items
     for table in tables.items:
         print(table.id, table.num_rows)
 
     # Knowledge
-    tables = jamai.list_tables("knowledge")
+    tables = jamai.table.list_tables("knowledge")
     assert len(tables.items) == 1
     for table in tables.items:
         print(table.id, table.num_rows)
 
     # Chat
-    tables = jamai.list_tables("chat")
+    tables = jamai.table.list_tables("chat")
     assert len(tables.items) == 1
     for table in tables.items:
         print(table.id, table.num_rows)
 
     # --- Fetch a specific table -- #
-    table = jamai.get_table("action", "action-rag")
+    table = jamai.table.get_table("action", "action-rag")
     print(table.id, table.num_rows)
 
 
 def delete_rows(jamai: JamAI):
     # Delete all rows
-    rows = jamai.list_table_rows("action", "action-simple")
-    response = jamai.delete_table_rows(
+    rows = jamai.table.list_table_rows("action", "action-simple")
+    response = jamai.table.delete_table_rows(
         "action",
         p.RowDeleteRequest(
             table_id="action-simple",
@@ -818,19 +817,19 @@ def delete_rows(jamai: JamAI):
     )
     assert response.ok
     # Assert that the table is empty
-    rows = jamai.list_table_rows("action", "action-simple")
+    rows = jamai.table.list_table_rows("action", "action-simple")
     assert len(rows.items) == 0
 
 
 def delete_tables(jamai: JamAI):
     # Delete tables
-    response = jamai.delete_table("action", "action-simple")
+    response = jamai.table.delete_table("action", "action-simple")
     assert response.ok
-    response = jamai.delete_table("knowledge", "knowledge-simple")
+    response = jamai.table.delete_table("knowledge", "knowledge-simple")
     assert response.ok
-    response = jamai.delete_table("chat", "chat-simple")
+    response = jamai.table.delete_table("chat", "chat-simple")
     assert response.ok
-    response = jamai.delete_table("action", "action-rag")
+    response = jamai.table.delete_table("action", "action-rag")
     assert response.ok
 
 
@@ -839,43 +838,39 @@ def delete_all_tables(jamai: JamAI):
     for table_type in ["action", "knowledge", "chat"]:
         offset, total = 0, 1
         while offset < total:
-            tables = jamai.list_tables(table_type, offset, batch_size)
+            tables = jamai.table.list_tables(table_type, offset, batch_size)
             assert isinstance(tables.items, list)
             for table in tables.items:
-                jamai.delete_table(table_type, table.id)
+                jamai.table.delete_table(table_type, table.id)
             total = tables.total
             offset += batch_size
 
 
 def duplicate_tables(jamai: JamAI):
     # By default, both schema (like generation config) and data are included
-    table = jamai.duplicate_table(
+    table = jamai.table.duplicate_table(
         "action",
         "action-rag",
         "action-rag-copy",
     )
     assert table.id == "action-rag-copy"
-    rows = jamai.list_table_rows("action", "action-rag-copy")
+    rows = jamai.table.list_table_rows("action", "action-rag-copy")
     assert rows.total > 0
 
     # We can also duplicate a table without its data
-    table = jamai.duplicate_table(
+    table = jamai.table.duplicate_table(
         "action",
         "action-rag",
         "action-rag-copy-schema-only",
         include_data=False,
     )
     assert table.id == "action-rag-copy-schema-only"
-    rows = jamai.list_table_rows("action", "action-rag-copy-schema-only")
+    rows = jamai.table.list_table_rows("action", "action-rag-copy-schema-only")
     assert rows.total == 0
 
 
 def main():
-    jamai = JamAI(
-        project_id=os.getenv("JAMAI_PROJECT_ID"),
-        api_key=os.getenv("JAMAI_API_KEY"),
-        api_base="http://192.168.80.86/api",
-    )
+    jamai = JamAI()
 
     delete_all_tables(jamai)
     create_tables(jamai)
@@ -901,24 +896,24 @@ We can create copies of tables under the same project. By default, the method co
 
 ```python
 # By default, both schema (like generation config) and data are included
-table = jamai.duplicate_table(
+table = jamai.table.duplicate_table(
     "action",
     "action-rag",
     "action-rag-copy",
 )
 assert table.id == "action-rag-copy"
-rows = jamai.list_table_rows("action", "action-rag-copy")
+rows = jamai.table.list_table_rows("action", "action-rag-copy")
 assert len(rows.total) > 0
 
 # We can also duplicate a table without its data
-table = jamai.duplicate_table(
+table = jamai.table.duplicate_table(
     "action",
     "action-rag",
     "action-rag-copy-schema-only",
     include_data=False,
 )
 assert table.id == "action-rag-copy-schema-only"
-rows = jamai.list_table_rows("action", "action-rag-copy-schema-only")
+rows = jamai.table.list_table_rows("action", "action-rag-copy-schema-only")
 assert len(rows.total) == 0
 ```
 
@@ -933,7 +928,7 @@ Generate chat completions using various models. Supports streaming and non-strea
 ```python
 # Streaming
 request = p.ChatRequest(
-    model="openai/gpt-3.5-turbo",
+    model="openai/gpt-4o-mini",
     messages=[
         p.ChatEntry.system("You are a concise assistant."),
         p.ChatEntry.user("What is a llama?"),
@@ -950,7 +945,7 @@ print("")
 
 # Non-streaming
 request = p.ChatRequest(
-    model="openai/gpt-3.5-turbo",
+    model="openai/gpt-4o-mini",
     messages=[
         p.ChatEntry.system("You are a concise assistant."),
         p.ChatEntry.user("What is a llama?"),
@@ -994,12 +989,12 @@ Retrieve information about available models.
 models = jamai.model_info()
 model = models.data[0]
 print(f"Model: {model.id}  Context length: {model.context_length}")
-# Model: openai/gpt-4o  Context length: 8192
+# Model: openai/gpt-4o  Context length: 128000
 
 # Get specific model info
 models = jamai.model_info(name="openai/gpt-4o")
 print(models.data[0])
-# id='openai/gpt-4o' object='model' name='OpenAI GPT-4' context_length=8192 languages=['en', 'cn'] capabilities=['chat'] owned_by='openai'
+# id='openai/gpt-4o' object='model' name='OpenAI GPT-4' context_length=128000 languages=['en', 'cn'] capabilities=['chat'] owned_by='openai'
 
 # Filter based on capability: "chat", "embed", "rerank"
 models = jamai.model_info(capabilities=["chat"])
@@ -1023,7 +1018,7 @@ Get a list of available model IDs / names.
 # Get all model IDs
 model_names = jamai.model_names()
 print(model_names)
-# ['ellm/meta-llama/Llama-3-8B-Instruct', 'ellm/meta-llama/Llama-3-70B-Instruct', 'openai/gpt-3.5-turbo', ..., 'cohere/rerank-english-v3.0', 'cohere/rerank-multilingual-v3.0']
+# ['ellm/meta-llama/Llama-3-8B-Instruct', 'ellm/meta-llama/Llama-3-70B-Instruct', 'openai/gpt-4o-mini', ..., 'cohere/rerank-english-v3.0', 'cohere/rerank-multilingual-v3.0']
 
 # Model IDs with the preferred model at the top if available
 model_names = jamai.model_names(prefer="openai/gpt-4o")
@@ -1054,21 +1049,21 @@ st.title("Simple chat")
 
 try:
     # Create a Chat Table
-    jamai.create_chat_table(
+    jamai.table.create_chat_table(
         p.ChatTableSchemaCreate(
             id="chat-simple",
             cols=[
-                p.ColumnSchemaCreate(id="User", dtype=p.DtypeCreateEnum.str_),
+                p.ColumnSchemaCreate(id="User", dtype="str"),
                 p.ColumnSchemaCreate(
                     id="AI",
-                    dtype=p.DtypeCreateEnum.str_,
-                    gen_config=p.ChatRequest(
-                        model="openai/gpt-3.5-turbo",
-                        messages=[p.ChatEntry.system("You are a pirate.")],
+                    dtype="str",
+                    gen_config=p.LLMGenConfig(
+                        model="openai/gpt-4o-mini",  # Leave this out to use a default model
+                        system_prompt="You are a pirate.",
                         temperature=0.001,
                         top_p=0.001,
                         max_tokens=500,
-                    ).model_dump(),
+                    ),
                 ),
             ],
         )
@@ -1087,7 +1082,7 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 def response_generator(_prompt):
-    completion = jamai.add_table_rows(
+    completion = jamai.table.add_table_rows(
         "chat",
         p.RowAddRequest(
             table_id="chat-simple",

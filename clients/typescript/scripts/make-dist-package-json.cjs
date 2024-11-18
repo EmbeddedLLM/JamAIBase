@@ -9,7 +9,7 @@ function processExportMap(m) {
 }
 processExportMap(pkgJson.exports);
 
-for (const key of ["types", "main", "module", "unpkg", "umd:main"]) {
+for (const key of ["types", "main", "module", "unpkg", "umd:main", "browser"]) {
     if (typeof pkgJson[key] === "string") pkgJson[key] = pkgJson[key].replace(/^(\.\/)?dist\//, "./");
 }
 

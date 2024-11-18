@@ -10,9 +10,11 @@ venv/
 *.geojson
 *.laz
 *.db
+*.parquet
 
 # Internal references, dependencies, temporary folders & files
 /db*/
+file/
 /infinity_cache/
 **/__ref__/
 /dependencies/
@@ -22,7 +24,8 @@ logs/
 /milvus_data/
 /vespa*/
 *.swp
-
+.env
+*.lock
 
 # pytest-cov
 **/.coverage*
@@ -49,3 +52,4 @@ clients/typescript/**/*.d.ts
 **/docs-autogen/
 **/docs-autogen-ts/
 **/dist
+

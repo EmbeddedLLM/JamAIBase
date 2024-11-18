@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import logging
 import pickle
-from io import StringIO
+from io import BytesIO, StringIO
 from typing import Any
 
 import numpy as np
@@ -174,3 +174,30 @@ def read_image(img_path: str) -> tuple[np.ndarray, bool]:
         if is_rotated:
             image = image.rotate(180)
         return np.asarray(image), is_rotated
+
+
+def generate_thumbnail(
+    file_content: bytes,
+    size: tuple[float, float] = (450.0, 450.0),
+) -> bytes:
+    try:
+        with Image.open(BytesIO(file_content)) as img:
+            # Check image mode
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGB")
+            # Resize and save
+            img.thumbnail(size=size)
+            with BytesIO() as f:
+                img.save(
+                    f,
+                    format="webp",
+                    lossless=False,
+                    quality=60,
+                    alpha_quality=50,
+                    method=6,
+                    exact=False,
+                )
+                return f.getvalue()
+    except Exception as e:
+        logger.exception(f"Failed to generate thumbnail due to {e.__class__.__name__}: {e}")
+        return b""

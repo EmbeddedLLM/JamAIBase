@@ -7,7 +7,7 @@
 
 <div
 	class={cn(
-		'flex justify-end px-8 py-2.5 self-end w-full bg-[#f6f6f6] data-dark:bg-[#42464e] border-t border-[#DDD] data-dark:border-[#42464E] rounded-b-xl',
+		'flex justify-end px-4 sm:px-6 py-2 self-end w-full bg-white data-dark:bg-[#303338] border-t border-[#F2F4F7] data-dark:border-[#42464E] rounded-b-lg',
 		className
 	)}
 >

@@ -12,3 +12,4 @@ cp -r JAM.ai.dev/.  .
 source scripts/remove_cloud_modules.sh
 rm -rf JAM.ai.dev/
 sed -i -e 's:JAM.ai.dev:JamAIBase:g' README.md
+mv .env.example .env

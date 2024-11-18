@@ -1,6 +1,7 @@
 import { fontFamily } from 'tailwindcss/defaultTheme';
 import plugin from 'tailwindcss/plugin';
 import flattenColorPalette from 'tailwindcss/lib/util/flattenColorPalette';
+import defaultTheme from 'tailwindcss/defaultTheme';
 
 /** @type {import('tailwindcss').Config} */
 const config = {
@@ -10,10 +11,7 @@ const config = {
 	theme: {
 		container: {
 			center: true,
-			padding: '2rem',
-			screens: {
-				'2xl': '1400px'
-			}
+			padding: '2rem'
 		},
 		extend: {
 			colors: {
@@ -59,14 +57,26 @@ const config = {
 				md: 'calc(var(--radius) - 2px)',
 				sm: 'calc(var(--radius) - 4px)'
 			},
+			fontSize: {
+				xxs: '10px'
+			},
 			fontFamily: {
 				sans: [...fontFamily.sans]
 			},
 			screens: {
-				xs: '320px',
+				xxs: '360px',
+				xs: '460px',
+				...defaultTheme.screens,
+				'2xl': '1400px',
 				'3xl': '1800px'
 			},
+			minHeight: {
+				screen: ['100vh', '100dvh']
+			},
 			height: {
+				screen: ['100vh', '100dvh']
+			},
+			maxHeight: {
 				screen: ['100vh', '100dvh']
 			},
 			boxShadow: {
@@ -91,6 +101,7 @@ const config = {
 		}
 	},
 	plugins: [
+		require('tailwindcss-animate'),
 		require('@tailwindcss/container-queries'),
 		plugin(function ({ addVariant, e }) {
 			addVariant('data-dark', ({ modifySelectors, separator }) => {
@@ -123,6 +134,18 @@ const config = {
 				},
 				{ values: flattenColorPalette(theme('colors')) }
 			);
+		}),
+		plugin(({ addBase }) => {
+			addBase({
+				'@media (prefers-reduced-motion: reduce)': {
+					'*': {
+						'animation-duration': '0.01ms !important',
+						'animation-iteration-count': '1 !important',
+						'transition-duration': '0.01ms !important',
+						'scroll-behavior': 'auto !important'
+					}
+				}
+			});
 		})
 	]
 };

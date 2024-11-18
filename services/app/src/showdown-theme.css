@@ -2,6 +2,10 @@
 	overflow-wrap: break-word;
 }
 
+.response-message a {
+	@apply text-[#006edb] underline underline-offset-2;
+}
+
 .response-message > h1 {
 	@apply text-4xl;
 	@apply font-bold;
@@ -34,12 +38,12 @@
 	@apply my-2;
 }
 
-.response-message *:not(:has(pre)) > code {
+.response-message *:not(pre) > code {
 	@apply my-1 p-1;
 	@apply text-xs;
-	@apply text-[#383a42] data-dark:text-[#ABB2BF];
-	@apply bg-[#F0F0F0] data-dark:bg-[#282C34];
-	@apply rounded-md;
+	@apply text-[#1f2328] data-dark:text-[#ABB2BF];
+	@apply bg-[#818B981F] data-dark:bg-[#282C34];
+	@apply rounded;
 }
 
 .response-message > .pre-container {
@@ -83,7 +87,7 @@
 
 .response-message pre {
 	@apply p-4;
-	@apply text-[#383a42] data-dark:text-[#ABB2BF];
+	@apply text-xs text-[#383a42] data-dark:text-[#ABB2BF];
 	@apply bg-[#FAFAFA] data-dark:bg-[#282C34];
 	@apply rounded-b-md;
 	@apply border border-t-0 border-[#DDD] data-dark:border-[#42464E];
@@ -129,7 +133,7 @@
 }
 
 .response-message > .table-container > table > thead th {
-	@apply p-4;
+	@apply px-4 py-2.5;
 	@apply text-left;
 }
 
@@ -145,9 +149,10 @@
 	@apply text-left font-normal;
 }
 
-.response-message > blockquote {
+.response-message blockquote {
 	@apply px-2;
 	@apply bg-white data-dark:bg-[#484C55];
+	@apply border border-[#DDD] data-dark:border-[#42464E];
 	@apply rounded-md;
 }
 
@@ -180,13 +185,18 @@
 }
 
 .response-message input[type='checkbox'] {
-	/* TODO: Add checkbox styling */
-	/* @apply checkbox; */
+	@apply h-4 w-4;
 	@apply rounded-sm;
-	@apply h-5;
-	@apply w-5;
+	@apply border border-[#98A2B3] data-dark:border-[#5b7ee5];
+	@apply appearance-none;
 }
 
-.response-message input[type='checkbox']:disabled {
-	@apply opacity-100;
+.response-message input[type='checkbox']:checked,
+.response-message input[type='checkbox'][aria-checked='true'] {
+	background-repeat: no-repeat;
+	background-color: #bf416e;
+	border-color: #bf416e;
+	background-image: url('data:image/svg+xml;base64,PHN2Zw0KCXhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyINCgl2aWV3Qm94PSIwIDAgMjQgMjQiDQoJZmlsbD0ibm9uZSINCglzdHJva2U9IiNGRkYiDQoJc3Ryb2tlLXdpZHRoPSIyIg0KCXN0cm9rZS1saW5lY2FwPSJyb3VuZCINCglzdHJva2UtbGluZWpvaW49InJvdW5kIg0KPg0KCTxwb2x5bGluZSBwb2ludHM9IjIwIDYgOSAxNyA0IDEyIiAvPg0KPC9zdmc+');
+	background-position: center;
+	background-size: 13px;
 }

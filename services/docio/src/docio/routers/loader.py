@@ -8,12 +8,11 @@ from langchain_community import document_loaders as loaders
 from loguru import logger
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from s3fs import S3FileSystem
 
+from docio.langchain.jsonloader import JSONLoader
 from docio.langchain.pdfplumber import PDFPlumberLoader
 from docio.langchain.tsvloader import TSVLoader
-from docio.langchain.jsonloader import JSONLoader
-from jamaibase.protocol import Document
+from docio.protocol import Document
 
 
 class Config(BaseSettings):
@@ -35,24 +34,6 @@ class Config(BaseSettings):
 
 config = Config()
 router = APIRouter()
-
-
-@router.on_event("startup")
-async def startup():
-    # Router lifespan is broken as of fastapi==0.109.0 and starlette==0.35.1
-    # https://github.com/tiangolo/fastapi/discussions/9664
-    logger.info(f"DocLoader router config: {config}")
-
-    # --- S3 Client --- #
-    global s3_client
-    s3_client = S3FileSystem(
-        key=config.s3_key,
-        secret=config.s3_secret_plain,
-        endpoint_url=config.s3_url,
-        # asynchronous=True,
-    )
-
-    # s3_session = await s3_client.set_session()
 
 
 # build a table mapping all non-printable characters to None
@@ -86,7 +67,7 @@ def load_file(file_path: str) -> list[Document]:
     elif ext == ".jsonl":
         loader = JSONLoader(file_path, text_content=False, json_lines=True)
     else:
-        raise ValueError(f"Unsupported file type: {ext}")
+        raise ValueError(f'Unsupported file type: "{ext}"')
 
     documents = loader.load()
     logger.info(f"docio {str(documents)}")

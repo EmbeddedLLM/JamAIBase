@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import imghdr
 import io
@@ -5,59 +6,77 @@ import itertools
 from functools import lru_cache
 
 import httpx
+import litellm
 import orjson
+from fastapi import Request
 from langchain.schema.embeddings import Embeddings
 from litellm import Router
+from litellm.router import RetryPolicy
 from loguru import logger
 
 from jamaibase.utils.io import json_loads
-from owl.configs.manager import CONFIG, ENV_CONFIG
+from owl.configs.manager import ENV_CONFIG
 from owl.protocol import (
     Chunk,
     ClipInputData,
     CompletionUsage,
+    EmbeddingModelConfig,
     EmbeddingResponse,
     EmbeddingResponseData,
+    ExternalKeys,
     ModelListConfig,
+    RerankingModelConfig,
 )
-from owl.utils import filter_external_api_key
+from owl.utils import select_external_api_key
+
+litellm.drop_params = True
+litellm.set_verbose = False
+litellm.suppress_debug_info = True
+
+HTTP_CLIENT = httpx.AsyncClient(timeout=60.0, transport=httpx.AsyncHTTPTransport(retries=3))
 
 
-def _resolve_provider_model_name(id: str) -> str:
-    split_names = id.split("/")
-    if len(split_names) < 2:
-        raise ValueError("`id` needs to be in the form of provider/model_name")
-    # this assume using huggingface model (usually org/model_name)
-    return split_names[0], "/".join(split_names[1:])
-
-
-HTTP_CLIENT = httpx.Client(timeout=60.0, transport=httpx.HTTPTransport(retries=3))
-
-
-@lru_cache(maxsize=1)
-def _get_embedding_router(model_json: str):
+@lru_cache(maxsize=32)
+def _get_embedding_router(model_json: str, external_api_keys: str):
     models = ModelListConfig.model_validate_json(model_json).embed_models
+    ExternalApiKeys = ExternalKeys.model_validate_json(external_api_keys)
     # refer to https://docs.litellm.ai/docs/routing for more details
-    # current fixed strategy to 'simple-shuffle' (no need extra redis, or setting of RPM/TPM)
     return Router(
         model_list=[
             {
-                "model_name": m.litellm_id,
+                "model_name": m.id,
                 "litellm_params": {
-                    "model": m.litellm_id,
-                    "api_key": "null",
-                    "api_base": None if m.api_base == "" else m.api_base,
+                    "model": deployment.litellm_id if deployment.litellm_id.strip() else m.id,
+                    "api_key": select_external_api_key(ExternalApiKeys, deployment.provider),
+                    "api_base": deployment.api_base if deployment.api_base.strip() else None,
                 },
             }
             for m in models
+            for deployment in m.deployments
         ],
-        routing_strategy="simple-shuffle",
+        routing_strategy="latency-based-routing",
+        num_retries=3,
+        retry_policy=RetryPolicy(
+            TimeoutErrorRetries=3,
+            RateLimitErrorRetries=3,
+            ContentPolicyViolationErrorRetries=3,
+            AuthenticationErrorRetries=0,
+            BadRequestErrorRetries=0,
+            ContextWindowExceededErrorRetries=0,
+        ),
+        retry_after=5.0,
+        timeout=ENV_CONFIG.owl_embed_timeout_sec,
+        allowed_fails=3,
+        cooldown_time=0.0,
     )
 
 
 # Cached function
-def get_embedding_router():
-    return _get_embedding_router(CONFIG.get_model_json())
+def get_embedding_router(all_models: ModelListConfig, external_keys: ExternalKeys) -> Router:
+    return _get_embedding_router(
+        model_json=all_models.model_dump_json(),
+        external_api_keys=external_keys.model_dump_json(),
+    )
 
 
 class CloudBase:
@@ -68,6 +87,14 @@ class CloudBase:
         for i in range(0, len(seq), n):
             yield seq[i : i + n]
 
+    @staticmethod
+    def _resolve_provider_model_name(id: str) -> str:
+        split_names = id.split("/")
+        if len(split_names) < 2:
+            raise ValueError("`id` needs to be in the form of provider/model_name")
+        # this assume using huggingface model (usually org/model_name)
+        return split_names[0], "/".join(split_names[1:])
+
 
 class CloudReranker(CloudBase):
     API_MAP = {
@@ -76,69 +103,51 @@ class CloudReranker(CloudBase):
         "jina": ENV_CONFIG.jina_api_base,
     }
 
-    def __init__(
-        self,
-        reranker_name: str,
-        openai_api_key: str = "",
-        anthropic_api_key: str = "",
-        gemini_api_key: str = "",
-        cohere_api_key: str = "",
-        groq_api_key: str = "",
-        together_api_key: str = "",
-        jina_api_key: str = "",
-        voyage_api_key: str = "",
-    ):
+    def __init__(self, request: Request):
         """Reranker router.
 
         Args:
-            reranker_name (str): Model name in the form (`provider/name`).
-            openai_api_key (str, optional): OpenAI API key. Defaults to "".
-            anthropic_api_key (str, optional): Anthropic API key. Defaults to "".
-            gemini_api_key (str, optional): Gemini API key. Defaults to "".
-            cohere_api_key (str, optional): Cohere API key. Defaults to "".
-            groq_api_key (str, optional): Groq API key. Defaults to "".
-            together_api_key (str, optional): Together API key. Defaults to "".
-            jina_api_key (str, optional): Jina API key. Defaults to "".
-            voyage_api_key (str, optional): Voyage API key. Defaults to "".
+            request (Request): Starlette request object.
 
         Raises:
             ValueError: If provider is not supported.
         """
+        from owl.billing import BillingManager
+
+        self.request = request
+        self.external_keys: ExternalKeys = request.state.external_keys
+        self._billing: BillingManager = request.state.billing
+
+    def set_rerank_model(self, reranker_name):
         # Get embedder_config
-        reranker_config = CONFIG.get_rerank_model_info(reranker_name)
+        reranker_config: RerankingModelConfig = (
+            self.request.state.all_models.get_rerank_model_info(reranker_name)
+        )
         reranker_config = reranker_config.model_dump(exclude_none=True)
-        provider_name, model_name = _resolve_provider_model_name(reranker_config["id"])
-        self.provider_name = provider_name
-        self.model_name = model_name
+        _, model_name = self._resolve_provider_model_name(reranker_config["id"])
         self.reranker_config = reranker_config
-        if provider_name not in ["ellm", "cohere", "voyage", "jina"]:
+        # 2024-10-03: reranker only support single deployment now.
+        deployment = reranker_config["deployments"][0]
+        self.provider_name = deployment["provider"]
+        if deployment["provider"] not in ["ellm", "cohere", "voyage", "jina"]:
             raise ValueError(
-                f"reranker `provider`: {provider_name} not supported please use only following provider: ellm/cohere/voyage/jina"
+                f"reranker `provider`: {deployment['provider']} not supported please use only following provider: ellm/cohere/voyage/jina"
             )
         api_url = (
-            reranker_config["api_base"] + "/rerank"
-            if provider_name == "ellm"
-            else self.API_MAP[provider_name] + "/rerank"
+            deployment["api_base"] + "/rerank"
+            if self.provider_name == "ellm"
+            else self.API_MAP[self.provider_name] + "/rerank"
         )
-        api_key = filter_external_api_key(
-            reranker_name,
-            openai_api_key=openai_api_key,
-            anthropic_api_key=anthropic_api_key,
-            gemini_api_key=gemini_api_key,
-            cohere_api_key=cohere_api_key,
-            groq_api_key=groq_api_key,
-            together_api_key=together_api_key,
-            jina_api_key=jina_api_key,
-            voyage_api_key=voyage_api_key,
-        )
+        api_key = select_external_api_key(self.external_keys, self.provider_name)
         self.reranking_args = {
-            "model": self.model_name,
+            "model": model_name,
             "api_key": api_key,
             "api_url": api_url,
         }
 
-    def rerank_chunks(
+    async def rerank_chunks(
         self,
+        reranker_name: str,
         chunks: list[Chunk],
         query: str,
         batch_size: int = 256,
@@ -146,37 +155,43 @@ class CloudReranker(CloudBase):
         content_weight: float = 0.4,
         use_concat: bool = False,
     ) -> list[tuple[Chunk, float, int]]:
+        self.set_rerank_model(reranker_name)  # configure the reranker to be used
         if self.provider_name == "voyage":
             batch_size = 32  # voyage has a limit on token lengths 100,000
         all_contents = [d.text for d in chunks]
         all_titles = [d.title for d in chunks]
+        self._billing.check_reranker_quota(model_id=self.reranker_config["id"])
         if use_concat:
             all_concats = [
                 "Title: " + _title + "\nContent: " + _content
-                for _title, _content in zip(all_titles, all_contents)
+                for _title, _content in zip(all_titles, all_contents, strict=True)
             ]
-            concat_scores = self._rerank_by_batch(query, all_concats, batch_size)
+            concat_scores = await self._rerank_by_batch(query, all_concats, batch_size)
             scores = [x["relevance_score"] for x in concat_scores]
         else:
-            content_scores = self._rerank_by_batch(query, all_contents, batch_size)
-            title_scores = self._rerank_by_batch(query, all_titles, batch_size)
+            content_scores = await self._rerank_by_batch(query, all_contents, batch_size)
+            title_scores = await self._rerank_by_batch(query, all_titles, batch_size)
             scores = [
                 (
                     c["relevance_score"] * content_weight + t["relevance_score"] * title_weight
                     if chunks[idx].title != ""
                     else 0.0
                 )
-                for idx, (c, t) in enumerate(zip(content_scores, title_scores))
+                for idx, (c, t) in enumerate(zip(content_scores, title_scores, strict=True))
             ]
+        self._billing.create_reranker_events(
+            self.reranker_config["id"],
+            len(all_titles) // 100,
+        )
         reranked_chunks = sorted(
-            ((d, s, i) for i, (d, s) in enumerate(zip(chunks, scores))),
+            ((d, s, i) for i, (d, s) in enumerate(zip(chunks, scores, strict=True))),
             key=lambda x: x[1],
             reverse=True,
         )
         logger.info(f"Reranked order: {[r[2] for r in reranked_chunks]}")
         return reranked_chunks
 
-    def _rerank(self, query, documents: list[str]) -> list[dict]:
+    async def _rerank(self, query, documents: list[str]) -> list[dict]:
         headers = {
             "Content-Type": "application/json",
             "Authorization": (
@@ -192,7 +207,9 @@ class CloudReranker(CloudBase):
             "return_documents": False,
         }
 
-        response = HTTP_CLIENT.post(self.reranking_args["api_url"], headers=headers, json=data)
+        response = await HTTP_CLIENT.post(
+            self.reranking_args["api_url"], headers=headers, json=data
+        )
         if response.status_code != 200:
             raise RuntimeError(response.text)
         response = json_loads(response.text)
@@ -201,10 +218,10 @@ class CloudReranker(CloudBase):
         else:
             return response["results"]
 
-    def _rerank_by_batch(self, query, documents: list[str], batch_size: int) -> list[dict]:
+    async def _rerank_by_batch(self, query, documents: list[str], batch_size: int) -> list[dict]:
         all_data = []
         for document in self.batch(documents, batch_size):
-            _tmp = self._rerank(
+            _tmp = await self._rerank(
                 query, document
             )  # this scores might not be sorted by input index. some provider will sort result by relevance score
             _tmp = sorted(_tmp, key=lambda x: x["index"], reverse=False)  # sort by index
@@ -213,73 +230,49 @@ class CloudReranker(CloudBase):
 
 
 class CloudEmbedder(CloudBase):
-    def __init__(
-        self,
-        embedder_name: str,
-        openai_api_key: str = "",
-        anthropic_api_key: str = "",
-        gemini_api_key: str = "",
-        cohere_api_key: str = "",
-        groq_api_key: str = "",
-        together_api_key: str = "",
-        jina_api_key: str = "",
-        voyage_api_key: str = "",
-    ):
+    def __init__(self, request: Request):
         """Embedder router.
 
         Args:
-            embedder_name (str): Model name in the form (`provider/name`).
-            openai_api_key (str, optional): OpenAI API key. Defaults to "".
-            anthropic_api_key (str, optional): Anthropic API key. Defaults to "".
-            gemini_api_key (str, optional): Gemini API key. Defaults to "".
-            cohere_api_key (str, optional): Cohere API key. Defaults to "".
-            groq_api_key (str, optional): Groq API key. Defaults to "".
-            together_api_key (str, optional): Together API key. Defaults to "".
-            jina_api_key (str, optional): Jina API key. Defaults to "".
-            voyage_api_key (str, optional): Voyage API key. Defaults to "".
-
-        Raises:
-            ValueError: If provider is not supported.
+            request (Request): Starlette request object.
         """
+        from owl.billing import BillingManager
+
+        self.request = request
+        self.external_keys: ExternalKeys = request.state.external_keys
+        self._billing: BillingManager = request.state.billing
+
+    def set_embed_model(self, embedder_name):
         # Get embedder_config
-        embedder_config = CONFIG.get_embed_model_info(embedder_name)
-        embedder_config = embedder_config.model_dump(exclude_none=True)
-        provider_name, model_name = _resolve_provider_model_name(embedder_config["id"])
-        self.provider_name = provider_name
-        self.model_name = "voyage/" + model_name if provider_name == "voyage" else model_name
-        self.embedder_config = embedder_config
-        if provider_name not in ["ellm", "openai", "cohere", "voyage", "jina"]:
-            raise ValueError(
-                (
-                    f"Embedder provider {provider_name} not supported, "
-                    "please use only following provider: ellm/openai/cohere/voyage/jina"
-                )
-            )
-        api_key = filter_external_api_key(
-            embedder_name,
-            openai_api_key=openai_api_key,
-            anthropic_api_key=anthropic_api_key,
-            gemini_api_key=gemini_api_key,
-            cohere_api_key=cohere_api_key,
-            groq_api_key=groq_api_key,
-            together_api_key=together_api_key,
-            jina_api_key=jina_api_key,
-            voyage_api_key=voyage_api_key,
+        embedder_config: EmbeddingModelConfig = self.request.state.all_models.get_embed_model_info(
+            embedder_name
         )
+        embedder_config = embedder_config.model_dump(exclude_none=True)
+        self.embedder_config = embedder_config
+        self.embedder_router = get_embedding_router(
+            self.request.state.all_models, self.external_keys
+        )
+        for deployment in embedder_config["deployments"]:
+            if deployment["provider"] not in ["ellm", "openai", "cohere", "voyage", "jina"]:
+                raise ValueError(
+                    (
+                        f"Embedder provider {deployment['provider']} not supported, "
+                        "please use only following provider: ellm/openai/cohere/voyage/jina"
+                    )
+                )
         self.embedding_args = {
-            "model": embedder_config["litellm_id"],
-            "api_key": api_key,
+            "model": embedder_config["id"],
             "dimensions": self.embedder_config.get("dimensions"),
         }
 
-    def embed_texts(self, texts: list[str]) -> EmbeddingResponse:
-        if self.provider_name == "jina":
+    async def embed_texts(self, texts: list[str]) -> EmbeddingResponse:
+        if self.embedder_config["owned_by"] == "jina":
             headers = {
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.embedding_args['api_key']}",
+                "Authorization": f"Bearer {self.external_keys.jina}",
             }
             data = {"input": texts, "model": self.embedding_args["model"]}
-            response = HTTP_CLIENT.post(
+            response = await HTTP_CLIENT.post(
                 ENV_CONFIG.jina_api_base + "/embeddings",
                 headers=headers,
                 json=data,
@@ -288,22 +281,34 @@ class CloudEmbedder(CloudBase):
                 raise RuntimeError(response.text)
             response = EmbeddingResponse.model_validate_json(response.text)
         else:
-            response = get_embedding_router().embedding(**self.embedding_args, input=texts)
+            response = await self.embedder_router.aembedding(**self.embedding_args, input=texts)
             response = EmbeddingResponse.model_validate(response.model_dump())
+
         return response
 
-    def embed_documents(self, texts: list[str], batch_size: int = 2048) -> EmbeddingResponse:
+    async def embed_documents(
+        self,
+        embedder_name: str,
+        texts: list[str],
+        batch_size: int = 2048,
+    ) -> EmbeddingResponse:
+        self.set_embed_model(embedder_name)
         """Embed search docs."""
         if not isinstance(texts, list):
             raise TypeError("`texts` must be a list.")
-        if self.provider_name == "cohere":
+        if self.embedder_config["owned_by"] == "cohere":
             self.embedding_args["input_type"] = "search_document"
             batch_size = 96  # limit on cohere server
-        if self.provider_name == "jina":
+        if self.embedder_config["owned_by"] == "jina":
             batch_size = 128  # don't know limit, but too large will timeout
-        if self.provider_name == "voyage":
+        if self.embedder_config["owned_by"] == "voyage":
             batch_size = 128  # limit on voyage server
-        responses = [self.embed_texts(txt) for txt in self.batch(texts, batch_size)]
+        if self.embedder_config["owned_by"] == "openai":
+            batch_size = 256  # limited by token per min (10,000,000)
+        self._billing.check_embedding_quota(model_id=self.embedder_config["id"])
+        responses = await asyncio.gather(
+            *[self.embed_texts(txt) for txt in self.batch(texts, batch_size)]
+        )
         embeddings = [e.embedding for e in itertools.chain(*[r.data for r in responses])]
         usages = CompletionUsage(
             prompt_tokens=sum(r.usage.prompt_tokens for r in responses),
@@ -314,17 +319,28 @@ class CloudEmbedder(CloudBase):
             model=responses[0].model,
             usage=usages,
         )
+        self._billing.create_embedding_events(
+            model=self.embedder_config["id"],
+            token_usage=usages.total_tokens,
+        )
         return embeddings
 
-    def embed_queries(self, texts: list[str]) -> EmbeddingResponse:
+    async def embed_queries(self, embedder_name: str, texts: list[str]) -> EmbeddingResponse:
+        self.set_embed_model(embedder_name)
         """Embed query text."""
         if not isinstance(texts, list):
             raise TypeError("`texts` must be a list.")
         if self.embedding_args.get("transform_query"):
             texts = [self.embedding_args.get("transform_query") + text for text in texts]
-        if self.provider_name == "cohere":
+        if self.embedder_config["owned_by"] == "cohere":
             self.embedding_args["input_type"] = "search_query"
-        return self.embed_texts(texts)
+        self._billing.check_embedding_quota(model_id=self.embedder_config["id"])
+        response = await self.embed_texts(texts)
+        self._billing.create_embedding_events(
+            model=self.embedder_config["id"],
+            token_usage=response.usage.total_tokens,
+        )
+        return response
 
 
 class CloudImageEmbedder(CloudBase, Embeddings):
@@ -345,11 +361,11 @@ class CloudImageEmbedder(CloudBase, Embeddings):
             "api_url": api_url,
         }
 
-    def _embed(self, objects: list[ClipInputData]) -> list[list[float]]:
+    async def _embed(self, objects: list[ClipInputData]) -> list[list[float]]:
         parsed_data = self._parse_data(objects)
         headers = {"Content-Type": "application/json"}
         data = {"data": parsed_data, "execEndpoint": "/"}
-        response = HTTP_CLIENT.post(
+        response = await HTTP_CLIENT.post(
             self.embedding_args["api_url"],
             headers=headers,
             data=orjson.dumps(data),
@@ -373,24 +389,28 @@ class CloudImageEmbedder(CloudBase, Embeddings):
             # Get the image format
             try:
                 img_format = imghdr.what(f).lower()
-            except Exception:
-                raise OSError(f"object {data.image_filename} is not a valid image format.")
+            except Exception as e:
+                raise ValueError(
+                    f"object {data.image_filename} is not a valid image format."
+                ) from e
             # Read the image file
             img_data = f.read()
             img_base64 = base64.b64encode(img_data)
             data_uri = f"data:image/{img_format};base64," + img_base64.decode("utf-8")
         return data_uri
 
-    def embed_documents(
+    async def embed_documents(
         self, objects: list[ClipInputData], batch_size: int = 64
     ) -> list[list[float]]:
         """Embed search objects (image)."""
         if not isinstance(objects, list):
             raise TypeError("`objects` must be a list.")
-        embeddings = [self._embed(obj) for obj in self.batch(objects, batch_size)]
+        embeddings = await asyncio.gather(
+            *[self._embed(obj) for obj in self.batch(objects, batch_size)]
+        )
         return list(itertools.chain(*embeddings))
 
-    def embed_query(self, data: ClipInputData) -> list[float]:
+    async def embed_query(self, data: ClipInputData) -> list[float]:
         """Embed query text/image."""
-        embeddings = self._embed([data])
+        embeddings = await self._embed([data])
         return embeddings[0]  # should just have 1 elements

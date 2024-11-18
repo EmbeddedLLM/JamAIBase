@@ -1,39 +1,44 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import toUpper from 'lodash/toUpper';
-	import { invalidate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
 	import { modelsAvailable } from '$globalStore';
 	import { insertAtCursor } from '$lib/utils';
-	import { genTableDTypes, projectIDPattern } from '$lib/constants';
+	import { columnIDPattern, genTableDTypes, jamaiApiVersion } from '$lib/constants';
 	import logger from '$lib/logger';
-	import type { GenTableCol, ChatRequest } from '$lib/types';
+	import type { GenTable, GenTableCol } from '$lib/types';
 
 	import ModelSelect from '$lib/components/preset/ModelSelect.svelte';
 	import InputText from '$lib/components/InputText.svelte';
 	import Range from '$lib/components/Range.svelte';
-	import { toast } from 'svelte-sonner';
+	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Select from '$lib/components/ui/select';
 
 	export let isAddingColumn: { type: 'input' | 'output'; showDialog: boolean };
 	export let tableType: 'action' | 'knowledge' | 'chat';
+	export let tableData: GenTable | undefined;
+	export let refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
 
 	let usableColumns: GenTableCol[] = [];
-	$: if ($page.data.table && $page.data.table.tableData && $page.data.table.tableData.cols) {
-		usableColumns =
-			($page.data.table.tableData.cols as GenTableCol[])?.filter(
-				(col) => col.id !== 'ID' && col.id !== 'Updated at'
-			) ?? [];
-	}
+	$: isAddingColumn, resetValues();
+	const resetValues = () => {
+		if (isAddingColumn.showDialog) {
+			if (isAddingColumn.type === 'output') {
+				usableColumns =
+					tableData?.cols?.filter((col) => col.id !== 'ID' && col.id !== 'Updated at') ?? [];
+				selectedDatatype = 'str';
+			}
+		}
+	};
 
 	let form: HTMLFormElement;
 	let isLoading = false;
 	let columnName = '';
-	let selectedDatatype = '';
+	let selectedDatatype: (typeof genTableDTypes)[number] | '' = '';
 	let selectedModel = '';
 	let temperature = '1';
 	let maxTokens = '1000';
@@ -43,12 +48,13 @@
 
 	async function handleAddColumn() {
 		if (!columnName || !selectedDatatype) {
-			return toast.error('Please fill in all fields');
+			return toast.error('Please fill in all fields', { id: 'all-fields-req' });
 		}
 
-		if (!projectIDPattern.test(columnName))
+		if (!columnIDPattern.test(columnName))
 			return toast.error(
-				'Column name must contain only alphanumeric characters and underscores/hyphens/spaces/periods, and start and end with alphanumeric characters'
+				'Column name must contain only alphanumeric characters and underscores/hyphens/spaces, and start and end with alphanumeric characters between 1 and 100 characters long.',
+				{ id: 'column-name-invalid' }
 			);
 
 		if (isLoading) return;
@@ -57,34 +63,28 @@
 		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/columns/add`, {
 			method: 'POST',
 			headers: {
-				'Content-Type': 'application/json'
+				'Content-Type': 'application/json',
+				'x-project-id': $page.params.project_id
 			},
 			body: JSON.stringify({
 				id: $page.params.table_id,
+				version: jamaiApiVersion,
 				cols: [
 					{
 						id: columnName,
 						dtype: selectedDatatype,
 						vlen: 0,
-						gen_config:
-							isAddingColumn.type == 'output'
-								? ({
-										model: selectedModel,
-										messages: [
-											{
-												role: 'system',
-												content: systemPrompt
-											},
-											{
-												role: 'user',
-												content: prompt
-											}
-										],
-										temperature: parseFloat(temperature),
-										max_tokens: parseInt(maxTokens),
-										top_p: parseFloat(topP)
-									} satisfies Partial<ChatRequest>)
-								: null
+						gen_config: (isAddingColumn.type == 'output'
+							? {
+									object: 'gen_config.llm',
+									model: selectedModel,
+									system_prompt: systemPrompt,
+									prompt,
+									temperature: parseFloat(temperature),
+									max_tokens: parseInt(maxTokens),
+									top_p: parseFloat(topP)
+								}
+							: null) satisfies GenTableCol['gen_config']
 					}
 				]
 			})
@@ -94,10 +94,15 @@
 			const responseBody = await response.json();
 			logger.error(toUpper(`${tableType}TBL_COLUMN_ADD`), responseBody);
 			toast.error('Failed to add column', {
-				description: responseBody.message || JSON.stringify(responseBody)
+				id: responseBody.message || JSON.stringify(responseBody),
+				description: CustomToastDesc,
+				componentProps: {
+					description: responseBody.message || JSON.stringify(responseBody),
+					requestID: responseBody.request_id
+				}
 			});
 		} else {
-			invalidate(`${tableType}-table:slug`);
+			refetchTable();
 			isAddingColumn = { ...isAddingColumn, showDialog: false };
 			columnName = '';
 			selectedDatatype = '';
@@ -116,39 +121,42 @@
 	}}
 >
 	<Dialog.Content
-		style="min-width: {isAddingColumn.type == 'input' ? '35rem' : '65rem'}; {isAddingColumn.type ==
-		'input'
-			? ''
-			: 'height: 90vh;'}"
+		data-testid="new-column-dialog"
+		class="max-h-[80vh] sm:max-h-[90vh] {isAddingColumn.type === 'input'
+			? 'w-[clamp(0px,35rem,100%)]'
+			: 'w-[clamp(0px,65rem,100%)]'}"
 	>
 		<Dialog.Header>New {isAddingColumn.type} column</Dialog.Header>
 
 		<form
 			bind:this={form}
 			on:submit|preventDefault={handleAddColumn}
-			class="grow py-3 w-full overflow-auto"
+			class="grow flex flex-col gap-3 py-3 w-full overflow-auto"
 		>
-			<div class="flex flex-col gap-2 px-6 pl-8 py-2 w-full text-center">
-				<span class="font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
+			<div class="flex flex-col gap-1 px-4 sm:px-6 w-full text-center">
+				<label for="column_id" class="font-medium text-left text-xs sm:text-sm text-black">
 					Column ID*
-				</span>
+				</label>
 
-				<InputText bind:value={columnName} placeholder="Required" />
+				<InputText bind:value={columnName} id="column_id" placeholder="Required" />
 			</div>
 
-			<div class="flex flex-col gap-2 px-6 pl-8 py-4 w-full text-center">
-				<span class="font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-					Data type*
-				</span>
+			<div
+				data-testid="datatype-select-btn"
+				class="flex flex-col gap-1 px-4 sm:px-6 w-full text-center"
+			>
+				<span class="font-medium text-left text-xs sm:text-sm text-black">Data type*</span>
 
 				<Select.Root>
 					<Select.Trigger asChild let:builder>
 						<Button
+							disabled={isAddingColumn.type === 'output'}
 							builders={[builder]}
-							variant="outline"
-							class="flex items-center justify-between gap-8 pl-3 pr-2 h-10 min-w-full bg-white data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1] {!selectedDatatype
+							variant="outline-neutral"
+							title="Select data type"
+							class="flex items-center justify-between gap-8 pl-3 pr-2 h-10 min-w-full {!selectedDatatype
 								? 'italic text-muted-foreground'
-								: ''}"
+								: ''} bg-[#F2F4F7] data-dark:bg-[#42464e] hover:bg-[#e1e2e6] border-transparent rounded-md"
 						>
 							<span class="w-full whitespace-nowrap line-clamp-1 font-normal text-left">
 								{selectedDatatype ? selectedDatatype : 'Select data type'}
@@ -157,7 +165,7 @@
 							<ChevronDown class="h-4 w-4" />
 						</Button>
 					</Select.Trigger>
-					<Select.Content side="bottom" class="max-h-96 overflow-y-auto">
+					<Select.Content side="bottom" class="max-h-64 overflow-y-auto">
 						{#each genTableDTypes as dType}
 							<Select.Item
 								on:click={() => (selectedDatatype = dType)}
@@ -173,96 +181,142 @@
 			</div>
 
 			{#if isAddingColumn.type == 'output'}
-				<div class="flex flex-col gap-1 px-6 pl-8 py-2">
-					<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-						Models
-					</span>
+				<div class="flex flex-col gap-1 px-4 sm:px-6">
+					<span class="font-medium text-left text-xs sm:text-sm text-black">Models</span>
 
 					<ModelSelect
 						capabilityFilter="chat"
 						sameWidth={true}
-						bind:selectedModel
-						buttonText={selectedModel || 'Select model'}
+						{selectedModel}
+						selectCb={(model) => {
+							selectedModel = model;
+
+							const modelDetails = $modelsAvailable.find((val) => val.id == model);
+							if (modelDetails && parseInt(maxTokens) > modelDetails.context_length) {
+								maxTokens = modelDetails.context_length.toString();
+							}
+						}}
+						buttonText={($modelsAvailable.find((model) => model.id == selectedModel)?.name ??
+							selectedModel) ||
+							'Select model'}
+						class="bg-[#F2F4F7] data-dark:bg-[#42464e] hover:bg-[#e1e2e6] border-transparent"
 					/>
 				</div>
 
-				<div class="grid grid-cols-3 gap-4 px-6 pl-8 py-2 w-full text-center">
+				<div class="grid grid-cols-1 xs:grid-cols-3 gap-3 px-4 sm:px-6 w-full text-center">
 					<div class="flex flex-col gap-1">
-						<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
+						<label for="temperature" class="font-medium text-left text-xs sm:text-sm text-black">
 							Temperature
-						</span>
+						</label>
 
 						<input
+							id="temperature"
 							type="number"
 							step=".01"
 							bind:value={temperature}
-							on:blur={() =>
-								(temperature =
-									parseFloat(temperature) <= 0 ? '0.01' : parseFloat(temperature).toFixed(2))}
-							class="px-3 py-2 w-44 text-sm bg-transparent data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#42464E] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+							on:change={(e) => {
+								const value = parseFloat(e.currentTarget.value);
+
+								if (isNaN(value)) {
+									temperature = '1';
+								} else if (value < 0.01) {
+									temperature = '0.01';
+								} else if (value > 1) {
+									temperature = '1';
+								} else {
+									temperature = value.toFixed(2);
+								}
+							}}
+							class="px-3 py-2 text-sm bg-[#F2F4F7] data-dark:bg-[#42464e] rounded-md border border-transparent placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
 						/>
 
 						<Range bind:value={temperature} min=".01" max="1" step=".01" />
 					</div>
 
 					<div class="flex flex-col gap-1">
-						<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
+						<label for="max_tokens" class="font-medium text-left text-xs sm:text-sm text-black">
 							Max tokens
-						</span>
+						</label>
 
 						<input
+							id="max_tokens"
 							type="number"
 							bind:value={maxTokens}
-							on:blur={() =>
-								(maxTokens = parseInt(maxTokens) <= 0 ? '1' : parseInt(maxTokens).toString())}
-							class="px-3 py-2 w-44 text-sm bg-transparent data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#42464E] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+							on:change={(e) => {
+								const value = parseInt(e.currentTarget.value);
+								const model = $modelsAvailable.find((model) => model.id == selectedModel);
+
+								if (isNaN(value)) {
+									maxTokens = '1';
+								} else if (value < 1 || value > 1e20) {
+									maxTokens = '1';
+								} else if (model && value > model.context_length) {
+									maxTokens = model.context_length.toString();
+								} else {
+									maxTokens = value.toString();
+								}
+							}}
+							class="px-3 py-2 text-sm bg-[#F2F4F7] data-dark:bg-[#42464e] rounded-md border border-transparent placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
 						/>
 
 						<Range
 							bind:value={maxTokens}
 							min="1"
-							max={$modelsAvailable.find((model) => model.id == selectedModel)?.context_length ?? 0}
+							max={$modelsAvailable.find((model) => model.id == selectedModel)?.context_length}
 							step="1"
 						/>
 					</div>
 
 					<div class="flex flex-col gap-1">
-						<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
+						<label for="top_p" class="font-medium text-left text-xs sm:text-sm text-black">
 							Top-p
-						</span>
+						</label>
 
 						<input
+							id="top_p"
 							type="number"
 							step=".001"
 							bind:value={topP}
-							on:blur={() => (topP = parseFloat(topP) <= 0 ? '0.001' : parseFloat(topP).toFixed(3))}
-							class="px-3 py-2 w-44 text-sm bg-transparent data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#42464E] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+							on:change={(e) => {
+								const value = parseFloat(e.currentTarget.value);
+
+								if (isNaN(value)) {
+									topP = '1';
+								} else if (value < 0.01) {
+									topP = '0.001';
+								} else if (value > 1) {
+									topP = '1';
+								} else {
+									topP = value.toFixed(3);
+								}
+							}}
+							class="px-3 py-2 text-sm bg-[#F2F4F7] data-dark:bg-[#42464e] rounded-md border border-transparent placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
 						/>
 
 						<Range bind:value={topP} min=".001" max="1" step=".001" />
 					</div>
 				</div>
 
-				<div class="grid grid-rows-[min-content_1fr] px-6 pl-8 py-4 overflow-auto">
-					<span class="font-medium text-sm text-[#999] data-dark:text-[#C9C9C9]">
+				<div class="grid grid-rows-[min-content_1fr] gap-1 px-4 sm:px-6">
+					<label for="add_prompt" class="font-medium text-xs sm:text-sm text-black">
 						Customize prompt
-					</span>
+					</label>
 
-					<div class="flex items-center gap-1 mt-3">
-						<span class="text-xs text-[#999]">Columns: </span>
+					<div class="flex items-center gap-1 flex-wrap">
+						<span class="text-xxs sm:text-xs text-[#999]">Columns:</span>
 						{#each usableColumns as column}
 							<Button
 								variant="ghost"
-								class="px-1.5 py-1 h-[unset] text-xs bg-white data-dark:bg-white/[0.06] hover:bg-black/[0.1] data-dark:hover:bg-white/[0.1] border rounded-sm text-[#666] data-dark:text-white border-[#E5E5E5] data-dark:border-[#333]"
+								class="px-1.5 py-0.5 sm:py-1 h-[unset] !text-xxs sm:!text-xs bg-white data-dark:bg-white/[0.06] hover:bg-black/[0.1] data-dark:hover:bg-white/[0.1] border rounded-sm text-[#666] data-dark:text-white border-[#E5E5E5] data-dark:border-[#333]"
 								on:click={() => {
 									insertAtCursor(
 										// @ts-ignore
-										document.getElementById('add-prompt'),
+										document.getElementById('add_prompt'),
 										`\${${column.id}}`
 									);
 									// @ts-ignore
-									prompt = document.getElementById('add-prompt')?.value ?? prompt;
-									document.getElementById('add-prompt')?.focus();
+									prompt = document.getElementById('add_prompt')?.value ?? prompt;
+									document.getElementById('add_prompt')?.focus();
 								}}
 							>
 								{column.id}
@@ -272,22 +326,22 @@
 
 					<textarea
 						bind:value={prompt}
-						id="add-prompt"
+						id="add_prompt"
 						placeholder="Enter prompt"
-						class="mt-1 p-2 h-96 text-[14px] rounded-md disabled:text-black/60 data-dark:disabled:text-white/60 bg-[#F4F5FA] data-dark:bg-[#42464e] border border-[#DDD] data-dark:border-[#42464E] outline-none placeholder:italic placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+						class="p-2 h-96 text-[14px] rounded-md disabled:text-black/60 data-dark:disabled:text-white/60 bg-[#F4F5FA] data-dark:bg-[#42464e] border border-transparent outline-none placeholder:italic placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
 					/>
 				</div>
 
-				<div class="grid grid-rows-[min-content_1fr] px-6 pl-8 py-4 overflow-auto">
-					<span class="font-medium text-sm text-[#999] data-dark:text-[#C9C9C9]">
+				<div class="grid grid-rows-[min-content_1fr] gap-1 px-4 sm:px-6">
+					<label for="system_prompt" class="font-medium text-xs sm:text-sm text-black">
 						Customize system prompt
-					</span>
+					</label>
 
 					<textarea
 						bind:value={systemPrompt}
-						id="system-prompt"
+						id="system_prompt"
 						placeholder="Enter system prompt"
-						class="mt-4 p-2 h-96 text-[14px] rounded-md disabled:text-black/60 data-dark:disabled:text-white/60 bg-[#F4F5FA] data-dark:bg-[#42464e] border border-[#DDD] data-dark:border-[#42464E] outline-none placeholder:italic placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+						class="p-2 h-96 text-[14px] rounded-md disabled:text-black/60 data-dark:disabled:text-white/60 bg-[#F4F5FA] data-dark:bg-[#42464e] border border-transparent outline-none placeholder:italic placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
 					/>
 				</div>
 			{/if}
@@ -304,7 +358,7 @@
 		</form>
 
 		<Dialog.Actions>
-			<div class="flex gap-2">
+			<div class="flex gap-2 overflow-x-auto overflow-y-hidden">
 				<DialogPrimitive.Close asChild let:builder>
 					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
 						Cancel

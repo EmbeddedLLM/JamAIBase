@@ -27,7 +27,6 @@ add_package('pypdfium2')
 add_package('pypdfium2_raw')
 add_package('docio')
 
-
 a = Analysis(
     [Path('src/docio/entrypoints/api.py').as_posix()],
     pathex=[],

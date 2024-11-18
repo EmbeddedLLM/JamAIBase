@@ -69,9 +69,9 @@ def remove_chunk_overlap(
         if match is None:
             continue
         documents[i].text = text[: match.a]
-    documents_scores = [(c, s) for c, s in zip(documents, scores) if len(c.text) > 0]
+    documents_scores = [(c, s) for c, s in zip(documents, scores, strict=True) if len(c.text) > 0]
     if len(documents_scores) == 0:
         documents, scores = [], []
     else:
-        documents, scores = zip(*documents_scores)
+        documents, scores = zip(*documents_scores, strict=True)
     return documents, scores

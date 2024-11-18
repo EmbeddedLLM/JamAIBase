@@ -11,6 +11,9 @@ venv/
 services/app
 clients/typescript
 
+# Test files
+clients/python/tests/**/*
+
 # Internal references, dependencies, temporary folders & files
 archive/
 /dependencies/

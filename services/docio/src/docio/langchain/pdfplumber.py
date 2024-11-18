@@ -11,7 +11,7 @@ from langchain.document_loaders.pdf import BasePDFLoader
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from transformers import DetrFeatureExtractor, TableTransformerForObjectDetection
 
-from jamaibase.protocol import Document
+from docio.protocol import Document
 
 
 class Config(BaseSettings):
@@ -54,11 +54,11 @@ def extract_from_images_with_rapidocr(
 ) -> str:
     try:
         from rapidocr_onnxruntime import RapidOCR
-    except ImportError:
+    except ImportError as e:
         raise ImportError(
             "`rapidocr-onnxruntime` package not found, please install it with "
             "`pip install rapidocr-onnxruntime`"
-        )
+        ) from e
     ocr = RapidOCR()
     text = ""
     for img in images:
@@ -153,7 +153,11 @@ class PDFPlumberParser(BaseBlobParser):
 
         # Iterate through scores, labels, boxes, and colors for visualization
         for score, label, (xmin, ymin, xmax, ymax), c in zip(
-            scores.tolist(), labels.tolist(), boxes.tolist(), colors
+            scores.tolist(),
+            labels.tolist(),
+            boxes.tolist(),
+            colors,
+            strict=True,
         ):
             # Add a rectangle to the image for the detected object's bounding box
             ax.add_patch(
@@ -304,7 +308,7 @@ class PDFPlumberParser(BaseBlobParser):
         # print(f"page_tables: {table_bboxes}")
 
         # image bbox enlargement - based on intersection of extract_words bbox
-        for j, page_table in enumerate(table_bboxes):
+        for page_table in table_bboxes:
             # print(f"\ntable {j}")
 
             # (xmin, ymin) == top left (from image bbox)
@@ -317,7 +321,7 @@ class PDFPlumberParser(BaseBlobParser):
 
             xminL, yminL, xmaxL, ymaxL = xmin, ymin2, xmax, ymax2
             # print(f"xmin, ymin2, xmax, ymax2: {xmin, ymin2, xmax, ymax2}")
-            for k, w_ in enumerate(selected_w_info):
+            for w_ in selected_w_info:
                 """
                 (x0, y1)     (x1, y1)
                 1    ___________    2
@@ -470,7 +474,7 @@ class PDFPlumberParser(BaseBlobParser):
             elif img["stream"]["Filter"].name in _PDF_FILTER_WITH_LOSS:
                 images.append(img["stream"].get_data())
             else:
-                warnings.warn("Unknown PDF Filter!")
+                warnings.warn("Unknown PDF Filter!", stacklevel=2)
 
         return extract_from_images_with_rapidocr(images)
 
@@ -489,10 +493,10 @@ class PDFPlumberLoader(BasePDFLoader):
         """Initialize with a file path."""
         try:
             import pdfplumber  # noqa:F401
-        except ImportError:
+        except ImportError as e:
             raise ImportError(
                 "pdfplumber package not found, please install it with " "`pip install pdfplumber`"
-            )
+            ) from e
 
         super().__init__(file_path, headers=headers)
         self.text_kwargs = text_kwargs or {}

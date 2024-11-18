@@ -9,7 +9,7 @@ export const ModelInfoRequestSchema = z.object({
 });
 
 export const ModelInfoSchema = z.object({
-    id: z.string().default("openai/gpt-3.5-turbo"),
+    id: z.string().default("openai/gpt-4o-mini"),
     object: z.string(),
     name: z.string(),
     context_length: z.number().default(16384),

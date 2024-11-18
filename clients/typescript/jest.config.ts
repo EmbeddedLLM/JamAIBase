@@ -6,8 +6,8 @@ const config: Config = {
     testMatch: ["**/__tests__/**/*.test.[jt]s?(x)"],
     verbose: true,
     moduleNameMapper: {
-        "@/(.*)": "<rootDir>/src/$1",
-    },
+        "@/(.*)": "<rootDir>/src/$1"
+    }
 };
 
 export default config;

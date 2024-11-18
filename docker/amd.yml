@@ -1,0 +1,60 @@
+services:
+  infinity:
+    image: michaelf34/infinity:0.0.66-rocm
+    entrypoint:
+      [
+        "/bin/sh",
+        "-c",
+        "(. /app/.venv/bin/activate && HIP_VISIBLE_DEVICES=0 infinity_emb v2 --port 6909 --model-id $${EMBEDDING_MODEL} --model-warmup --device cuda --engine torch --no-bettertransformer --no-compile  &);(. /app/.venv/bin/activate && HIP_VISIBLE_DEVICES=1 infinity_emb v2 --port 6919 --model-id $${RERANKER_MODEL} --model-warmup --device cuda --engine torch --no-bettertransformer --no-compile)",
+      ]
+    # # https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html
+    # # instruction to specify the AMD GPU resources
+    # device:
+    #   - /dev/kfd
+    #   - /dev/dri/renderD128 # GPU ID 0
+    #   - /dev/dri/renderD136 # GPU ID 1
+    # # $ ls -l /dev/dri
+    # # Those renderD* file that has a very long link are pointing to the GPUs
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD128 -> ../../devices/pci0000:16/0000:16:01.0/0000:17:00.0/0000:18:01.0/0000:1a:00.0/0000:1b:00.0/0000:1c:00.0/drm/renderD128
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD129 -> ../../devices/platform/amdgpu_xcp_0/drm/renderD129
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD130 -> ../../devices/platform/amdgpu_xcp_1/drm/renderD130
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD131 -> ../../devices/platform/amdgpu_xcp_2/drm/renderD131
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD132 -> ../../devices/platform/amdgpu_xcp_3/drm/renderD132
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD133 -> ../../devices/platform/amdgpu_xcp_4/drm/renderD133
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD134 -> ../../devices/platform/amdgpu_xcp_5/drm/renderD134
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD135 -> ../../devices/platform/amdgpu_xcp_6/drm/renderD135
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD136 -> ../../devices/pci0000:3c/0000:3c:01.0/0000:3d:00.0/0000:3e:01.0/0000:40:00.0/0000:41:00.0/0000:42:00.0/drm/renderD136
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD137 -> ../../devices/platform/amdgpu_xcp_7/drm/renderD137
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD138 -> ../../devices/platform/amdgpu_xcp_8/drm/renderD138
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD139 -> ../../devices/platform/amdgpu_xcp_9/drm/renderD139
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD140 -> ../../devices/platform/amdgpu_xcp_10/drm/renderD140
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD141 -> ../../devices/platform/amdgpu_xcp_11/drm/renderD141
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD142 -> ../../devices/platform/amdgpu_xcp_12/drm/renderD142
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD143 -> ../../devices/platform/amdgpu_xcp_13/drm/renderD143
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD144 -> ../../devices/pci0000:4f/0000:4f:01.0/0000:50:00.0/0000:51:01.0/0000:53:00.0/0000:54:00.0/0000:55:00.0/drm/renderD144
+    # lrwxrwxrwx 1 root root    0 Oct 21 19:08 renderD145 -> ../../devices/platform/amdgpu_xcp_14/drm/renderD145
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+    devices:
+      - /dev/kfd
+      - /dev/dri/renderD128
+      - /dev/dri/renderD136
+    group_add:
+      - video
+    # Alternatively, you could use privileged mode (use with caution):
+    # privileged: true
+
+  docio:
+    cap_add:
+      - SYS_PTRACE
+    devices:
+      - /dev/kfd
+      - /dev/dri/renderD128
+    security_opt:
+      - seccomp:unconfined
+    group_add:
+      - video
+    # Alternatively, you could use privileged mode (use with caution):
+    # privileged: true

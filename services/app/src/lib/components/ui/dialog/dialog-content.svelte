@@ -23,7 +23,7 @@
 		{transition}
 		{transitionConfig}
 		class={cn(
-			'fixed left-[50%] top-[50%] z-50 flex flex-col w-full max-w-lg translate-x-[-50%] translate-y-[-50%] bg-white data-dark:bg-[#303338] shadow-lg rounded-xl focus-visible:outline-none',
+			'fixed left-[50%] top-[50%] z-50 flex flex-col w-full translate-x-[-50%] translate-y-[-50%] bg-white data-dark:bg-[#303338] shadow-lg rounded-lg focus-visible:outline-none',
 			className
 		)}
 		{...$$restProps}

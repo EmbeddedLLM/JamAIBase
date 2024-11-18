@@ -10,13 +10,95 @@ on:
     tags:
       - "v*"
 
+# Cancel in-progress CI jobs if there is a new push
+# https://stackoverflow.com/a/72408109
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  pyinstaller_electron_app:
+    name: PyInstaller JamAIBase Electron App Compilation
+    runs-on: windows-11-desktop
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js 20.x
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20.x
+
+      - name: Install Git
+        run: |
+          $installer_url = "https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe"
+          Invoke-WebRequest -Uri $installer_url -OutFile "GitInstaller.exe"
+          Start-Process -FilePath "GitInstaller.exe" -Args "/VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /COMPONENTS='icons,ext\reg\shellhere,assoc,assoc_sh'" -Wait
+          Remove-Item "GitInstaller.exe"
+
+          # Add Git to PATH
+          $gitPath = "C:\Program Files\Git\cmd"
+          $env:PATH = "$gitPath;$env:PATH"
+          [Environment]::SetEnvironmentVariable("PATH", $env:PATH, [EnvironmentVariableTarget]::Machine)
+
+          # Output the new PATH to a step output
+          echo "PATH=$env:PATH" >> $env:GITHUB_ENV
+
+          # Verify Git installation
+          git --version
+        shell: powershell
+
+      - name: Verify Git in PATH
+        run: |
+          Write-Host "Current PATH: $env:PATH"
+          $gitPath = (Get-Command git -ErrorAction SilentlyContinue).Path
+          if ($gitPath) {
+            Write-Host "Git found at: $gitPath"
+          } else {
+            Write-Host "Git not found in PATH"
+            exit 1
+          }
+        shell: powershell
+
+      - name: Inspect git version
+        run: |
+          git --version
+
+      - name: Remove cloud-only modules and start compiling JamAIBase Electron App
+        run: |
+          mv .env.example .env
+          $ErrorActionPreference = "Stop"
+          .\scripts\compile_jamaibase_app.ps1
+        shell: powershell
+
+      - name: Validate jamaibase.exe is healthy
+        run: |
+          cd services\app\build-electron\make\zip\win32\x64\
+
+          Expand-Archive -Path 'jamaibase-app-win32-x64-0.2.0.zip' -DestinationPath 'jamaibase-app-win32-x64-0.2.0'
+
+          $process = Start-Process -NoNewWindow -FilePath ".\jamaibase-app-win32-x64-0.2.0\jamaibase-app.exe" -PassThru
+
+          $processId = $process.Id
+          Write-Output "Process ID: $processId"
+
+          # Wait for 5 seconds
+          Start-Sleep -Seconds 10
+
+          # Check if the process is still running
+          if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {
+              Write-Output "The process is still running."
+          } else {
+              Write-Output "The process has exited."
+          }
+        shell: powershell
+
   pyinstaller_api:
     name: PyInstaller API Service Compilation
     runs-on: windows-11-desktop
-    strategy:
-      matrix:
-        python-version: ["3.10"]
+    timeout-minutes: 60
 
     steps:
       - name: Checkout code
@@ -25,7 +107,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v2
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
 
       - name: Inspect Python version
         run: python --version
@@ -67,6 +149,7 @@ jobs:
 
       - name: Remove cloud-only modules and start compiling API service
         run: |
+          mv .env.example .env
           $ErrorActionPreference = "Stop"
           .\scripts\compile_api_exe.ps1
         shell: powershell
@@ -75,7 +158,7 @@ jobs:
         run: |
           $env:OWL_WORKERS=1
           $process = Start-Process -NoNewWindow -FilePath ".\services\api\dist\api\api.exe" -PassThru
-          Start-Sleep -Seconds 10
+          Start-Sleep -Seconds 60
           Write-Output "API process ID: $($process.Id)"
           Get-Process
           Test-NetConnection -ComputerName localhost -Port 6969
@@ -96,9 +179,7 @@ jobs:
   pyinstaller_docio:
     name: PyInstaller DocIO Service Compilation
     runs-on: windows-11-desktop
-    strategy:
-      matrix:
-        python-version: ["3.10"]
+    timeout-minutes: 60
 
     steps:
       - name: Checkout code
@@ -107,7 +188,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v2
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.10"
 
       - name: Display Python version
         run: python --version
@@ -150,6 +231,7 @@ jobs:
 
       - name: Remove cloud-only modules and start compiling DocIO service
         run: |
+          mv .env.example .env
           $ErrorActionPreference = "Stop"
           .\scripts\compile_docio_exe.ps1
         shell: powershell

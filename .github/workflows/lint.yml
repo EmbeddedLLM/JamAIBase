@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10"]
+        python-version: ["3.12"]
 
     steps:
       - name: Checkout code
@@ -28,20 +28,11 @@ jobs:
           cd clients/python
           python3 -m pip install .[lint]
 
-      - name: Check Python files using Black
+      - name: Check Python files using Ruff
         run: |
           set -e
-          black --check --verbose --diff --config clients/python/pyproject.toml .
-
-      - name: Run flake8 lint tests (errors)
-        run: |
-          set -e
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-
-      - name: Run flake8 lint tests (warnings)
-        run: |
-          set -e
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=99 --statistics
+          ruff check --output-format github --config clients/python/pyproject.toml .
+          ruff format --diff --config clients/python/pyproject.toml .
 
   prettier_lint:
     name: Prettier Checks

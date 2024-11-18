@@ -1,9 +1,0 @@
-dbs:
-  # - path: path to db
-  #   replicas:
-  #     - url: s3://BUCKETNAME.localhost:9000/PATH-TO-REPLICA-DIR
-  #   for amazon S3:
-  #     - url: s3://BUCKETNAME/PATH-TO-REPLICA-DIR
-  - path: /data/test.db
-    replicas:
-      - url: s3://mybkt.localhost:9000/test

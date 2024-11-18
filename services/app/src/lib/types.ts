@@ -1,9 +1,11 @@
 import type { ComponentType } from 'svelte';
 import { z } from 'zod';
 import type { genTableDTypes, userRoles } from './constants';
+import type { AxiosRequestConfig } from 'axios';
 
 export interface AvailableModel {
 	id: string;
+	name: string;
 	context_length: number;
 	languages: string[];
 	owned_by: string;
@@ -41,20 +43,23 @@ export interface Timestamp {
 }
 
 export interface UploadQueue {
-	activeFile: File | null;
+	activeFile: UploadQueueItem | null;
 	progress: number;
-	queue: {
-		file: File;
-		tableType: string;
-		table_id?: string;
-		project_id: string;
-		invalidate?: () => void;
-	}[];
+	queue: UploadQueueItem[];
+}
+
+export interface UploadQueueItem {
+	file: File;
+	request: AxiosRequestConfig;
+	completeText: string;
+	successText: string;
+	invalidate?: () => void;
 }
 
 // Action Table
 export interface GenTable {
 	id: string;
+	version: string;
 	cols: GenTableCol[];
 	lock_till: number;
 	updated_at: string;
@@ -99,7 +104,36 @@ export interface GenTableCol {
 	dtype: (typeof genTableDTypes)[number];
 	vlen: number;
 	index: boolean;
-	gen_config: (Partial<ChatRequest> & { embedding_model?: string; source_column?: string }) | null;
+	gen_config: (LLMGenConfig | EmbedGenConfig) | null;
+}
+
+export interface LLMGenConfig {
+	object: 'gen_config.llm';
+	model?: string;
+	system_prompt?: string;
+	prompt?: string;
+	multi_turn?: boolean;
+	rag_params?: {
+		search_query?: string;
+		k?: number;
+		table_id: string;
+		reranking_model: string | null;
+		rerank?: boolean;
+		concat_reranker_input?: boolean;
+	} | null;
+	temperature?: number;
+	top_p?: number;
+	stop?: string[] | null;
+	max_tokens?: number;
+	presence_penalty?: number;
+	frequency_penalty?: number;
+	logit_bias?: object;
+}
+
+export interface EmbedGenConfig {
+	object: 'gen_config.embed';
+	embedding_model: string;
+	source_column: string;
 }
 
 export type GenTableRow = {
@@ -171,29 +205,33 @@ export type OrganizationReadRes = {
 	name: string;
 	tier: string;
 	active: boolean;
+	credit: number;
+	credit_grant: number;
 	quotas: {
-		credit: number;
-		credit_grant: number;
-		[key: string]: number;
+		[key: string]: {
+			quota: number;
+			usage: number;
+		};
 	};
-	db_storage_gb: number;
-	file_storage_gb: number;
+	db_usage_gib: number;
+	file_usage_gib: number;
 	stripe_id: string;
 	openmeter_id: string;
 	external_keys?: {
-		openai_api_key: string;
-		anthropic_api_key: string;
-		cohere_api_key: string;
-		together_api_key: string;
+		openai: string;
+		anthropic: string;
+		cohere: string;
+		together_ai: string;
 		[key: string]: string;
 	};
 	created_at: string;
 	updated_at: string;
-	users?: {
+	members?: {
 		organization_id: string;
-		role: (typeof userRoles)[number];
 		user_id: string;
-		name: string;
+		role: (typeof userRoles)[number];
+		created_at: string;
+		updated_at: string;
 	}[];
 	api_keys?: {
 		created_at: string;
@@ -218,7 +256,16 @@ export type Project = {
 	id: string;
 	created_at: string;
 	updated_at: string;
-	organization: Omit<OrganizationReadRes, 'users' | 'api_keys'>;
+	organization: Omit<OrganizationReadRes, 'api_keys'>;
+};
+
+export type Template = {
+	id: string;
+	name: string;
+	created_at: string;
+	tags: {
+		id: string;
+	}[];
 };
 
 export type API_Key = {
@@ -226,6 +273,13 @@ export type API_Key = {
 	organization_id: string;
 	write: boolean;
 	id: string;
+	created_at: string;
+};
+
+export type PATRead = {
+	id: string;
+	user_id: string;
+	expiry: string;
 	created_at: string;
 };
 
@@ -237,8 +291,8 @@ export type UserRead = {
 	meta: Record<string, string>;
 	created_at: string;
 	update_at: string;
-	organizations: Organization[];
-	api_keys: API_Key[];
+	member_of: Organization[];
+	pats: PATRead[];
 };
 
 // Openmeter
@@ -249,15 +303,31 @@ export type TUsageData = {
 		amount: number;
 	}[];
 };
+export type TUsageDataStorage = Omit<TUsageData, 'model'> & {
+	type: 'file' | 'db' | '';
+};
 
-export const openmeterTokenUsageItemSchema = z
+export const openmeterUsageItemSchema = z
 	.object({
 		value: z.number(),
 		subject: z.string(),
 		windowStart: z.string(),
-		windowEnd: z.string(),
-		groupBy: z.object({ model: z.string() })
+		windowEnd: z.string()
 	})
 	.passthrough();
 
-export const openmeterTokenUsageSchema = z.array(openmeterTokenUsageItemSchema);
+export const openmeterTokenUsageSchema = z.array(
+	openmeterUsageItemSchema.merge(
+		z.object({
+			groupBy: z.object({ model: z.string() })
+		})
+	)
+);
+export const openmeterStorageUsageSchema = z.array(
+	openmeterUsageItemSchema.merge(
+		z.object({
+			groupBy: z.object({ type: z.enum(['file', 'db']) })
+		})
+	)
+);
+export const openmeterBaseUsageSchema = z.array(openmeterUsageItemSchema);

@@ -6,8 +6,11 @@ https://gist.github.com/nkhitrov/a3e31cfcc1b19cba8e1b626276148c49
 
 import inspect
 import logging
+import sys
 
 from loguru import logger
+
+from owl.configs.manager import ENV_CONFIG
 
 
 class InterceptHandler(logging.Handler):
@@ -72,17 +75,31 @@ def suppress_logging_handlers(names: list[str], include_submodules: bool = True)
         lgg.setLevel("ERROR")
 
 
-def setup_logger_sinks():
-    import sys
-    from copy import deepcopy
-
-    from owl.configs.manager import LOGS
-
+def setup_logger_sinks(log_filepath: str = f"{ENV_CONFIG.owl_log_dir}/owl.log"):
     logger.remove()
-    log_cfg = deepcopy(LOGS)
-    stderr_cfg = log_cfg.pop("stderr", None)
-    if stderr_cfg is not None:
-        logger.add(sys.stderr, **stderr_cfg)
-    for path, cfg in log_cfg.items():
-        logger.add(sink=path, **cfg)
-        logger.info(f"Writing logs to: {path}")
+    logger.level("INFO", color="")
+    logger.configure(
+        handlers=[
+            {
+                "sink": sys.stderr,
+                "level": "INFO",
+                "serialize": False,
+                "backtrace": False,
+                "diagnose": True,
+                "enqueue": True,
+                "catch": True,
+            },
+            {
+                "sink": log_filepath,
+                "level": "INFO",
+                "serialize": False,
+                "backtrace": False,
+                "diagnose": True,
+                "enqueue": True,
+                "catch": True,
+                "rotation": "50 MB",
+                "delay": False,
+                "watch": False,
+            },
+        ],
+    )

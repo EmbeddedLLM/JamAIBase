@@ -14,7 +14,7 @@
 
 <DropdownMenuPrimitive.Item
 	class={cn(
-		'relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none data-[disabled]:pointer-events-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:opacity-50',
+		'relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm text-[#344054] outline-none data-[disabled]:pointer-events-none data-[highlighted]:bg-[#F2F4F7] data-[highlighted]:text-[#344054] data-[disabled]:opacity-50',
 		inset && 'pl-8',
 		className
 	)}
@@ -26,6 +26,7 @@
 	on:pointerdown
 	on:pointerleave
 	on:pointermove
+	let:builder
 >
-	<slot />
+	<slot {builder} />
 </DropdownMenuPrimitive.Item>
