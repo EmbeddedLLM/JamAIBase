@@ -1,8 +1,8 @@
 services:
   infinity:
-    image: michaelf34/infinity:0.0.70
+    image: michaelf34/infinity:0.0.70-cpu
     container_name: jamai_infinity
-    entrypoint:
+    command:
       [
         "v2",
         "--port", "6909",
