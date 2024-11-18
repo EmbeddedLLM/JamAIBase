@@ -96,7 +96,6 @@ CI/CD
 
 Python SDK - jamaibase
 
-- **Breaking**: To get a TSV export of table data, pass in delimiter value of "\t" instead of a tab character.
 - **Breaking**: `get_conversation_thread()` has two new required arguments: `table_type` and `column_id`
 - `duplicate_table()` arguments changed:
   - Added `create_as_child` argument, and deprecated `deploy`. Resolves #196
@@ -121,11 +120,9 @@ UI
 Backend - owl (API server)
 
 - **Breaking**: Delete endpoints will raise 404 if the resource is not found
-- **Breaking**: Exception classes are now moved into `jamaibase` from `owl`
 - GenTable
   - **Breaking**: Table list endpoint now defaults to not counting table rows
   - **Breaking**: Duplicate table endpoint `/v1/gen_tables/{table_type}/duplicate/{table_id_src}/{table_id_dst}` is deprecated in favour of `/v1/gen_tables/{table_type}/duplicate/{table_id_src}`
-  - **Breaking**: To get a TSV export of table data, pass in delimiter value of "\t" instead of a tab character.
   - **Breaking**: `/v1/gen_tables/{table_type}/{table_id}/thread` has one new required query parameter: `column_id`
     - It also supports `action` and `knowledge` table now.
   - Changed the search method for row filtering from FTS to regex
