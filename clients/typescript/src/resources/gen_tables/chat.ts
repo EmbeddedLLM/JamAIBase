@@ -1,9 +1,13 @@
-import { IdSchema, TableSchemaCreateSchema } from "@/resources/gen_tables/tables";
+import { IdSchema, TableSchemaCreateSchema, TableTypesSchema } from "@/resources/gen_tables/tables";
 import { ChatCompletionChunkSchema, ChatEntrySchema, ReferencesSchema } from "@/resources/llm/chat";
 import { z } from "zod";
 
 export const GetConversationThreadRequestSchema = z.object({
-    table_id: IdSchema
+    table_id: IdSchema,
+    column_id: IdSchema,
+    row_id: z.string().default(""),
+    table_type: TableTypesSchema,
+    include: z.boolean().default(true)
 });
 
 export const GetConversationThreadResponseSchema = z.object({
@@ -34,9 +38,9 @@ export const GenTableStreamReferencesSchema = ReferencesSchema.extend({
 });
 
 export const CreateChatTableRequestSchema = TableSchemaCreateSchema;
-export type CreateChatTableRequest = z.infer<typeof CreateChatTableRequestSchema>;
+export type CreateChatTableRequest = z.input<typeof CreateChatTableRequestSchema>;
 
-export type GetConversationThreadRequest = z.infer<typeof GetConversationThreadRequestSchema>;
+export type GetConversationThreadRequest = z.input<typeof GetConversationThreadRequestSchema>;
 export type GetConversationThreadResponse = z.infer<typeof GetConversationThreadResponseSchema>;
 export type GenTableChatCompletionChunks = z.infer<typeof GenTableChatCompletionChunksSchema>;
 export type GenTableRowsChatCompletionChunks = z.infer<typeof GenTableRowsChatCompletionChunksSchema>;

@@ -1,0 +1,43 @@
+include:
+  - path:
+      - compose.cpu.yml
+      - ollama.yml
+
+services:
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ${PWD}/ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+    entrypoint: [
+        "sh",
+        "-c",
+        "ollama serve & \
+        sleep 1; \
+        ATTEMPTS=0; \
+        MAX_ATTEMPTS=5; \
+        while [ $$ATTEMPTS -lt $$MAX_ATTEMPTS ]; do \
+        ollama ps > /dev/null 2>&1; \
+        if [ $$? -eq 0 ]; then \
+        break; \
+        fi; \
+        sleep 3; \
+        ATTEMPTS=$$((ATTEMPTS+1)); \
+        done; \
+        if [ $$ATTEMPTS -eq $$MAX_ATTEMPTS ]; then \
+        echo 'ollama serve did not start in time'; \
+        exit 1; \
+        fi; \
+        ollama pull phi3.5 && ollama cp phi3.5 microsoft/Phi3.5-mini-instruct; \
+        tail -f /dev/null",
+      ]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "ollama show microsoft/Phi3.5-mini-instruct || exit 1"]
+      interval: 20s
+      timeout: 2s
+      retries: 20
+      start_period: 20s
+    networks:
+      - jamai

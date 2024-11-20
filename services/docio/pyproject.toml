@@ -17,35 +17,56 @@ filterwarnings = [
     "ignore::DeprecationWarning:flatbuffers.*",
 ]
 
-
 # -----------------------------------------------------------------------------
-# Black (Option-less formatter) configuration
-# https://black.readthedocs.io/en/stable/index.html
+# Ruff configuration
+# https://docs.astral.sh/ruff/
 
-[tool.black]
+[tool.ruff]
 line-length = 99
-target-version = ["py310"]
-include = '\.pyi?$|\.ipynb'
+indent-width = 4
+target-version = "py310"
+extend-include = [".pyi?$", ".ipynb"]
+extend-exclude = ["archive/*"]
+respect-gitignore = true
 
-# -----------------------------------------------------------------------------
-# For sorting imports
-# This is used by VS Code to sort imports
-# https://code.visualstudio.com/docs/python/editing#_sort-imports
-# https://timothycrosley.github.io/isort/
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
 
-[tool.isort]
-# Profile
-# Base profile type to use for configuration. Profiles include: black, django,
-# pycharm, google, open_stack, plone, attrs, hug. As well as any shared profiles.
-# Default: ``
-profile = "black"
-# Treat project as a git repository and ignore files listed in .gitignore
-# Default: `False`
-skip_gitignore = true
-# The max length of an import line (used for wrapping long imports).
-# Default: `79`
-line_length = 99
-known_first_party = ["jamaibase", "owl", "docio"]
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Enable auto-formatting of code examples in docstrings. Markdown,
+# reStructuredText code/literal blocks and doctests are all supported.
+docstring-code-format = true
+
+[tool.ruff.lint]
+# 1. Enable flake8-bugbear (`B`) rules, in addition to the defaults.
+select = ["E1", "E4", "E7", "E9", "F", "I", "W1", "W2", "W3", "W6", "B"]
+
+# 2. Avoid enforcing line-length violations (`E501`)
+ignore = ["E501"]
+
+# 3. Avoid trying to fix flake8-bugbear (`B`) violations.
+unfixable = ["B"]
+
+# 4. Ignore `E402` (import violations) in all `__init__.py` files, and in selected subdirectories.
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["E402"]
+"**/{tests,docs,tools}/*" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["jamaibase", "owl", "docio"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Allow default arguments like, e.g., `data: List[str] = fastapi.Query(None)`.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Path",
+    "fastapi.Query",
+]
 
 # -----------------------------------------------------------------------------
 # setuptools
@@ -79,7 +100,7 @@ dependencies = [
     "loguru~=0.7.2",
     "matplotlib",
     "pandas~=2.2.2",
-    "pdfplumber~=0.10.4",          # pdfplumber
+    "pdfplumber~=0.10.4",                                                                                                                                      # pdfplumber
     "pydantic-settings>=2.2.1",
     "pydantic~=2.6.3",
     "pypdfium2~=4.27.0",
@@ -95,7 +116,7 @@ dependencies = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-lint = ["black~=24.4.2", "flake8~=7.0.0"]
+lint = ["ruff~=0.5.7"]
 test = [
     "flaky~=3.7.0",
     "mypy~=1.5.1",

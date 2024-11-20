@@ -1,0 +1,24 @@
+services:
+  infinity:
+    entrypoint:
+      [
+        "/bin/sh",
+        "-c",
+        "(. /app/.venv/bin/activate && infinity_emb v2 --port 6909 --model-id $${EMBEDDING_MODEL} --model-warmup --device cuda &);(. /app/.venv/bin/activate && infinity_emb v2 --port 6919 --model-id $${RERANKER_MODEL} --model-warmup --device cuda )",
+      ]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+  docio:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]

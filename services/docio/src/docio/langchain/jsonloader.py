@@ -2,9 +2,8 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, Optional, Union
 
-from langchain_core.documents import Document
-
 from langchain_community.document_loaders.base import BaseLoader
+from langchain_core.documents import Document
 
 
 class JSONLoader(BaseLoader):
@@ -97,7 +96,7 @@ class JSONLoader(BaseLoader):
         elif isinstance(content, str):
             return content
         elif isinstance(content, dict):
-            return json.dumps(content) if content else ""
+            return json.dumps(content, ensure_ascii=False) if content else ""
         else:
             return str(content) if content is not None else ""
 

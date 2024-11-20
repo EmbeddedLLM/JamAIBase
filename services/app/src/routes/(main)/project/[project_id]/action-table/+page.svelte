@@ -4,13 +4,16 @@
 	import debounce from 'lodash/debounce';
 	import Trash_2 from 'lucide-svelte/icons/trash-2';
 	import { page } from '$app/stores';
-	import { pastActionTables } from '../tablesStore';
+	import { aTableSort as sortOptions } from '$globalStore';
+	import { pastActionTables } from '$lib/components/tables/tablesStore';
 	import logger from '$lib/logger';
 
 	import AddTableDialog from './(dialogs)/AddTableDialog.svelte';
-	import { DeleteTableDialog, RenameTableDialog } from '../(dialogs)';
-	import { toast } from 'svelte-sonner';
+	import { DeleteTableDialog, ImportTableDialog, RenameTableDialog } from '../(dialogs)';
 	import FoundProjectOrgSwitcher from '$lib/components/preset/FoundProjectOrgSwitcher.svelte';
+	import SorterSelect from '$lib/components/preset/SorterSelect.svelte';
+	import SearchBar from '$lib/components/preset/SearchBar.svelte';
+	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
 	import { Skeleton } from '$lib/components/ui/skeleton';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -19,9 +22,14 @@
 	import ActionTableIcon from '$lib/icons/ActionTableIcon.svelte';
 	import MoreVertIcon from '$lib/icons/MoreVertIcon.svelte';
 	import EditIcon from '$lib/icons/EditIcon.svelte';
+	import SortByIcon from '$lib/icons/SortByIcon.svelte';
+	import SortAlphabetIcon from '$lib/icons/SortAlphabetIcon.svelte';
+	import ImportIcon from '$lib/icons/ImportIcon.svelte';
 
 	export let data;
 	$: ({ userData } = data);
+
+	let windowWidth: number;
 
 	let fetchController: AbortController | null = null;
 	let loadingATablesError: { status: number; message: string; org_id: string } | null = null;
@@ -30,10 +38,19 @@
 	let moreATablesFinished = false; //FIXME: Bandaid fix for infinite loop caused by loading circle
 	let currentOffset = 0;
 	const limit = 50;
+	const sortableFields = [
+		{ id: 'id', title: 'Name', Icon: SortAlphabetIcon },
+		{ id: 'updated_at', title: 'Date modified', Icon: SortByIcon }
+	];
+
+	let searchQuery = '';
+	let searchController: AbortController | null = null;
+	let isLoadingSearch = false;
 
 	let isAddingTable = false;
 	let isEditingTableID: string | null = null;
 	let isDeletingTable: string | null = null;
+	let isImportingTable: File | null = null;
 
 	onMount(() => {
 		getActionTables();
@@ -52,16 +69,26 @@
 		fetchController = new AbortController();
 
 		try {
+			const searchParams = {
+				offset: currentOffset.toString(),
+				limit: limit.toString(),
+				order_by: $sortOptions.orderBy,
+				order_descending: $sortOptions.order === 'asc' ? 'false' : 'true',
+				search_query: searchQuery.trim()
+			} as Record<string, string>;
+
+			if (searchParams.search_query === '') {
+				delete searchParams.search_query;
+			}
+
 			const response = await fetch(
-				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/action?` +
-					new URLSearchParams({
-						offset: currentOffset.toString(),
-						limit: limit.toString()
-					}),
+				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/action?` + new URLSearchParams(searchParams),
 				{
-					method: 'GET',
 					credentials: 'same-origin',
-					signal: fetchController.signal
+					signal: fetchController.signal,
+					headers: {
+						'x-project-id': $page.params.project_id
+					}
 				}
 			);
 			currentOffset += limit;
@@ -81,7 +108,12 @@
 				}
 				console.error(responseBody);
 				toast.error('Failed to fetch action tables', {
-					description: responseBody.message || JSON.stringify(responseBody)
+					id: responseBody.message || JSON.stringify(responseBody),
+					description: CustomToastDesc,
+					componentProps: {
+						description: responseBody.message || JSON.stringify(responseBody),
+						requestID: responseBody.request_id
+					}
 				});
 				loadingATablesError = {
 					status: response.status,
@@ -100,10 +132,100 @@
 		isLoadingMoreATables = false;
 	}
 
+	async function refetchTables() {
+		if (searchQuery) {
+			await handleSearchTables(searchQuery);
+		} else {
+			searchController?.abort('Duplicate');
+			$pastActionTables = [];
+			currentOffset = 0;
+			moreATablesFinished = false;
+			await getActionTables();
+			isLoadingSearch = false;
+		}
+	}
+
+	async function handleSearchTables(q: string) {
+		isLoadingSearch = true;
+
+		if (!searchQuery) return refetchTables();
+
+		searchController?.abort('Duplicate');
+		searchController = new AbortController();
+
+		try {
+			const response = await fetch(
+				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/action?${new URLSearchParams({
+					limit: limit.toString(),
+					order_by: $sortOptions.orderBy,
+					order_descending: $sortOptions.order === 'asc' ? 'false' : 'true',
+					search_query: q
+				})}`,
+				{
+					signal: searchController.signal,
+					headers: {
+						'x-project-id': $page.params.project_id
+					}
+				}
+			);
+			currentOffset = limit;
+			moreATablesFinished = false;
+
+			const responseBody = await response.json();
+			if (response.ok) {
+				$pastActionTables = responseBody.items;
+			} else {
+				logger.error('ACTIONTBL_TBL_SEARCHTBL', responseBody);
+				console.error(responseBody);
+				toast.error('Failed to search tables', {
+					id: responseBody.message || JSON.stringify(responseBody),
+					description: CustomToastDesc,
+					componentProps: {
+						description: responseBody.message || JSON.stringify(responseBody),
+						requestID: responseBody.request_id
+					}
+				});
+			}
+			isLoadingSearch = false;
+		} catch (err) {
+			//* don't show abort errors in browser
+			if (err !== 'Duplicate') {
+				console.error(err);
+				isLoadingSearch = false;
+			}
+		}
+	}
+	const debouncedSearchTables = debounce(handleSearchTables, 300);
+
+	async function handleFilesUpload(
+		e: Event & {
+			currentTarget: EventTarget & HTMLInputElement;
+		},
+		files: File[]
+	) {
+		e.currentTarget.value = '';
+
+		if (files.length === 0) return;
+		if (files.length > 1) {
+			alert('Cannot import multiple tables at the same time');
+			return;
+		}
+
+		const allowedFiletypes = ['.parquet'];
+		if (
+			files.some((file) => !allowedFiletypes.includes('.' + (file.name.split('.').pop() ?? '')))
+		) {
+			alert(`Files must be of type: ${allowedFiletypes.join(', ').replaceAll('.', '')}`);
+			return;
+		}
+
+		isImportingTable = files[0];
+	}
+
 	const scrollHandler = async (e: Event) => {
 		const target = e.target as HTMLDivElement;
 		const offset = target.scrollHeight - target.clientHeight - target.scrollTop;
-		const LOAD_THRESHOLD = 20; //? Minimum offset scroll height to load more conversations
+		const LOAD_THRESHOLD = 1000;
 
 		if (offset < LOAD_THRESHOLD && !isLoadingMoreATables && !moreATablesFinished) {
 			await getActionTables();
@@ -115,28 +237,65 @@
 	<title>Action Table</title>
 </svelte:head>
 
-{#if !loadingATablesError}
-	<div class="flex flex-col gap-6 px-7 py-3 h-full">
-		<div class="flex justify-between px-1">
-			<div class="grid grid-cols-3">
-				<Button
-					variant="action"
-					on:click={() => (isAddingTable = true)}
-					class="flex items-center justify-center gap-2 px-6"
-				>
-					<AddIcon class="mb-0.5 h-3 text-black aspect-square" />
+<svelte:window bind:innerWidth={windowWidth} />
 
-					<span class="font-medium text-sm">New Table</span>
+{#if !loadingATablesError}
+	<div class="flex flex-col pb-3 h-full">
+		<div
+			class="grid grid-cols-[minmax(0,auto)_min-content_min-content] h-min items-center gap-1 px-7 py-1.5 sm:py-4 overflow-auto sm:overflow-visible [scrollbar-gutter:stable]"
+		>
+			<div class="col-span-2 lg:col-span-1 flex-[0_0_auto] flex items-center gap-1">
+				<Button
+					aria-label="Create table"
+					on:click={() => (isAddingTable = true)}
+					class="flex-[0_0_auto] relative flex items-center justify-center gap-1.5 px-2 xs:px-3 py-2 h-8 xs:h-9 text-xs sm:text-sm aspect-square xs:aspect-auto"
+				>
+					<AddIcon class="h-3.5 w-3.5" />
+					<span class="hidden xs:block">Create table</span>
+				</Button>
+
+				<Button
+					title="Import table"
+					on:click={(e) => e.currentTarget.querySelector('input')?.click()}
+					class="flex items-center gap-2 p-0 md:px-3.5 h-8 xs:h-9 text-[#475467] bg-[#F2F4F7] hover:bg-[#E4E7EC] focus-visible:bg-[#E4E7EC] active:bg-[#E4E7EC]  aspect-square md:aspect-auto"
+				>
+					<ImportIcon class="h-3.5" />
+
+					<span class="hidden md:block">Import table</span>
+
+					<input
+						id="action-tbl-import"
+						type="file"
+						accept=".parquet"
+						on:change|preventDefault={(e) =>
+							handleFilesUpload(e, [...(e.currentTarget.files ?? [])])}
+						multiple={false}
+						class="fixed max-h-[0] max-w-0 !p-0 !border-none overflow-hidden"
+					/>
 				</Button>
 			</div>
 
-			<!-- <div>Search</div> -->
+			<SearchBar
+				bind:searchQuery
+				{isLoadingSearch}
+				debouncedSearch={debouncedSearchTables}
+				label="Search table"
+				placeholder="Search table"
+				class=""
+			/>
+
+			<SorterSelect
+				bind:sortOptions={$sortOptions}
+				{sortableFields}
+				{refetchTables}
+				class="col-span-3 lg:col-span-1"
+			/>
 		</div>
 
 		<div
 			on:scroll={debounce(scrollHandler, 300)}
 			style="grid-auto-rows: 112px;"
-			class="grow grid grid-cols-2 lg:grid-cols-4 2xl:grid-cols-6 grid-flow-row gap-4 pt-1 px-1 h-1 overflow-auto"
+			class="grow grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] grid-flow-row gap-3 pt-1 px-7 h-1 overflow-auto [scrollbar-gutter:stable]"
 		>
 			{#if isLoadingATables}
 				{#each Array(12) as _}
@@ -147,7 +306,7 @@
 			{:else}
 				{#each $pastActionTables as actionTable (actionTable.id)}
 					<a
-						href={`/project/${$page.params.project_id}/action-table/${actionTable.id}`}
+						href="/project/{$page.params.project_id}/action-table/{actionTable.id}"
 						title={actionTable.id}
 						class="flex flex-col bg-white data-dark:bg-[#42464E] border border-[#E4E7EC] data-dark:border-[#333] rounded-lg hover:-translate-y-0.5 hover:shadow-float transition-[transform,box-shadow]"
 					>
@@ -155,37 +314,39 @@
 							class="grow flex items-start justify-between p-3 w-full border-b border-[#E4E7EC] data-dark:border-[#333]"
 						>
 							<div class="flex items-start gap-1.5">
-								<ActionTableIcon class="flex-[0_0_auto] h-5 w-5 text-secondary -translate-y-0.5" />
-								<span class="font-medium text-sm break-all line-clamp-2">{actionTable.id}</span>
+								<ActionTableIcon class="flex-[0_0_auto] mt-0.5 h-4 w-4 text-[#475467]" />
+								<span class="text-sm text-[#344054] break-all line-clamp-2">
+									{actionTable.id}
+								</span>
 							</div>
 
 							<DropdownMenu.Root>
 								<DropdownMenu.Trigger asChild let:builder>
 									<Button
+										variant="ghost"
 										on:click={(e) => e.preventDefault()}
 										builders={[builder]}
-										variant="ghost"
 										title="Table settings"
-										class="p-0 h-7 w-7 aspect-square rounded-full translate-x-1.5 -translate-y-1"
+										class="flex-[0_0_auto] p-0 h-7 w-7 aspect-square translate-x-1.5 -translate-y-1.5"
 									>
 										<MoreVertIcon class="h-[18px] w-[18px]" />
 									</Button>
 								</DropdownMenu.Trigger>
 								<DropdownMenu.Content alignOffset={-50} transitionConfig={{ x: 5, y: -5 }}>
-									<!-- <DropdownMenu.Group>
-											<DropdownMenu.Item on:click={() => {}}>
-												<CheckIcon class="h-4 w-4 mr-2 mb-[1px]" />
-												<span>Select</span>
-											</DropdownMenu.Item>
-										</DropdownMenu.Group>
-										<DropdownMenu.Separator /> -->
 									<DropdownMenu.Group>
-										<DropdownMenu.Item on:click={() => (isEditingTableID = actionTable.id)}>
-											<EditIcon class="h-4 w-4 mr-2 mb-[2px]" />
+										<DropdownMenu.Item
+											on:click={() => (isEditingTableID = actionTable.id)}
+											class="text-[#344054] data-[highlighted]:text-[#344054]"
+										>
+											<EditIcon class="h-3.5 w-3.5 mr-2" />
 											<span>Rename table</span>
 										</DropdownMenu.Item>
-										<DropdownMenu.Item on:click={() => (isDeletingTable = actionTable.id)}>
-											<Trash_2 class="h-4 w-4 mr-2 mb-[2px]" />
+										<DropdownMenu.Separator />
+										<DropdownMenu.Item
+											on:click={() => (isDeletingTable = actionTable.id)}
+											class="text-destructive data-[highlighted]:text-destructive"
+										>
+											<Trash_2 class="h-3.5 w-3.5 mr-2" />
 											<span>Delete table</span>
 										</DropdownMenu.Item>
 									</DropdownMenu.Group>
@@ -193,20 +354,23 @@
 							</DropdownMenu.Root>
 						</div>
 
-						<div class="flex p-3">
+						<div class="flex px-3 py-2">
 							<span
 								title={new Date(actionTable.updated_at).toLocaleString(undefined, {
 									month: 'long',
 									day: 'numeric',
 									year: 'numeric'
 								})}
-								class="text-xs text-[#999] data-dark:text-[#C9C9C9] line-clamp-1"
+								class="font-medium text-xs text-[#98A2B3] data-dark:text-[#C9C9C9] line-clamp-1"
 							>
-								Updated at: {new Date(actionTable.updated_at).toLocaleString(undefined, {
-									month: 'long',
-									day: 'numeric',
-									year: 'numeric'
-								})}
+								Last updated
+								<span class="text-[#475467]">
+									{new Date(actionTable.updated_at).toLocaleString(undefined, {
+										month: 'long',
+										day: 'numeric',
+										year: 'numeric'
+									})}
+								</span>
 							</span>
 						</div>
 					</a>
@@ -220,8 +384,8 @@
 			{/if}
 		</div>
 	</div>
-{:else if loadingATablesError.status === 404 && loadingATablesError.org_id && userData?.organizations.find((org) => org.organization_id === loadingATablesError?.org_id)}
-	{@const projectOrg = userData?.organizations.find(
+{:else if loadingATablesError.status === 404 && loadingATablesError.org_id && userData?.member_of.find((org) => org.organization_id === loadingATablesError?.org_id)}
+	{@const projectOrg = userData?.member_of.find(
 		(org) => org.organization_id === loadingATablesError?.org_id
 	)}
 	<FoundProjectOrgSwitcher {projectOrg} />
@@ -238,6 +402,7 @@
 	</div>
 {/if}
 
-<AddTableDialog bind:isAddingTable />
+<AddTableDialog bind:isAddingTable {refetchTables} />
 <RenameTableDialog tableType="action" bind:isEditingTableID />
 <DeleteTableDialog tableType="action" bind:isDeletingTable />
+<ImportTableDialog tableType="action" bind:isImportingTable {refetchTables} />

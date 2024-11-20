@@ -1,0 +1,4 @@
+services:
+  owl:
+    environment:
+      - OWL_MODELS_CONFIG="models_ollama.json"

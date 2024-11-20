@@ -1,15 +1,15 @@
 #!/bin/bash
 set -e
 
-node scripts/fix-test-include-tsconfig.cjs
-rm -rf dist && npx microbundle --tsconfig tsconfig.json --no-sourcemap && tsc-alias -p tsconfig.json
+node scripts/remove-tests-tsconfig.cjs
+# rm -rf dist && npx microbundle --tsconfig tsconfig.json --no-sourcemap && tsc-alias -p tsconfig.json
+rimraf dist && tsc --project tsconfig.json && tsc-alias -p tsconfig.json && rollup -c --bundleConfigAsCjs
 
-cp -rp README.md dist
-cp dist/index.d.ts dist/index.d.mts
+# cp -rp README.md dist
 
-for file in LICENSE CHANGELOG.md; do
-  if [ -e "${file}" ]; then cp "${file}" dist; fi
-done
+# for file in LICENSE CHANGELOG.md; do
+#   if [ -e "${file}" ]; then cp "${file}" dist; fi
+# done
 
 node scripts/make-dist-package-json.cjs > dist/package.json
 
@@ -17,6 +17,11 @@ node scripts/make-dist-package-json.cjs > dist/package.json
 # import the output ESM
 (cd dist && node -e 'require("jamaibase")')
 (cd dist && node -e 'import("jamaibase")' --input-type=module)
+
+
+# include "__tests__" folder in tsconfig to facilitate unit test.
+node scripts/include-tests-tsconfig.cjs
+
 
 # npm exec tsc-multi
 # node scripts/fix-index-exports.cjs

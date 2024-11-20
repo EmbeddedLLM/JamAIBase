@@ -1,0 +1,6 @@
+{
+  "name": "Form F-1 Due Diligence",
+  "description": "Performs financial due diligence based on Form F-1 filings.",
+  "tags": ["sector:Finance", "task:Research"],
+  "created_at": "2024-09-30T15:38:13.747349+00:00"
+}

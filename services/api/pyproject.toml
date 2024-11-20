@@ -5,6 +5,7 @@
 # https://docs.pytest.org/en/latest/customize.html?highlight=pyproject#pyproject-toml
 
 [tool.pytest.ini_options]
+timeout = 90
 log_cli = true
 asyncio_mode = "auto"
 # log_cli_level = "DEBUG"
@@ -17,35 +18,56 @@ filterwarnings = [
     "ignore::DeprecationWarning:flatbuffers.*",
 ]
 
-
 # -----------------------------------------------------------------------------
-# Black (Option-less formatter) configuration
-# https://black.readthedocs.io/en/stable/index.html
+# Ruff configuration
+# https://docs.astral.sh/ruff/
 
-[tool.black]
+[tool.ruff]
 line-length = 99
-target-version = ["py310"]
-include = '\.pyi?$|\.ipynb'
+indent-width = 4
+target-version = "py310"
+extend-include = [".pyi?$", ".ipynb"]
+extend-exclude = ["archive/*"]
+respect-gitignore = true
 
-# -----------------------------------------------------------------------------
-# For sorting imports
-# This is used by VS Code to sort imports
-# https://code.visualstudio.com/docs/python/editing#_sort-imports
-# https://timothycrosley.github.io/isort/
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
 
-[tool.isort]
-# Profile
-# Base profile type to use for configuration. Profiles include: black, django,
-# pycharm, google, open_stack, plone, attrs, hug. As well as any shared profiles.
-# Default: ``
-profile = "black"
-# Treat project as a git repository and ignore files listed in .gitignore
-# Default: `False`
-skip_gitignore = true
-# The max length of an import line (used for wrapping long imports).
-# Default: `79`
-line_length = 99
-known_first_party = ["jamaibase", "owl", "docio"]
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Enable auto-formatting of code examples in docstrings. Markdown,
+# reStructuredText code/literal blocks and doctests are all supported.
+docstring-code-format = true
+
+[tool.ruff.lint]
+# 1. Enable flake8-bugbear (`B`) rules, in addition to the defaults.
+select = ["E1", "E4", "E7", "E9", "F", "I", "W1", "W2", "W3", "W6", "B"]
+
+# 2. Avoid enforcing line-length violations (`E501`)
+ignore = ["E501"]
+
+# 3. Avoid trying to fix flake8-bugbear (`B`) violations.
+unfixable = ["B"]
+
+# 4. Ignore `E402` (import violations) in all `__init__.py` files, and in selected subdirectories.
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["E402"]
+"**/{tests,docs,tools}/*" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["jamaibase", "owl", "docio"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Allow default arguments like, e.g., `data: List[str] = fastapi.Query(None)`.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Path",
+    "fastapi.Query",
+]
 
 # -----------------------------------------------------------------------------
 # setuptools
@@ -70,63 +92,79 @@ classifiers = [ # https://pypi.org/classifiers/
     "Operating System :: Unix",
 ]
 dependencies = [
-    "fastapi~=0.111.0",
+    "aioboto3~=7.0.0",
+    "aiobotocore~=2.15.0",
+    "aiofiles~=24.1.0",
+    "authlib~=1.3.2",
+    "boto3~=1.35.7",
+    "celery~=5.4.0",
+    "duckdb~=1.1.3",
+    "fastapi[standard]~=0.115.2",
     "filelock~=3.15.1",
+    "flower~=2.0.1",
     "gunicorn~=22.0.0",
     "httpx~=0.27.0",
-    "jamaibase>=0.2.0",
-    "lancedb==0.8.0",              # 0.9.0 has issues with row deletion
-    "langchain-community~=0.2.5",
-    "langchain~=0.2.5",
-    "litellm~=1.41.13",
+    "itsdangerous~=2.2.0",
+    "jamaibase>=0.2.1",
+    # lancedb 0.9.0 has issues with row deletion
+    "lancedb==0.12.0",
+    "langchain-community~=0.2.12",
+    "langchain~=0.2.14",
+    "litellm~=1.48.17",
     "loguru~=0.7.2",
-    "numpy~=1.26.4",
-    "openai~=1.34.0",
+    "natsort[fast]>=8.4.0",
+    "numpy>=1.26.4",
+    "openai>=1.51.0",
     "openmeter~=1.0.0b89",
-    "orjson~=3.10.5",
+    "orjson~=3.10.7",
     "pandas~=2.2",
-    "Pillow~=10.3.0",
-    "pyarrow~=15.0.0",
+    "Pillow~=10.4.0",
+    "pyarrow~=17.0.0",
     "pycryptodomex~=3.20.0",
-    "pydantic-settings~=2.3.3",
-    "pydantic~=2.7.4",
-    "pyjwt~=2.8.0",
-    "pylance==0.11.0",             # 0.13.0 has issues with row deletion
+    "pydantic-settings~=2.4.0",
+    "pydantic[email,timezone]~=2.8.2",
+    "pyjwt~=2.9.0",
+    # pylance 0.13.0 has issues with row deletion
+    "pylance==0.16.0",
     "python-multipart~=0.0.9",
-    "redis[hiredis]~=5.0.6",
-    "sqlmodel~=0.0.19",
+    "redis[hiredis]~=5.0.8",
+    "SQLAlchemy>=2.0",
+    "sqlmodel~=0.0.21",
     "srsly~=2.4.8",
+    # starlette 0.38.3 and 0.38.4 seem to have issues with background tasks
+    "starlette==0.38.2",
     "stripe~=9.12.0",
     "tantivy~=0.22.0",
-    "tenacity~=8.4.1",
+    "tenacity~=8.5.0",
     "tiktoken~=0.7.0",
     "toml~=0.10.2",
-    "tqdm~=4.66.4",
-    "typer[all]~=0.12.3",
+    "tqdm~=4.66.5",
+    "typer[all]~=0.12.4",
     "typing_extensions>=4.12.2",
     "unstructured-client @ git+https://github.com/EmbeddedLLM/unstructured-python-client.git@fix-nested-asyncio-conflict-with-uvloop#egg=unstructured-client",
-    "uuid-utils~=0.8.0",
+    "uuid-utils~=0.9.0",
     "uuid7~=0.1.0",
-    "uvicorn[standard]~=0.28.1",   # 0.30.x seems to have issues with shutdown signal handling?
+    # uvicorn 0.29.x shutdown seems unclean and 0.30.x child process sometimes dies
+    "uvicorn[standard]~=0.28.1",
 ] # Sort your dependencies https://sortmylist.com/
 dynamic = ["version"]
 
 [project.optional-dependencies]
-lint = ["black~=24.4.2", "flake8~=7.0.0"]
+lint = ["ruff~=0.6.1"]
 test = [
     "flaky~=3.8.1",
-    "locust~=2.29.1",
-    "mypy~=1.10.1",
-    "pytest-asyncio>=0.23.7",
+    "mypy~=1.11.1",
+    "pytest-asyncio>=0.23.8",
     "pytest-cov~=5.0.0",
-    "pytest~=8.2.2",
+    "pytest-timeout>=2.3.1",
+    "pytest~=8.3.2",
 ]
 docs = [
-    "furo~=2024.5.6",              # Sphinx theme (nice looking, with dark mode)
-    "myst-parser~=3.0.1",
+    "furo~=2024.8.6",              # Sphinx theme (nice looking, with dark mode)
+    "myst-parser~=4.0.0",
     "sphinx-autobuild~=2024.4.16",
     "sphinx-copybutton~=0.5.2",
-    "sphinx~=7.3.7",
+    "sphinx>=7.4.7",               # sphinx-rtd-theme requires < 8
     "sphinx_rtd_theme~=2.0.0",     # Sphinx theme
 ]
 build = [
@@ -147,4 +185,4 @@ version = { attr = "owl.version.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-owl = ["**/*.json"]
+owl = ["**/*.json", "**/*.parquet"]

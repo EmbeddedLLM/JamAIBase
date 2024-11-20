@@ -3,15 +3,16 @@
 	import { v4 as uuidv4 } from 'uuid';
 	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
-	import autoAnimate from '@formkit/auto-animate';
-	import { pastActionTables } from '../../tablesStore';
-	import { genTableDTypes, tableIDPattern } from '$lib/constants';
+	import { page } from '$app/stores';
+	import { genTableDTypes, jamaiApiVersion, tableIDPattern } from '$lib/constants';
 	import logger from '$lib/logger';
 	import type { GenTableCol } from '$lib/types';
 
 	import InputText from '$lib/components/InputText.svelte';
 	import Checkbox from '$lib/components/Checkbox.svelte';
-	import { toast } from 'svelte-sonner';
+	import Portal from '$lib/components/Portal.svelte';
+	import DraggableList from '$lib/components/DraggableList.svelte';
+	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Select from '$lib/components/ui/select';
@@ -20,6 +21,7 @@
 	import HamburgerIcon from '$lib/icons/HamburgerIcon.svelte';
 
 	export let isAddingTable: boolean;
+	export let refetchTables: () => Promise<void>;
 
 	let tableId = '';
 	let columns: (Omit<GenTableCol, 'vlen' | 'config'> & { drag_id: string })[] = []; //? Added drag_id to keep track of dragging
@@ -31,38 +33,15 @@
 		columns = [];
 	}
 
-	//? Reorder columns
-	let dragMouseCoords: {
-		x: number;
-		y: number;
-		startX: number;
-		startY: number;
-		width: number;
-	} | null = null;
-	let draggingColumn: (Omit<GenTableCol, 'vlen' | 'config'> & { drag_id: string }) | null = null;
-	let draggingColumnIndex: number | null = null;
-	let hoveredColumnIndex: number | null = null;
-
-	$: if (
-		draggingColumnIndex != null &&
-		hoveredColumnIndex != null &&
-		draggingColumnIndex != hoveredColumnIndex
-	) {
-		[columns[draggingColumnIndex], columns[hoveredColumnIndex]] = [
-			columns[hoveredColumnIndex],
-			columns[draggingColumnIndex]
-		];
-
-		draggingColumnIndex = hoveredColumnIndex;
-	}
-
 	async function handleAddTable() {
-		if (!tableId) return toast.error('Table ID is required');
-		if (columns.find((col) => !col.id)) return toast.error('Column ID cannot be empty');
+		if (!tableId) return toast.error('Table ID is required', { id: 'table-id-req' });
+		if (columns.find((col) => !col.id))
+			return toast.error('Column ID cannot be empty', { id: 'column-id-req' });
 
 		if (!tableIDPattern.test(tableId))
 			return toast.error(
-				'Table ID must contain only alphanumeric characters and underscores/hyphens/periods, and start and end with alphanumeric characters.'
+				'Table ID must contain only alphanumeric characters and underscores/hyphens/periods, and start and end with alphanumeric characters, between 1 and 100 characters.',
+				{ id: 'table-id-invalid' }
 			);
 
 		if (isLoading) return;
@@ -71,36 +50,29 @@
 		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/action`, {
 			method: 'POST',
 			headers: {
-				'Content-Type': 'application/json'
+				'Content-Type': 'application/json',
+				'x-project-id': $page.params.project_id
 			},
 			body: JSON.stringify({
 				id: tableId,
+				version: jamaiApiVersion,
 				cols: columns.map((col) => ({ ...col, drag_id: undefined }))
 			})
 		});
 
+		const responseBody = await response.json();
 		if (!response.ok) {
-			const responseBody = await response.json();
 			logger.error('ACTIONTBL_TBL_ADD', responseBody);
 			toast.error('Failed to add table', {
-				description: responseBody.message || JSON.stringify(responseBody)
+				id: responseBody.message || JSON.stringify(responseBody),
+				description: CustomToastDesc,
+				componentProps: {
+					description: responseBody.message || JSON.stringify(responseBody),
+					requestID: responseBody.request_id
+				}
 			});
 		} else {
-			//TODO: Consider invalidating fetch request instead
-			$pastActionTables = [
-				{
-					id: tableId,
-					cols: [],
-					lock_till: 0,
-					updated_at: new Date().toISOString(),
-					indexed_at_fts: null,
-					indexed_at_sca: null,
-					indexed_at_vec: null,
-					parent_id: null,
-					title: ''
-				},
-				...$pastActionTables
-			];
+			refetchTables();
 			isAddingTable = false;
 			tableId = '';
 			columns = [];
@@ -111,97 +83,83 @@
 </script>
 
 <Dialog.Root bind:open={isAddingTable}>
-	<Dialog.Content class="max-h-[90vh] min-w-[45rem]">
+	<Dialog.Content data-testid="new-table-dialog" class="max-h-[90vh] w-[clamp(0px,45rem,100%)]">
 		<Dialog.Header>New action table</Dialog.Header>
 
 		<div class="grow w-full overflow-auto">
 			<div
-				class="flex items-center gap-4 px-8 py-4 w-full text-center border-b border-[#E5E5E5] data-dark:border-[#484C55]"
+				class="flex items-center gap-3 px-4 sm:px-6 py-3 w-full text-center border-b border-[#E5E5E5] data-dark:border-[#484C55]"
 			>
-				<span
-					class="whitespace-nowrap font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]"
-				>
+				<span class="whitespace-nowrap font-medium text-left text-xs sm:text-sm text-black">
 					Table ID*
 				</span>
 
-				<InputText bind:value={tableId} placeholder="Required" />
+				<InputText bind:value={tableId} name="table_id" placeholder="Required" />
 			</div>
 
-			<div class="px-8 pt-4">
+			<div class="px-4 sm:px-6 pt-3">
 				<h3 class="font-medium">Columns</h3>
 
 				{#if columns.length === 0}
-					<p class="py-6 text-center text-sm text-[#999] data-dark:text-[#C9C9C9]">
-						No columns added
-					</p>
+					<p class="py-6 text-center text-sm text-black">No columns added</p>
 				{:else}
-					<div class="mt-3 p-2 bg-[#F4F5FA] data-dark:bg-[#42464e] rounded-lg">
+					<div
+						class="mt-3 p-2 bg-[#F4F5FA] data-dark:bg-[#42464e] border border-[#F2F4F7] rounded-lg"
+					>
 						<div
 							style="grid-template-columns: 30px repeat(2, minmax(0, 1fr)) 50px 40px;"
 							class="grid gap-2 mb-1"
 						>
 							<span></span>
 
-							<span class="ml-1 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
+							<span class="ml-1 font-medium text-left text-xs sm:text-sm text-black">
 								Column ID*
 							</span>
 
-							<span class="ml-1 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
+							<span class="ml-1 font-medium text-left text-xs sm:text-sm text-black">
 								Data Type*
 							</span>
 
-							<span class="ml-1 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
+							<span class="ml-1 font-medium text-left text-xs sm:text-sm text-black">
 								Output*
 							</span>
 
 							<span></span>
 						</div>
 
-						<ul use:autoAnimate={{ duration: 100 }}>
-							{#each columns as column, index}
+						<DraggableList tagName="ul" bind:itemList={columns}>
+							<svelte:fragment
+								slot="list-item"
+								let:item={column}
+								let:itemIndex={index}
+								let:dragStart
+								let:dragMove
+								let:dragOver
+								let:dragEnd
+								let:draggingItem={draggingColumn}
+							>
 								<li
-									on:dragover={(e) => {
-										e.preventDefault();
-										hoveredColumnIndex = index;
-									}}
+									on:dragover={(e) => dragOver(e, index)}
 									style="grid-template-columns: 30px repeat(2, minmax(0, 1fr)) 50px 40px;"
 									class="grid gap-2 {draggingColumn?.drag_id == column.drag_id ? 'opacity-0' : ''}"
 								>
 									<button
-										on:dragstart={(e) => {
-											//@ts-ignore
-											let rect = e.target.getBoundingClientRect();
-											dragMouseCoords = {
-												x: e.clientX,
-												y: e.clientY,
-												startX: e.clientX - rect.left,
-												startY: e.clientY - rect.top,
-												//@ts-ignore
-												width: e.target.parentElement.offsetWidth
-											};
-											draggingColumn = column;
-											draggingColumnIndex = index;
-										}}
-										on:drag={(e) => {
-											if (e.clientX === 0 && e.clientY === 0) return;
-											//@ts-ignore
-											dragMouseCoords = { ...dragMouseCoords, x: e.clientX, y: e.clientY };
-										}}
-										on:dragend={() => {
-											draggingColumn = null;
-											draggingColumnIndex = null;
-											dragMouseCoords = null;
-											hoveredColumnIndex = null;
-										}}
+										title="Drag to reorder columns"
+										on:dragstart={(e) => dragStart(e, column, index)}
+										on:drag={dragMove}
+										on:dragend={dragEnd}
+										on:touchstart={(e) => dragStart(e, column, index)}
+										on:touchmove={dragMove}
+										on:touchend={dragEnd}
 										draggable={true}
-										class="flex items-center justify-center cursor-grab"
+										class="flex items-center justify-center cursor-grab touch-none"
 									>
 										<HamburgerIcon class="h-5" />
 									</button>
 
 									<div class="flex flex-col gap-2 py-1 w-full text-center">
 										<InputText
-											bind:value={column.id}
+											bind:value={columns[index].id}
 											placeholder="Required"
 											class="bg-white data-dark:bg-[#42464e]"
 										/>
@@ -211,9 +169,10 @@
 										<Select.Root>
 											<Select.Trigger asChild let:builder>
 												<Button
+													disabled={!!column.gen_config}
 													builders={[builder]}
-													variant="outline"
-													class="flex items-center justify-between gap-8 pl-3 pr-2 h-[38px] min-w-full bg-white data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1]"
+													variant="outline-neutral"
+													class="flex items-center justify-between gap-2 sm:gap-8 pl-3 pr-2 h-[38px] min-w-full bg-white data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1] border-transparent rounded-md"
 												>
 													<span class="whitespace-nowrap line-clamp-1 font-normal text-left">
 														{column.dtype ? column.dtype : 'Select Data Type'}
@@ -225,7 +184,7 @@
 											<Select.Content side="left" class="max-h-64 overflow-y-auto">
 												{#each genTableDTypes as dType}
 													<Select.Item
-														on:click={() => (column.dtype = dType)}
+														on:click={() => (columns[index].dtype = dType)}
 														value={dType}
 														label={dType}
 														class="flex justify-between gap-10 cursor-pointer"
@@ -241,62 +200,113 @@
 										<Checkbox
 											on:checkedChange={(e) => {
 												if (e.detail.value) {
-													column.gen_config = {
+													columns[index].gen_config = {
+														object: 'gen_config.llm',
 														model: '',
-														messages: [
-															{
-																role: 'system',
-																content: ''
-															},
-															{
-																role: 'user',
-																content: ''
-															}
-														],
+														system_prompt: '',
+														prompt: '',
 														temperature: 1,
 														max_tokens: 1000,
 														top_p: 0.1
 													};
+													columns[index].dtype = 'str';
 												} else {
-													column.gen_config = null;
+													columns[index].gen_config = null;
 												}
 											}}
 											checked={!!column.gen_config}
-											class="h-5 w-5"
+											class="h-5 w-5 [&>svg]:translate-x-[1px]"
 										/>
 									</div>
 
 									<Button
 										variant="ghost"
+										title="Remove column"
 										on:click={() => (columns = columns.filter((_, idx) => index !== idx))}
 										class="p-0 h-8 w-8 aspect-square rounded-full place-self-center"
 									>
 										<CloseIcon class="h-5" />
 									</Button>
 								</li>
-							{/each}
-						</ul>
+							</svelte:fragment>
+
+							<svelte:fragment
+								slot="dragged-item"
+								let:dragMouseCoords
+								let:draggingItem={draggingColumn}
+							>
+								{#if dragMouseCoords && draggingColumn}
+									<Portal>
+										<li
+											inert
+											style="grid-template-columns: 30px repeat(2, minmax(0, 1fr)) 50px 40px; top: {dragMouseCoords.y -
+												dragMouseCoords.startY -
+												10}px; left: {dragMouseCoords.x -
+												dragMouseCoords.startX}px; width: {dragMouseCoords.width}px;"
+											class="fixed z-[9999] grid gap-2 mt-3 bg-[#F4F5FA] data-dark:bg-[#42464e] pointer-events-none"
+										>
+											<button class="flex items-center justify-center cursor-grab">
+												<HamburgerIcon class="h-5" />
+											</button>
+
+											<div class="flex flex-col gap-2 py-1 w-full text-center">
+												<InputText
+													placeholder="Required"
+													value={draggingColumn.id}
+													class="bg-white data-dark:bg-[#42464e]"
+												/>
+											</div>
+
+											<div class="flex flex-col gap-2 py-1 w-full text-center">
+												<Button
+													variant="outline-neutral"
+													class="flex items-center justify-between gap-2 sm:gap-8 pl-3 pr-2 h-[38px] min-w-full bg-white data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1]"
+												>
+													<span class="whitespace-nowrap line-clamp-1 font-normal text-left">
+														{draggingColumn.dtype ? draggingColumn.dtype : 'Select Data Type'}
+													</span>
+
+													<ChevronDown class="h-4 w-4" />
+												</Button>
+											</div>
+
+											<div class="flex items-center justify-center">
+												<Checkbox checked={!!draggingColumn.gen_config} class="h-5 w-5" />
+											</div>
+
+											<Button
+												variant="ghost"
+												class="p-0 h-8 w-8 aspect-square rounded-full place-self-center"
+											>
+												<CloseIcon class="h-5" />
+											</Button>
+										</li>
+									</Portal>
+								{/if}
+							</svelte:fragment>
+						</DraggableList>
 					</div>
 				{/if}
 			</div>
 
-			<div class="mt-3 px-8 pb-4">
-				<button
+			<div class="mt-3 px-4 sm:px-6 pb-3">
+				<Button
+					variant="outline"
 					on:click={() =>
 						(columns = [
 							...columns,
 							{ id: '', dtype: 'str', drag_id: uuidv4(), index: false, gen_config: null }
 						])}
-					class="flex items-center justify-center gap-2 h-10 w-full text-sm text-[#4169e1] data-dark:text-[#5b7ee5] hover:text-[#12359e] data-dark:hover:text-[#425eae] border border-dashed border-[#4169e1] data-dark:border-[#5b7ee5] hover:border-[#12359e] data-dark:hover:border-[#425eae] rounded-lg transition-colors"
+					class="flex items-center justify-center gap-2 h-10 w-full text-sm border-dashed rounded-lg"
 				>
 					<AddIcon class="h-4 w-4" />
 					Add column
-				</button>
+				</Button>
 			</div>
 		</div>
 
 		<Dialog.Actions>
-			<div class="flex gap-2">
+			<div class="flex gap-2 overflow-x-auto overflow-y-hidden">
 				<DialogPrimitive.Close asChild let:builder>
 					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
 						Cancel
@@ -305,6 +315,7 @@
 				<Button
 					on:click={handleAddTable}
 					type="button"
+					disabled={isLoading}
 					loading={isLoading}
 					class="relative grow px-6 rounded-full"
 				>
@@ -314,60 +325,3 @@
 		</Dialog.Actions>
 	</Dialog.Content>
 </Dialog.Root>
-
-<!-- Dragged item -->
-{#if dragMouseCoords && draggingColumn}
-	<li
-		style="grid-template-columns: 30px repeat(2, minmax(0, 1fr)) 50px 40px; top: {dragMouseCoords.y -
-			dragMouseCoords.startY -
-			15}px; left: {dragMouseCoords.x -
-			dragMouseCoords.startX -
-			250}px; width: {dragMouseCoords.width}px;"
-		class="absolute z-[9999] grid gap-2 mt-3 bg-[#F4F5FA] data-dark:bg-[#42464e] pointer-events-none"
-	>
-		<button class="flex items-center justify-center cursor-grab">
-			<HamburgerIcon class="h-5" />
-		</button>
-
-		<div class="flex flex-col gap-2 py-1 w-full text-center">
-			<InputText bind:value={draggingColumn.id} class="bg-white data-dark:bg-[#42464e]" />
-		</div>
-
-		<div class="flex flex-col gap-2 py-1 w-full text-center">
-			<Select.Root>
-				<Select.Trigger asChild let:builder>
-					<Button
-						builders={[builder]}
-						variant="outline"
-						class="flex items-center justify-between gap-8 pl-3 pr-2 h-[38px] min-w-full bg-white data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1]"
-					>
-						<span class="whitespace-nowrap line-clamp-1 font-normal text-left">
-							{draggingColumn.dtype ? draggingColumn.dtype : 'Select Data Type'}
-						</span>
-
-						<ChevronDown class="h-4 w-4" />
-					</Button>
-				</Select.Trigger>
-				<Select.Content side="bottom" class="max-h-96 overflow-y-auto">
-					{#each genTableDTypes as dType}
-						<Select.Item
-							value={dType}
-							label={dType}
-							class="flex justify-between gap-10 cursor-pointer"
-						>
-							{dType}
-						</Select.Item>
-					{/each}
-				</Select.Content>
-			</Select.Root>
-		</div>
-
-		<div class="flex items-center justify-center">
-			<Checkbox checked={!!draggingColumn.gen_config} class="h-5 w-5" />
-		</div>
-
-		<Button variant="ghost" class="p-0 h-8 w-8 aspect-square rounded-full place-self-center">
-			<CloseIcon class="h-5" />
-		</Button>
-	</li>
-{/if}

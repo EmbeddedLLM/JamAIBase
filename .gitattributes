@@ -54,3 +54,6 @@
 # These files should not be processed by Linguist for language detection on GitHub.com
 *.p linguist-detectable=false
 *.gz linguist-detectable=false
+
+# Track with Git LFS
+*.parquet filter=lfs diff=lfs merge=lfs -text

@@ -16,7 +16,11 @@
 
 	<div class="grow grid grid-rows-3 md:grid-cols-3 gap-2 md:gap-8 pr-4 min-h-0 h-min w-full">
 		<div class="flex flex-col gap-3 h-min max-w-[65%] md:max-w-none">
-			<button on:click={() => ($preferredTheme = 'LIGHT')} class="!block text-start cursor-pointer">
+			<button
+				title="Switch to light mode"
+				on:click={() => ($preferredTheme = 'LIGHT')}
+				class="!block text-start cursor-pointer"
+			>
 				<div
 					class="relative min-h-0 after:content-[''] after:absolute after:top-0 after:left-0 after:right-0 after:bottom-0 after:border-4 after:border-[#0096EB] after:rounded-xl after:[box-shadow:0px_0px_8px_0px_#0096eb80] after:opacity-0 after:transition-opacity"
 					class:after:opacity-100={$preferredTheme == 'LIGHT'}
@@ -41,7 +45,7 @@
 			</div>
 		</div>
 
-		<div class="flex flex-col gap-3 h-min max-w-[65%] md:max-w-none">
+		<div title="Switch to dark mode" class="flex flex-col gap-3 h-min max-w-[65%] md:max-w-none">
 			<button on:click={() => ($preferredTheme = 'DARK')} class="!block text-start cursor-pointer">
 				<div
 					class="relative after:content-[''] after:absolute after:top-0 after:left-0 after:right-0 after:bottom-0 after:border-4 after:border-[#0096EB] after:rounded-xl after:[box-shadow:0px_0px_8px_0px_#0096eb80] after:opacity-0 after:transition-opacity"
@@ -67,7 +71,10 @@
 			</div>
 		</div>
 
-		<div class="flex flex-col gap-3 h-min max-w-[65%] md:max-w-none">
+		<div
+			title="Switch to system preferences"
+			class="flex flex-col gap-3 h-min max-w-[65%] md:max-w-none"
+		>
 			<button
 				on:click={() => ($preferredTheme = 'SYSTEM')}
 				class="!block text-start cursor-pointer"

@@ -8,11 +8,11 @@ const ChatRoleSchema = z.enum(["system", "user", "assistant", "function"]);
 
 export const ChatEntrySchema = z.object({
     role: ChatRoleSchema,
-    content: z.string(),
+    content: z.union([z.string(), z.array(z.record(z.union([z.string(), z.record(z.string())])))]),
     name: z.string().optional().nullable()
 });
 
-const RAGParamsSchema = z.object({
+export const RAGParamsSchema = z.object({
     search_query: z.string().optional(),
     k: z.number().optional(),
     fetch_k: z.number().optional(),
@@ -53,22 +53,20 @@ export const ChatCompletionUsageSchema = z.object({
 // };
 
 export const ChatRequestSchema = z.object({
-    id: z.string().optional(),
-    model: z.string().optional(),
+    id: z.string().default(""),
+    model: z.string().default(""),
     messages: z.array(ChatEntrySchema),
-    rag_params: RAGParamsSchema.nullable().optional(),
-    tools: z.array(ToolSpecSchema).nullable().optional(),
-    tool_choice: z.union([z.string(), ToolSpecSchema]).nullable().optional(),
-    temperature: z.number().optional().default(1.0).optional(),
-    top_p: z.number().optional().default(1.0).optional(),
-    n: z.number().optional().default(1).optional(),
-    // stream: z.boolean().optional().default(true),
-    stop: z.array(z.string()).optional(),
-    max_tokens: z.number().default(2048).optional(),
-    presence_penalty: z.number().optional().default(0.0).optional(),
-    frequency_penalty: z.number().optional().default(0.0).optional(),
-    logit_bias: z.record(z.string(), z.any()).default({}).optional(),
-    user: z.string().default("").optional()
+    rag_params: RAGParamsSchema.nullable().default(null),
+    temperature: z.number().min(0.001).max(2.0).default(0.2),
+    top_p: z.number().min(0.001).max(1.0).default(0.6),
+    n: z.number().default(1),
+    stream: z.boolean().default(true),
+    stop: z.array(z.string()).nullable().default(null),
+    max_tokens: z.number().int().min(1).default(2048),
+    presence_penalty: z.number().default(0.0),
+    frequency_penalty: z.number().default(0.0),
+    logit_bias: z.record(z.string(), z.any()).default({}),
+    user: z.string().default("")
 });
 
 export const ChatCompletionChoiceSchema = z.object({
@@ -131,7 +129,7 @@ export type FunctionSpec = z.infer<typeof FunctionSpecSchema>;
 export type ToolSpec = z.infer<typeof ToolSpecSchema>;
 export type FunctionChoiceSpec = z.infer<typeof FunctionChoiceSpecSchema>;
 export type ChatCompletionUsage = z.infer<typeof ChatCompletionUsageSchema>;
-export type ChatRequest = z.infer<typeof ChatRequestSchema>;
+export type ChatRequest = z.input<typeof ChatRequestSchema>;
 export type Chunk = z.infer<typeof ChunkSchema>;
 export type References = z.infer<typeof ReferencesSchema>;
 export type ChatCompletionChoice = z.infer<typeof ChatCompletionChoiceSchema>;

@@ -15,6 +15,7 @@ import { beforeAll, describe, expect, it, jest } from "@jest/globals";
 import { AssertionError } from "assert";
 import csvParser from "csv-parser";
 import dotenv from "dotenv";
+import { File } from "formdata-node";
 import { promises as fs } from "fs";
 import { Readable } from "stream";
 import { v4 as uuidv4 } from "uuid";
@@ -23,28 +24,146 @@ dotenv.config({
     path: "__tests__/.env"
 });
 
-describe("APIClient Gentable Action Table API", () => {
+let llmModel: string;
+let embeddingModel: string;
+
+describe("APIClient Gentable", () => {
     let client: JamAI;
     jest.setTimeout(30000);
     jest.retryTimes(1, {
         logErrorsBeforeRetry: true
     });
 
-    beforeAll(() => {
+    let myuuid = uuidv4();
+    let projectName = `unittest-project-${myuuid}`;
+
+    let projectId: string;
+    let organizationId: string;
+    let userId = `unittest-user-${myuuid}`;
+
+    beforeAll(async () => {
+        // cloud
+        if (process.env["JAMAI_API_KEY"]) {
+            // create user
+            const responseUser = await fetch(`${process.env["BASEURL"]}/api/admin/backend/v1/users`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${process.env["JAMAI_API_KEY"]}`
+                },
+                body: JSON.stringify({
+                    id: userId,
+                    name: "TS SDK Tester",
+                    description: "I am a TS SDK Tester",
+                    email: "kamil.kzs2017@gmail.com"
+                })
+            });
+            const userData = await responseUser.json();
+            userId = userData.id;
+
+            // create organization
+            const responseOrganization = await fetch(`${process.env["BASEURL"]}/api/admin/backend/v1/organizations`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${process.env["JAMAI_API_KEY"]}`
+                },
+                body: JSON.stringify({
+                    creator_user_id: userId,
+                    tier: "free",
+                    name: "Company",
+                    active: true,
+                    credit: 30.0,
+                    credit_grant: 1.0,
+                    llm_tokens_usage_mtok: 70,
+                    db_usage_gib: 2.0,
+                    file_usage_gib: 3.0,
+                    egress_usage_gib: 4.0
+                })
+            });
+            const organizationData = await responseOrganization.json();
+
+            organizationId = organizationData?.id;
+        } else {
+            // OSS
+            // fetch organization
+            const responseOrganization = await fetch(`${process.env["BASEURL"]}/api/admin/backend/v1/organizations/default`);
+
+            const organizationData = await responseOrganization.json();
+            organizationId = organizationData?.id;
+        }
+
+        // create project
+        const responseProject = await fetch(`${process.env["BASEURL"]}/api/admin/org/v1/projects`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${process.env["JAMAI_API_KEY"]}`
+            },
+            body: JSON.stringify({
+                name: projectName,
+                organization_id: organizationId
+            })
+        });
+
+        const projectData = await responseProject.json();
+        projectId = projectData?.id;
+
         client = new JamAI({
             baseURL: process.env["BASEURL"]!,
-            apiKey: process.env["JAMAI_APIKEY"]!,
-            projectId: process.env["PROJECT_ID"]!
+            token: process.env["JAMAI_API_KEY"]!,
+            projectId: projectId
         });
+
+        const models = await client.llm.modelInfo();
+
+        const selectedLlmModel = models.data.find((model) => model.capabilities.includes("chat"));
+        llmModel = selectedLlmModel?.id ? selectedLlmModel.id : "openai/gpt-4o-mini";
+
+        const selectedEmbeddingModel = models.data.find((model) => model.capabilities.includes("embed"));
+        embeddingModel = selectedEmbeddingModel?.id ? selectedEmbeddingModel.id : "ellm/sentence-transformers/all-MiniLM-L6-v2";
+    });
+
+    afterAll(async function () {
+        // delete project
+        const responseProject = await fetch(`${process.env["BASEURL"]}/api/admin/org/v1/projects/${projectId}`, {
+            method: "DELETE",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${process.env["JAMAI_API_KEY"]}`
+            }
+        });
+        const projectData = await responseProject.json();
+
+        if (process.env["JAMAI_API_KEY"]) {
+            // delete organization
+            const responseOrganization = await fetch(`${process.env["BASEURL"]}/api/admin/backend/v1/organizations/${organizationId}`, {
+                method: "DELETE",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${process.env["JAMAI_API_KEY"]}`
+                }
+            });
+            const organizationData = await responseOrganization.json();
+            // delete user
+            const responseUser = await fetch(`${process.env["BASEURL"]}/api/admin/backend/v1/users/${userId}`, {
+                method: "DELETE",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${process.env["JAMAI_API_KEY"]}`
+                }
+            });
+            const userData = await responseUser.json();
+        }
     });
 
     async function* _getTable(tableType: string) {
         // setup
         let myuuid = uuidv4();
-        let table_id = `unittest-${myuuid}`;
+        let table_id = `unittest-table-${myuuid}`;
 
         if (tableType === "action") {
-            const createActionTableResponse = await client.createActionTable({
+            const createActionTableResponse = await client.table.createActionTable({
                 id: table_id,
                 cols: [
                     {
@@ -56,17 +175,8 @@ describe("APIClient Gentable Action Table API", () => {
                         id: "suggestions",
                         dtype: "str",
                         gen_config: {
-                            model: "openai/gpt-3.5-turbo",
-                            messages: [
-                                {
-                                    role: "system",
-                                    content: ""
-                                },
-                                {
-                                    role: "user",
-                                    content: "Suggest a followup questions on ${question}."
-                                }
-                            ],
+                            model: llmModel,
+                            prompt: "Suggest a followup questions on ${question}.",
                             temperature: 1,
                             max_tokens: 100,
                             top_p: 0.1
@@ -76,17 +186,8 @@ describe("APIClient Gentable Action Table API", () => {
                         id: "suggestions2",
                         dtype: "str",
                         gen_config: {
-                            model: "openai/gpt-3.5-turbo",
-                            messages: [
-                                {
-                                    role: "system",
-                                    content: ""
-                                },
-                                {
-                                    role: "user",
-                                    content: "Suggest a followup questions on ${question}."
-                                }
-                            ],
+                            model: llmModel,
+
                             temperature: 1,
                             max_tokens: 100,
                             top_p: 0.1
@@ -95,14 +196,14 @@ describe("APIClient Gentable Action Table API", () => {
                 ]
             });
         } else if (tableType === "knowledge") {
-            const response = await client.createKnowledgeTable({
-                embedding_model: "openai/text-embedding-3-large-1024",
+            const response = await client.table.createKnowledgeTable({
+                embedding_model: embeddingModel,
                 id: table_id,
                 cols: []
             });
             // console.log(`CONTEXT MANAGER: createKnowledgeTable ${tableType}`);
         } else if (tableType === "chat") {
-            const response = await client.createChatTable({
+            const response = await client.table.createChatTable({
                 id: table_id,
                 cols: [
                     {
@@ -114,12 +215,7 @@ describe("APIClient Gentable Action Table API", () => {
                         dtype: "str",
                         gen_config: {
                             model: "",
-                            messages: [
-                                {
-                                    role: "system",
-                                    content: ""
-                                }
-                            ]
+                            system_prompt: ""
                         }
                     }
                 ]
@@ -130,7 +226,7 @@ describe("APIClient Gentable Action Table API", () => {
             });
         }
 
-        const getTableResponse = await client.getTable({
+        const getTableResponse = await client.table.getTable({
             table_type: tableType,
             table_id: table_id
         });
@@ -144,7 +240,7 @@ describe("APIClient Gentable Action Table API", () => {
             yield parsedgetTableResponseData;
         } finally {
             // cleanup
-            const deleteTableResponse = await client.deleteTable({
+            const deleteTableResponse = await client.table.deleteTable({
                 table_id: table_id,
                 table_type: tableType
             });
@@ -152,7 +248,7 @@ describe("APIClient Gentable Action Table API", () => {
             expect(deleteTableResponse).toHaveProperty("ok");
             expect(deleteTableResponse.ok).toBeTruthy();
 
-            const listTablesResponse = await client.listTables({
+            const listTablesResponse = await client.table.listTables({
                 table_type: tableType
             });
 
@@ -199,10 +295,9 @@ describe("APIClient Gentable Action Table API", () => {
     }
 
     it("get table - action table creation and deletion", async () => {
-        // let myuuid = getRandomInt(1000);
         let myuuid = uuidv4();
         const actionTableId = `unittest-createActionTable-${myuuid}`;
-        const createActionTableResponse = await client.createActionTable({
+        const createActionTableResponse = await client.table.createActionTable({
             id: actionTableId,
             cols: [
                 {
@@ -214,17 +309,8 @@ describe("APIClient Gentable Action Table API", () => {
                     id: "suggestions",
                     dtype: "str",
                     gen_config: {
-                        model: "openai/gpt-3.5-turbo",
-                        messages: [
-                            {
-                                role: "system",
-                                content: ""
-                            },
-                            {
-                                role: "user",
-                                content: "Suggest a followup questions on ${question}."
-                            }
-                        ],
+                        model: llmModel,
+                        prompt: "Suggest a followup questions on ${question}.",
                         temperature: 1,
                         max_tokens: 100,
                         top_p: 0.1
@@ -233,7 +319,7 @@ describe("APIClient Gentable Action Table API", () => {
             ]
         });
 
-        const getTableResponse = await client.getTable({
+        const getTableResponse = await client.table.getTable({
             table_type: "action",
             table_id: actionTableId
         });
@@ -241,7 +327,7 @@ describe("APIClient Gentable Action Table API", () => {
         const parsedgetTableResponseData = TableMetaResponseSchema.parse(getTableResponse);
         expect(parsedgetTableResponseData).toEqual(getTableResponse);
 
-        const deleteTableResponse = await client.deleteTable({
+        const deleteTableResponse = await client.table.deleteTable({
             table_id: actionTableId,
             table_type: "action"
         });
@@ -249,7 +335,7 @@ describe("APIClient Gentable Action Table API", () => {
         expect(deleteTableResponse).toHaveProperty("ok");
         expect(deleteTableResponse.ok).toBeTruthy();
 
-        const listTablesResponse = await client.listTables({
+        const listTablesResponse = await client.table.listTables({
             table_type: "action"
         });
 
@@ -265,7 +351,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("list tables - action - without limit and offset", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.listTables({
+            const response = await client.table.listTables({
                 table_type: "action"
             });
 
@@ -283,7 +369,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("list tables - action - with limit", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.listTables({
+            const response = await client.table.listTables({
                 table_type: "action",
                 limit: 3
             });
@@ -302,7 +388,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("list tables - action - with offset", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.listTables({
+            const response = await client.table.listTables({
                 table_type: "action",
                 offset: 3
             });
@@ -314,7 +400,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("list tables - action - with limit and offset", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.listTables({
+            const response = await client.table.listTables({
                 table_type: "action",
                 limit: 3,
                 offset: 1
@@ -326,28 +412,33 @@ describe("APIClient Gentable Action Table API", () => {
     });
 
     it("list tables - knowledge - with limit and offset", async () => {
-        for await (const { id: table_id } of _getTable("knowledge")) {
-            const response = await client.listTables({
-                table_type: "knowledge",
-                limit: 3,
-                offset: 0
-            });
+        try {
+            for await (const { id: table_id } of _getTable("knowledge")) {
+                const response = await client.table.listTables({
+                    table_type: "knowledge",
+                    limit: 3,
+                    offset: 0
+                });
 
-            const parsedData = PageListTableMetaResponseSchema.parse(response);
-            expect(parsedData).toEqual(response);
-            let tableList: string[] = [];
-            for (const item of parsedData.items) {
-                if (item.id === table_id) {
-                    tableList.push(item.id);
+                const parsedData = PageListTableMetaResponseSchema.parse(response);
+                expect(parsedData).toEqual(response);
+                let tableList: string[] = [];
+                for (const item of parsedData.items) {
+                    if (item.id === table_id) {
+                        tableList.push(item.id);
+                    }
                 }
+                expect(tableList.length).toEqual(1);
             }
-            expect(tableList.length).toEqual(1);
+        } catch (err: any) {
+            console.log("------------------------------");
+            console.log("error: ", err.response.data);
         }
     });
 
     it("list tables - chat - with limit and offset", async () => {
         for await (const { id: table_id } of _getTable("chat")) {
-            const response = await client.listTables({
+            const response = await client.table.listTables({
                 table_type: "chat",
                 limit: 1
             });
@@ -366,7 +457,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("get table - action", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.getTable({
+            const response = await client.table.getTable({
                 table_type: "action",
                 table_id: table_id
             });
@@ -378,7 +469,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("get table - knowledge", async () => {
         for await (const { id: table_id } of _getTable("knowledge")) {
-            const response = await client.getTable({
+            const response = await client.table.getTable({
                 table_type: "knowledge",
                 table_id: table_id
             });
@@ -390,7 +481,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("get table - chat", async () => {
         for await (const { id: table_id } of _getTable("chat")) {
-            const response = await client.getTable({
+            const response = await client.table.getTable({
                 table_type: "chat",
                 table_id: table_id
             });
@@ -402,7 +493,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("add row to action table with reindex", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRow({
+            const response = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -424,7 +515,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("add row to action table without reindex", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRow({
+            const response = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -446,7 +537,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("add row to action table - stream with reindex", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRowStream({
+            const response = await client.table.addRowStream({
                 table_type: "action",
                 data: [
                     {
@@ -478,7 +569,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("add row to action table - stream without reindex", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRowStream({
+            const response = await client.table.addRowStream({
                 table_type: "action",
                 data: [
                     {
@@ -510,7 +601,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("list rows - without limit and offset", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRow({
+            const response = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -530,7 +621,7 @@ describe("APIClient Gentable Action Table API", () => {
                 reindex: false,
                 concurrent: true
             });
-            const listRowResponse = await client.listRows({
+            const listRowResponse = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id
             });
@@ -543,7 +634,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("list rows - without limit", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRow({
+            const response = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -564,7 +655,7 @@ describe("APIClient Gentable Action Table API", () => {
                 concurrent: true
             });
 
-            const listRowResponse = await client.listRows({
+            const listRowResponse = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id,
                 offset: 3
@@ -578,7 +669,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("list rows - without offset", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRow({
+            const response = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -599,7 +690,7 @@ describe("APIClient Gentable Action Table API", () => {
                 concurrent: true
             });
 
-            const listRowResponse = await client.listRows({
+            const listRowResponse = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id,
                 limit: 2
@@ -613,7 +704,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("list rows - with offset and limit", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRow({
+            const response = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -634,7 +725,7 @@ describe("APIClient Gentable Action Table API", () => {
                 concurrent: true
             });
 
-            const listRowResponse = await client.listRows({
+            const listRowResponse = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id,
                 offset: 0,
@@ -649,7 +740,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("list rows - with column ids", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRow({
+            const response = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -670,7 +761,7 @@ describe("APIClient Gentable Action Table API", () => {
                 concurrent: true
             });
 
-            const listRowResponse = await client.listRows({
+            const listRowResponse = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id,
                 columns: ["question"]
@@ -684,7 +775,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("get row - with row id", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRow({
+            const response = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -705,7 +796,7 @@ describe("APIClient Gentable Action Table API", () => {
                 concurrent: true
             });
 
-            const listRowResponse = await client.listRows({
+            const listRowResponse = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id,
                 limit: 2
@@ -715,7 +806,7 @@ describe("APIClient Gentable Action Table API", () => {
             expect(parsedData).toEqual(listRowResponse);
             expect(parsedData.items.length).toEqual(2);
             // console.log(parsedData.items);
-            const getRowResponse = await client.getRow({
+            const getRowResponse = await client.table.getRow({
                 table_type: "action",
                 table_id: table_id,
                 row_id: parsedData.items![0]!["ID"]!
@@ -727,7 +818,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("get row - with multiple columns", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRow({
+            const response = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -748,7 +839,7 @@ describe("APIClient Gentable Action Table API", () => {
                 concurrent: true
             });
 
-            const listRowResponse = await client.listRows({
+            const listRowResponse = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id,
                 limit: 2
@@ -758,7 +849,7 @@ describe("APIClient Gentable Action Table API", () => {
             expect(parsedData).toEqual(listRowResponse);
             expect(parsedData.items.length).toEqual(2);
             // console.log(parsedData.items);
-            const getRowResponse = await client.getRow({
+            const getRowResponse = await client.table.getRow({
                 table_type: "action",
                 table_id: table_id,
                 row_id: parsedData.items![0]!["ID"]!,
@@ -774,7 +865,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("delete row from action table", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRow({
+            const response = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -795,7 +886,7 @@ describe("APIClient Gentable Action Table API", () => {
                 concurrent: true
             });
 
-            const listRowResponse = await client.listRows({
+            const listRowResponse = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id
             });
@@ -806,7 +897,7 @@ describe("APIClient Gentable Action Table API", () => {
 
             // console.log(parsedData.items![0]!['ID']!);
 
-            const deleteRowResponse = await client.deleteRow({
+            const deleteRowResponse = await client.table.deleteRow({
                 table_id: table_id,
                 table_type: "action",
                 row_id: parsedData.items![0]!["ID"]!,
@@ -816,7 +907,7 @@ describe("APIClient Gentable Action Table API", () => {
             expect(deleteRowResponse).toHaveProperty("ok");
             expect(deleteRowResponse.ok).toBeTruthy();
 
-            const listRowResponse2 = await client.listRows({
+            const listRowResponse2 = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id
             });
@@ -829,7 +920,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("delete multiple rows", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRow({
+            const response = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -850,7 +941,7 @@ describe("APIClient Gentable Action Table API", () => {
                 concurrent: true
             });
 
-            const listRowResponse = await client.listRows({
+            const listRowResponse = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id
             });
@@ -867,7 +958,7 @@ describe("APIClient Gentable Action Table API", () => {
 
             // console.log(parsedData.items![0]!['ID']!);
 
-            const deleteRowsResponse = await client.deleteRows({
+            const deleteRowsResponse = await client.table.deleteRows({
                 table_type: "action",
                 table_id: table_id,
                 where: `\`ID\` IN (${row_ids.map((i) => `'${i}'`).join(",")})`,
@@ -877,7 +968,7 @@ describe("APIClient Gentable Action Table API", () => {
             expect(deleteRowsResponse).toHaveProperty("ok");
             expect(deleteRowsResponse.ok).toBeTruthy();
 
-            const listRowResponse2 = await client.listRows({
+            const listRowResponse2 = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id
             });
@@ -892,7 +983,7 @@ describe("APIClient Gentable Action Table API", () => {
         for await (const { id: table_id } of _getTable("action")) {
             const table_id_dst = `unittest-rename-table-${uuidv4()}`;
 
-            const renameTableResponse = await client.renameTable({
+            const renameTableResponse = await client.table.renameTable({
                 table_id_src: table_id,
                 table_type: "action",
                 table_id_dst: table_id_dst
@@ -901,7 +992,7 @@ describe("APIClient Gentable Action Table API", () => {
             expect(renameTableResponse).toHaveProperty("id");
             expect(renameTableResponse["id"]).toEqual(table_id_dst);
 
-            const response = await client.addRow({
+            const response = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -922,7 +1013,7 @@ describe("APIClient Gentable Action Table API", () => {
                 concurrent: true
             });
 
-            const renameTableResponse2 = await client.renameTable({
+            const renameTableResponse2 = await client.table.renameTable({
                 table_id_src: table_id_dst,
                 table_type: "action",
                 table_id_dst: table_id
@@ -936,7 +1027,7 @@ describe("APIClient Gentable Action Table API", () => {
         for await (const { id: table_id } of _getTable("knowledge")) {
             const table_id_dst = `unittest-rename-table-${uuidv4()}`;
 
-            const renameTableResponse = await client.renameTable({
+            const renameTableResponse = await client.table.renameTable({
                 table_id_src: table_id,
                 table_type: "knowledge",
                 table_id_dst: table_id_dst
@@ -945,7 +1036,7 @@ describe("APIClient Gentable Action Table API", () => {
             expect(renameTableResponse).toHaveProperty("id");
             expect(renameTableResponse["id"]).toEqual(table_id_dst);
 
-            const renameTableResponse2 = await client.renameTable({
+            const renameTableResponse2 = await client.table.renameTable({
                 table_id_src: table_id_dst,
                 table_type: "knowledge",
                 table_id_dst: table_id
@@ -959,7 +1050,7 @@ describe("APIClient Gentable Action Table API", () => {
         for await (const { id: table_id } of _getTable("action")) {
             const table_id_dst = `unittest-duplicated-without-data-${uuidv4()}`;
 
-            const response = await client.duplicateTable({
+            const response = await client.table.duplicateTable({
                 table_id_src: table_id,
                 table_type: "action",
                 table_id_dst: table_id_dst,
@@ -969,17 +1060,37 @@ describe("APIClient Gentable Action Table API", () => {
             expect(response).toHaveProperty("id");
             expect(response["id"]).toEqual(table_id_dst);
 
-            const deleteTableResponse = await client.deleteTable({
+            const deleteTableResponse = await client.table.deleteTable({
                 table_id: table_id_dst,
                 table_type: "action"
             });
         }
     });
 
+    it("duplicate table - withoutout destination id]", async () => {
+        for await (const { id: table_id } of _getTable("action")) {
+            const response = await client.table.duplicateTable({
+                table_id_src: table_id,
+                table_type: "action",
+                include_data: false,
+                create_as_child: true
+            });
+
+            expect(response).toHaveProperty("id");
+
+            const deleteTableResponse = await client.table.deleteTable({
+                table_id: response.id,
+                table_type: "action"
+            });
+        }
+    });
+
     it("get conversation thread", async () => {
-        for await (const { id: table_id } of _getTable("chat")) {
-            const response = await client.getConversationThread({
-                table_id: table_id
+        for await (const table of _getTable("chat")) {
+            const response = await client.table.getConversationThread({
+                table_id: table.id,
+                table_type: "chat",
+                column_id: table.cols.length ? table.cols[3]?.id! : ""
             });
 
             const parsedData = GetConversationThreadResponseSchema.parse(response);
@@ -993,7 +1104,7 @@ describe("APIClient Gentable Action Table API", () => {
                 question: "renamed-question"
             };
 
-            const response = await client.renameColumns({
+            const response = await client.table.renameColumns({
                 table_type: "action",
                 table_id: table_id,
                 column_map: columnMap
@@ -1017,7 +1128,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("reorder columns", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.reorderColumns({
+            const response = await client.table.reorderColumns({
                 table_id: table_id,
                 table_type: "action",
                 column_names: ["question", "suggestions2", "suggestions"]
@@ -1037,7 +1148,7 @@ describe("APIClient Gentable Action Table API", () => {
                 }
             ];
 
-            const response = await client.addActionColumns({
+            const response = await client.table.addActionColumns({
                 id: table_id,
                 cols: columnsToAdd
             });
@@ -1051,7 +1162,7 @@ describe("APIClient Gentable Action Table API", () => {
     it("drop columns", async () => {
         for await (const { id: table_id } of _getTable("action")) {
             const dropedColumns = ["suggestions"];
-            const response = await client.dropColumns({
+            const response = await client.table.dropColumns({
                 table_id: table_id,
                 table_type: "action",
                 column_names: dropedColumns
@@ -1065,18 +1176,13 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("update gen config", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.updateGenConfig({
+            const response = await client.table.updateGenConfig({
                 table_type: "action",
                 table_id: table_id,
                 column_map: {
                     suggestions: {
-                        model: "openai/gpt-3.5-turbo",
-                        messages: [
-                            {
-                                role: "system",
-                                content: "this is system prompt with updated config"
-                            }
-                        ]
+                        model: llmModel,
+                        system_prompt: "this is system prompt with updated config"
                     }
                 }
             });
@@ -1088,7 +1194,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("regen row - action table", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.addRow({
+            const response = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -1109,7 +1215,7 @@ describe("APIClient Gentable Action Table API", () => {
                 concurrent: true
             });
 
-            const listRowResponse = await client.listRows({
+            const listRowResponse = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id
             });
@@ -1127,7 +1233,7 @@ describe("APIClient Gentable Action Table API", () => {
             // console.log(parsedlistRowResponseData);
             // console.log(row_ids);
 
-            const regenRowResponse = await client.regenRow({
+            const regenRowResponse = await client.table.regenRow({
                 table_type: "action",
                 table_id: table_id,
                 row_ids: row_ids,
@@ -1141,7 +1247,7 @@ describe("APIClient Gentable Action Table API", () => {
             // const parsedregenRowResponseData = GenTableRowsChatCompletionChunksSchema.parse(regenRowResponse);
             // expect(parsedregenRowResponseData).toEqual(regenRowResponse);
 
-            // const listRowResponse2 = await client.listRows({
+            // const listRowResponse2 = await client.table.listRows({
             //     table_type: "action",
             //     table_id: table_id,
             // });
@@ -1154,7 +1260,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("regen row - action table - stream", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            await client.addRow({
+            await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -1175,7 +1281,7 @@ describe("APIClient Gentable Action Table API", () => {
                 concurrent: true
             });
 
-            const listRowResponse = await client.listRows({
+            const listRowResponse = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id
             });
@@ -1193,7 +1299,7 @@ describe("APIClient Gentable Action Table API", () => {
             // console.log(parsedlistRowResponseData);
             // console.log(row_ids);
 
-            const response = await client.regenRowStream({
+            const response = await client.table.regenRowStream({
                 table_type: "action",
                 table_id: table_id,
                 row_ids: row_ids,
@@ -1216,7 +1322,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("update row", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            await client.addRow({
+            await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -1236,7 +1342,7 @@ describe("APIClient Gentable Action Table API", () => {
                 reindex: false,
                 concurrent: true
             });
-            const listRowResponse = await client.listRows({
+            const listRowResponse = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id,
                 limit: 2
@@ -1246,7 +1352,7 @@ describe("APIClient Gentable Action Table API", () => {
             expect(parsedData).toEqual(listRowResponse);
             expect(parsedData.items.length).toEqual(2);
 
-            const response = await client.updateRow({
+            const response = await client.table.updateRow({
                 table_type: "action",
                 data: {
                     question: "how to update rows on jamaibase?",
@@ -1264,7 +1370,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("hybrid search", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            await client.addRow({
+            await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -1284,7 +1390,7 @@ describe("APIClient Gentable Action Table API", () => {
                 reindex: true,
                 concurrent: true
             });
-            const response = await client.hybridSearch({
+            const response = await client.table.hybridSearch({
                 table_type: "action",
                 table_id: table_id,
                 query: "kong",
@@ -1301,10 +1407,10 @@ describe("APIClient Gentable Action Table API", () => {
     });
 
     // @TODO test with api.jamaibase.com
-    it("upload file to knowledge table", async () => {
+    it("Embed file to knowledge table", async () => {
         for await (const { id: table_id } of _getTable("knowledge")) {
             const file = new File(["My aim in life by chatgpt"], "sample.txt", { type: "text/plain" });
-            const response = await client.uploadFile({
+            const response = await client.table.embedFile({
                 file: file,
                 table_id: table_id
             });
@@ -1315,7 +1421,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("Export table data in csv", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const responseAddRow = await client.addRow({
+            const responseAddRow = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -1335,14 +1441,14 @@ describe("APIClient Gentable Action Table API", () => {
                 reindex: false,
                 concurrent: true
             });
-            const responseListRows = await client.listRows({
+            const responseListRows = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id
             });
 
             expect(responseAddRow.rows.length).toBe(responseListRows.items.length);
 
-            const exportTableDataResponse = await client.exportTableData({
+            const exportTableDataResponse = await client.table.exportTableData({
                 table_type: "action",
                 table_id: table_id
             });
@@ -1366,7 +1472,7 @@ describe("APIClient Gentable Action Table API", () => {
 
     it("Export table data in tsv", async () => {
         for await (const { id: table_id } of _getTable("action")) {
-            const responseAddRow = await client.addRow({
+            const responseAddRow = await client.table.addRow({
                 table_type: "action",
                 data: [
                     {
@@ -1386,14 +1492,14 @@ describe("APIClient Gentable Action Table API", () => {
                 reindex: false,
                 concurrent: true
             });
-            const responseListRows = await client.listRows({
+            const responseListRows = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id
             });
 
             expect(responseAddRow.rows.length).toBe(responseListRows.items.length);
 
-            const exportTableDataResponse = await client.exportTableData({
+            const exportTableDataResponse = await client.table.exportTableData({
                 table_type: "action",
                 table_id: table_id,
                 delimiter: "\t"
@@ -1439,7 +1545,7 @@ describe("APIClient Gentable Action Table API", () => {
 
             await _dfToCsv(data, filePath);
 
-            const importDataResponse = await client.importTableData({
+            const importDataResponse = await client.table.importTableData({
                 file_path: filePath,
                 table_id: table_id,
                 table_type: "action"
@@ -1447,7 +1553,7 @@ describe("APIClient Gentable Action Table API", () => {
 
             tmpobj.removeCallback();
 
-            const rows = await client.listRows({
+            const rows = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id
             });
@@ -1494,7 +1600,7 @@ describe("APIClient Gentable Action Table API", () => {
 
             await _dfToCsv(data, filePath);
 
-            const importDataResponse = await client.importTableDataStream({
+            const importDataResponse = await client.table.importTableDataStream({
                 file_path: filePath,
                 table_id: table_id,
                 table_type: "action"

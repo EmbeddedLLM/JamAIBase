@@ -1,0 +1,5 @@
+.rollup.cache
+coverage
+dist
+docs-autogen-ts
+node_modules

@@ -1,18 +1,10 @@
-import { createHttpAgent, createHttpsAgent } from "@/utils";
+import { createHttpAgent, createHttpsAgent, isRunningInBrowser } from "@/helpers/utils";
+import { getOSInfoBrwoser } from "@/helpers/utils.browser";
+import { getOSInfoNode } from "@/helpers/utils.node";
 import Agent from "agentkeepalive";
 import axios, { AxiosInstance, AxiosResponse } from "axios";
 import axiosRetry from "axios-retry";
-
-export const isRunningInBrowser = () => {
-    return (
-        // @ts-ignore
-        typeof window !== "undefined" &&
-        // @ts-ignore
-        typeof window.document !== "undefined" &&
-        // @ts-ignore
-        typeof navigator !== "undefined"
-    );
-};
+import { z, ZodSchema } from "zod";
 
 /**
  * Configuration type for initializing the APIClient.
@@ -26,51 +18,68 @@ type BaseConfig = {
 
 type ConfigWithBaseURL = BaseConfig & {
     baseURL: string;
-    apiKey?: string;
+    token?: string;
     projectId?: string;
-    dangerouslyAllowBrowser?: boolean;
 };
 
 type ConfigWithoutBaseURL = BaseConfig & {
     baseURL?: string;
-    apiKey: string;
+    token: string;
     projectId: string;
-    dangerouslyAllowBrowser?: boolean;
 };
 
-type Config = ConfigWithBaseURL | ConfigWithoutBaseURL;
+export type TConfig = ConfigWithBaseURL | ConfigWithoutBaseURL;
 
 export abstract class Base {
     protected maxRetries: number;
     protected httpClient: AxiosInstance;
     protected timeout: number | undefined;
+    private sdkVersion = "0.3";
 
     /**
      * Creates an instance of APIClient.
      * @param {string} baseURL Base URL for the API requests. Default url is - https://api.jamaibase.com
-     * @param {string} apiKey apiKey.
+     * @param {string} token PAT.
      * @param {string} projectId Project ID.
      * @param {number=} [maxRetries=0] Maximum number of retries for failed requests. Defaults value is 0.
      * @param {AxiosInstance} [httpClient] Axios instance for making HTTP requests. If not provided, a default instance will be created.
      * @param {number} [timeout] Timeout (ms) for the requests. Default value is none.
      */
-    constructor({ baseURL, apiKey, projectId, maxRetries = 0, httpClient, timeout, dangerouslyAllowBrowser = false }: Config) {
+    constructor({ baseURL, token, projectId, maxRetries = 0, httpClient, timeout, dangerouslyAllowBrowser = false }: TConfig) {
         this.maxRetries = maxRetries;
         this.httpClient = httpClient || axios.create({});
         this.timeout = timeout;
 
         if (!dangerouslyAllowBrowser && isRunningInBrowser()) {
             throw new Error(
-                "It looks like you're running in a browser-like environment.\n\nThis is disabled by default, as it risks exposing your secret API credentials to attackers.\nIf you understand the risks and have appropriate mitigations in place,\nyou can set the `dangerouslyAllowBrowser` option to `true`, e.g.,\n\nnew JamAI({ apiKey, dangerouslyAllowBrowser: true });"
+                "It looks like you're running in a browser-like environment.\n\nThis is disabled by default, as it risks exposing your secret API credentials to attackers.\nIf you understand the risks and have appropriate mitigations in place,\nyou can set the `dangerouslyAllowBrowser` option to `true`, e.g.,\n\nnew JamAI({ token, dangerouslyAllowBrowser: true });"
             );
         }
+
+        // Setting up the interceptor
+        this.httpClient.interceptors.request.use(
+            async (config) => {
+                const userAgent = await this.generateUserAgent();
+                config.headers["User-Agent"] = userAgent;
+
+                return config;
+            },
+            (error) => {
+                // Handle the request error here
+                return Promise.reject(error);
+            }
+        );
 
         // add baseurl to axios instance
         this.httpClient.defaults.baseURL = baseURL || "https://api.jamaibase.com";
 
         // add apikey and project id to header if provided
-        if (apiKey && projectId) {
-            this.setApiKeyProjId(apiKey, projectId);
+        if (token) {
+            this.setApiKey(token);
+        }
+
+        if (projectId) {
+            this.setProjId(projectId);
         }
 
         // add timeout to client
@@ -93,8 +102,11 @@ export abstract class Base {
         }
 
         // add agent pool
-        this.httpClient.defaults.httpAgent = createHttpAgent();
-        this.httpClient.defaults.httpsAgent = createHttpsAgent();
+        if (!isRunningInBrowser()) {
+            this.httpClient.defaults.httpAgent = createHttpAgent();
+            this.httpClient.defaults.httpsAgent = createHttpsAgent();
+        }
+        // (TODO): add agent for browser (default browser)
     }
 
     /**
@@ -107,7 +119,7 @@ export abstract class Base {
      * @property {Number} [maxFreeSockets=10] - Maximum number of free sockets per host to keep open. Only relevant if keepAlive is true. Default is 10.
      * @property {Number} [socketActiveTTL=null] - Sets the time to live for active sockets, even if in use. If not set, sockets are released only when free. Default is null.
      */
-    public setHttpagentConfig(payload: Agent.HttpOptions) {
+    protected setHttpagentConfig(payload: Agent.HttpOptions) {
         this.httpClient.defaults.httpAgent = createHttpAgent(payload);
     }
 
@@ -121,20 +133,69 @@ export abstract class Base {
      * @property {Number} [maxFreeSockets=10] - Maximum number of free sockets per host to keep open. Only relevant if keepAlive is true. Default is 10.
      * @property {Number} [socketActiveTTL=null] - Sets the time to live for active sockets, even if in use. If not set, sockets are released only when free. Default is null.
      */
-    public setHttpsagentConfig(payload: Agent.HttpsOptions) {
+    protected setHttpsagentConfig(payload: Agent.HttpsOptions) {
         this.httpClient.defaults.httpsAgent = createHttpsAgent(payload);
     }
 
-    public async getHealth(): Promise<AxiosResponse> {
-        let getURL = `/health`;
+    protected async health(): Promise<AxiosResponse> {
+        let getURL = `/api/health`;
         return this.httpClient.get(getURL);
     }
-    public setApiKeyProjId(apiKey: string, projectId: string) {
-        this.httpClient.defaults.headers.common["Authorization"] = `Bearer ${apiKey}`;
+    protected setApiKey(token: string) {
+        this.httpClient.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+    }
+    protected setProjId(projectId: string) {
         this.httpClient.defaults.headers.common["X-PROJECT-ID"] = projectId;
     }
 
-    public setAuthHeader(header: string) {
+    protected setAuthHeader(header: string) {
         this.httpClient.defaults.headers.common["Authorization"] = header;
+    }
+
+    // Helper method to log warnings if present
+    protected logWarning(response: AxiosResponse<any, any>): void {
+        const warning = response.headers["warning"];
+        if (warning) {
+            console.warn(warning);
+        }
+    }
+
+    // Helper method to handle response validation
+    protected handleResponse<T extends ZodSchema<any>>(response: AxiosResponse<any, any>, schema?: T): z.infer<T> {
+        this.logWarning(response);
+
+        if (response.status !== 200) {
+            throw new Error(`Received Error Status: ${response.status}`);
+        }
+        if (schema) {
+            const parsedData = schema.parse(response.data) as z.infer<T>;
+            return parsedData;
+        } else {
+            return response.data;
+        }
+    }
+
+    // Method to get language and version (TypeScript or JavaScript)
+    private getLanguageAndVersion(): { language: string; version: string } {
+        try {
+            // Check if TypeScript is being used
+            const tsVersion = require("typescript").version;
+            return { language: "TypeScript", version: tsVersion };
+        } catch (error) {
+            // Fallback to JavaScript if TypeScript is not detected
+            return { language: "JavaScript", version: process.version };
+        }
+    }
+
+    private async generateUserAgent(): Promise<string> {
+        const sdkVersion = this.sdkVersion;
+        const { language, version } = this.getLanguageAndVersion();
+        let osInfo = "";
+        if (isRunningInBrowser()) {
+            osInfo = getOSInfoBrwoser();
+        } else {
+            osInfo = await getOSInfoNode();
+        }
+        return `SDK/${sdkVersion} (${language}/${version}; ${osInfo})`;
     }
 }

@@ -3,5 +3,5 @@ import { z } from "zod";
 
 export const CreateActionTableRequestSchema = TableSchemaCreateSchema;
 export const AddActionColumnRequestSchema = TableSchemaCreateSchema;
-export type CreateActionTableRequest = z.infer<typeof CreateActionTableRequestSchema>;
-export type AddActionColumnRequest = z.infer<typeof AddActionColumnRequestSchema>;
+export type CreateActionTableRequest = z.input<typeof CreateActionTableRequestSchema>;
+export type AddActionColumnRequest = z.input<typeof AddActionColumnRequestSchema>;

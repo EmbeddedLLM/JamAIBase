@@ -1,0 +1,26 @@
+{
+    "extends": "./tsconfig.json",
+    "include": ["dist"],
+    "exclude": ["**/*.spec.ts"],
+    "compilerOptions": {
+        "rootDir": "./dist",
+        "paths": {
+            "jamai/*": ["dist/*"],
+            "jamai": ["dist/index.ts"]
+        },
+        // "outDir": "./dist",
+        // "esModuleInterop": true,
+        // "allowSyntheticDefaultImports": true,
+        // "noEmit": false,
+        // "declaration": true,
+        // "declarationMap": true,
+        // "pretty": true,
+        // "sourceMap": true
+        "noEmit": false,
+        "declaration": true,
+        "declarationMap": true,
+        "outDir": "dist",
+        "pretty": true,
+        "sourceMap": true
+    }
+}

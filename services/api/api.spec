@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import glob
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
@@ -9,8 +10,14 @@ print(Path("src/owl/entrypoints/api.py").resolve().as_posix())
 
 datas_list = [
     (Path("src/owl/entrypoints/api.py").resolve().as_posix(), 'owl/entrypoints'),
-    (Path("src/owl/configs/models.json").resolve().as_posix(), 'owl')
+    (Path("src/owl/configs/models_aipc.json").resolve().as_posix(), 'owl/configs'),
 ]
+
+# Add parquet and JSON files from templates directory
+template_files = glob.glob("src/owl/templates/**/*.parquet", recursive=True)
+template_files += glob.glob("src/owl/templates/**/*.json", recursive=True)
+for file in template_files:
+    datas_list.append((file, str(Path(file).parent.relative_to("src"))))
 
 hiddenimports_list = ['multipart', "tiktoken_ext.openai_public", "tiktoken_ext"]
 

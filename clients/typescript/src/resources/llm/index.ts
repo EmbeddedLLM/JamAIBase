@@ -3,6 +3,7 @@ import {
     ChatCompletionChunk,
     ChatCompletionChunkSchema,
     ChatRequest,
+    ChatRequestSchema,
     References,
     ReferencesSchema,
     StreamChatCompletionChunk,
@@ -18,78 +19,18 @@ import {
     ModelNamesResponseSchema
 } from "@/resources/llm/model";
 import { ChunkError } from "@/resources/shared/error";
+import { AxiosResponse } from "axios";
 import { z } from "zod";
 
 export class LLM extends Base {
-    public async modelInfo(params?: ModelInfoRequest): Promise<ModelInfoResponse> {
-        let getURL = `/api/v1/models`;
+    // Helper method to handle chat stream responses
+    private handleChatStreamResponse(response: AxiosResponse<any, any>): ReadableStream<StreamChatCompletionChunk | References> {
+        this.logWarning(response);
 
-        const response = await this.httpClient.get(getURL, {
-            params: params,
-            paramsSerializer: {
-                indexes: false
-            }
-        });
-
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
+        if (response.status != 200) {
+            throw new Error(`Received Error Status: ${response.status}`);
         }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = ModelInfoResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
-    }
-
-    public async modelNames(params?: ModelNamesRequest): Promise<ModelNamesResponse> {
-        let getURL = `/api/v1/model_names`;
-
-        const response = await this.httpClient.get(getURL, {
-            params: params,
-            paramsSerializer: {
-                indexes: false
-            }
-        });
-
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = ModelNamesResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
-    }
-
-    public async generateChatCompletionsStream(params: ChatRequest): Promise<ReadableStream<StreamChatCompletionChunk | References>> {
-        const apiURL = "/api/v1/chat/completions";
-        const response = await this.httpClient.post(
-            apiURL,
-            {
-                ...params,
-                stream: true
-            },
-            {
-                responseType: "stream"
-            }
-        );
-
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        const stream = new ReadableStream<StreamChatCompletionChunk | References>({
+        return new ReadableStream<StreamChatCompletionChunk | References>({
             async start(controller: ReadableStreamDefaultController<StreamChatCompletionChunk | References>) {
                 response.data.on("data", (data: any) => {
                     data = data.toString();
@@ -97,7 +38,7 @@ export class LLM extends Base {
                         const lines = data
                             .split("\n\n")
                             .filter((i: string) => i.trim())
-                            .flatMap((line: string) => line.split("\n")); //? Split by \n to handle collation
+                            .flatMap((line: string) => line.split("\n")); // Split by \n to handle collation
 
                         for (const line of lines) {
                             const chunk = line
@@ -105,7 +46,7 @@ export class LLM extends Base {
                                 .replace(/^data: /, "")
                                 .replace(/data: \[DONE\]\s+$/, "");
 
-                            if (chunk.trim() == "[DONE]") return;
+                            if (chunk.trim() === "[DONE]") return;
 
                             try {
                                 const parsedValue = JSON.parse(chunk);
@@ -116,7 +57,7 @@ export class LLM extends Base {
                                 } else {
                                     throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
                                 }
-                            } catch (err) {
+                            } catch (err: any) {
                                 if (err instanceof ChunkError) {
                                     controller.error(new ChunkError(err.message));
                                 }
@@ -129,7 +70,7 @@ export class LLM extends Base {
                             .replace(/^data: /, "")
                             .replace(/data: \[DONE\]\s+$/, "");
 
-                        if (chunk.trim() == "[DONE]") return;
+                        if (chunk.trim() === "[DONE]") return;
 
                         try {
                             const parsedValue = JSON.parse(chunk);
@@ -148,7 +89,7 @@ export class LLM extends Base {
                     }
                 });
 
-                response.data.on("error", (data: any) => {
+                response.data.on("error", () => {
                     controller.error("Unexpected Error");
                 });
 
@@ -159,35 +100,54 @@ export class LLM extends Base {
                 });
             }
         });
+    }
 
-        return stream;
+    public async modelInfo(params?: ModelInfoRequest): Promise<ModelInfoResponse> {
+        let getURL = `/api/v1/models`;
+
+        const response = await this.httpClient.get(getURL, {
+            params: params,
+            paramsSerializer: {
+                indexes: false
+            }
+        });
+
+        return this.handleResponse(response, ModelInfoResponseSchema);
+    }
+
+    public async modelNames(params?: ModelNamesRequest): Promise<ModelNamesResponse> {
+        let getURL = `/api/v1/model_names`;
+
+        const response = await this.httpClient.get(getURL, {
+            params: params,
+            paramsSerializer: {
+                indexes: false
+            }
+        });
+
+        return this.handleResponse(response, ModelNamesResponseSchema);
+    }
+
+    public async generateChatCompletionsStream(params: ChatRequest): Promise<ReadableStream<StreamChatCompletionChunk | References>> {
+        const parsedParams = ChatRequestSchema.parse(params);
+        parsedParams.stream = true;
+        const apiURL = "/api/v1/chat/completions";
+        const response = await this.httpClient.post(apiURL, parsedParams, {
+            responseType: "stream"
+        });
+
+        return this.handleChatStreamResponse(response);
     }
 
     public async generateChatCompletions(params: ChatRequest): Promise<ChatCompletionChunk> {
+        const parsedParams = ChatRequestSchema.parse(params);
+        parsedParams.stream = false;
+
         const apiURL = "/api/v1/chat/completions";
 
-        const response = await this.httpClient.post<ChatCompletionChunk>(
-            apiURL,
-            {
-                ...params,
-                stream: false
-            },
-            {}
-        );
+        const response = await this.httpClient.post<ChatCompletionChunk>(apiURL, parsedParams, {});
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = ChatCompletionChunkSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, ChatCompletionChunkSchema);
     }
 
     public async generateEmbeddings(params: z.input<typeof EmbeddingRequestSchema>): Promise<EmbeddingResponse> {
@@ -199,18 +159,6 @@ export class LLM extends Base {
             ...parsedParams
         });
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = EmbeddingResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, EmbeddingResponseSchema);
     }
 }
