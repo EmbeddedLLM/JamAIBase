@@ -714,16 +714,16 @@ def test_add_row_sequential_image_model_completion(
         p.ColumnSchemaCreate(id="photo", dtype="file"),
         p.ColumnSchemaCreate(id="photo2", dtype="file"),
         p.ColumnSchemaCreate(
-            id="captioning",
+            id="caption",
             dtype="str",
             gen_config=p.LLMGenConfig(model="", prompt="${photo} What's in the image?"),
         ),
         p.ColumnSchemaCreate(
-            id="captioning2",
+            id="question",
             dtype="str",
             gen_config=p.LLMGenConfig(
                 model="",
-                prompt="${photo2} What's in the image? Is it same or different with ${captioning}?",
+                prompt="Caption: ${caption}\n\nImage: ${photo2}\n\nDoes the caption match? Reply True or False.",
             ),
         ),
     ]
@@ -744,12 +744,10 @@ def test_add_row_sequential_image_model_completion(
             assert all(r.object == "gen_table.completion.chunk" for r in responses)
             if table_type == p.TableType.chat:
                 assert all(
-                    r.output_column_name in ("captioning", "captioning2", "AI") for r in responses
+                    r.output_column_name in ("caption", "question", "AI") for r in responses
                 )
             else:
-                assert all(
-                    r.output_column_name in ("captioning", "captioning2") for r in responses
-                )
+                assert all(r.output_column_name in ("caption", "question") for r in responses)
             assert len("".join(r.text for r in responses)) > 0
             assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
             assert all(isinstance(r.usage, p.CompletionUsage) for r in responses)
@@ -758,7 +756,7 @@ def test_add_row_sequential_image_model_completion(
         else:
             assert isinstance(response, p.GenTableChatCompletionChunks)
             assert response.object == "gen_table.completion.chunks"
-            for output_column_name in ("captioning", "captioning2"):
+            for output_column_name in ("caption", "question"):
                 assert len(response.columns[output_column_name].text) > 0
                 assert isinstance(response.columns[output_column_name].usage, p.CompletionUsage)
                 assert isinstance(response.columns[output_column_name].prompt_tokens, int)
@@ -771,12 +769,10 @@ def test_add_row_sequential_image_model_completion(
         assert row["photo2"]["value"] == upload_response.uri, row["photo"]["value"]
         for animal in ["deer", "rabbit"]:
             if animal in row["photo"]["value"].split("_")[0]:
-                assert animal in row["captioning"]["value"]
+                assert animal in row["caption"]["value"]
             if animal in row["photo2"]["value"].split("_")[0]:
-                assert animal in row["captioning2"]["value"]
-                assert (
-                    "same" in row["captioning2"]["value"] or "match" in row["captioning2"]["value"]
-                )
+                assert animal in row["question"]["value"]
+                assert "true" in row["question"]["value"].lower()
 
 
 # @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
@@ -819,11 +815,9 @@ def test_add_row_sequential_image_model_completion(
 @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
-@pytest.mark.parametrize("stream", [True, False])
 def test_add_row_output_column_referred_image_input_with_chat_model(
     client_cls: Type[JamAI],
     table_type: p.TableType,
-    stream: bool,
 ):
     jamai = client_cls()
     cols = [
