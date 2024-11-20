@@ -160,16 +160,16 @@ table = jamai.table.create_action_table(
     p.ActionTableSchemaCreate(
         id="action-simple",
         cols=[
-            p.ColumnSchemaCreate(id="length", dtype="int"),
-            p.ColumnSchemaCreate(id="text", dtype="str"),
+            p.ColumnSchemaCreate(id="image", dtype="file"),  # Image input
+            p.ColumnSchemaCreate(id="length", dtype="int"),  # Integer input
+            p.ColumnSchemaCreate(id="question", dtype="str"),
             p.ColumnSchemaCreate(
-                id="summary",
+                id="answer",
                 dtype="str",
                 gen_config=p.LLMGenConfig(
                     model="openai/gpt-4o-mini",  # Leave this out to use a default model
                     system_prompt="You are a concise assistant.",
-                    # Interpolate string and non-string input columns
-                    prompt="Summarise this in ${length} words:\n\n${text}",
+                    prompt="Image: ${image}\n\nQuestion: ${question}\n\nAnswer the question in ${length} words.",
                     temperature=0.001,
                     top_p=0.001,
                     max_tokens=100,
@@ -213,27 +213,29 @@ table = jamai.table.create_chat_table(
 print(table)
 ```
 
-### Adding rows to tables
+### Adding rows
 
 Now that we have our tables, we can start adding rows to them and receive the LLM responses.
 
 First let's try adding to Action Table:
 
 ```python
-text_a = '"Arrival" is a 2016 science fiction drama film directed by Denis Villeneuve and adapted by Eric Heisserer.'
-text_b = "Dune: Part Two is a 2024 epic science fiction film directed by Denis Villeneuve."
+text_a = 'Summarize this: "Arrival" is a 2016 science fiction drama film directed by Denis Villeneuve and adapted by Eric Heisserer.'
+text_b = 'Summarize this: "Dune: Part Two is a 2024 epic science fiction film directed by Denis Villeneuve."'
+text_c = "Identify the subject of the image."
 
+# --- Action Table --- #
 # Streaming
 completion = jamai.table.add_table_rows(
     "action",
     p.RowAddRequest(
         table_id="action-simple",
-        data=[dict(length=5, text=text_a)],
+        data=[dict(length=5, question=text_a)],
         stream=True,
     ),
 )
 for chunk in completion:
-    if chunk.output_column_name != "summary":
+    if chunk.output_column_name != "answer":
         continue
     print(chunk.text, end="", flush=True)
 print("")
@@ -243,16 +245,44 @@ completion = jamai.table.add_table_rows(
     "action",
     p.RowAddRequest(
         table_id="action-simple",
-        data=[dict(length=5, text=text_b)],
+        data=[dict(length=5, question=text_b)],
         stream=False,
     ),
 )
-print(completion.rows[0].columns["summary"].text)
+print(completion.rows[0].columns["answer"].text)
+
+# Streaming (with image input)
+upload_response = jamai.file.upload_file("clients/python/tests/files/jpeg/rabbit.jpeg")
+completion = jamai.table.add_table_rows(
+    "action",
+    p.RowAddRequest(
+        table_id="action-simple",
+        data=[dict(image=upload_response.uri, length=5, question=text_c)],
+        stream=True,
+    ),
+)
+for chunk in completion:
+    if chunk.output_column_name != "answer":
+        continue
+    print(chunk.text, end="", flush=True)
+print("")
+
+# Non-streaming (with image input)
+completion = jamai.table.add_table_rows(
+    "action",
+    p.RowAddRequest(
+        table_id="action-simple",
+        data=[dict(image=upload_response.uri, length=5, question=text_c)],
+        stream=False,
+    ),
+)
+print(completion.rows[0].columns["answer"].text)
 ```
 
 Next let's try adding to Chat Table:
 
 ```python
+# --- Chat Table --- #
 # Streaming
 completion = jamai.table.add_table_rows(
     "chat",
@@ -290,6 +320,7 @@ Finally we can add rows to Knowledge Table too:
 <!-- prettier-ignore-end -->
 
 ```python
+# --- Knowledge Table --- #
 # Streaming
 completion = jamai.table.add_table_rows(
     "knowledge",
@@ -321,21 +352,18 @@ We can retrieve table rows by listing the rows or by fetching a specific row.
 # --- List rows -- #
 # Action
 rows = jamai.table.list_table_rows("action", "action-simple")
-assert len(rows.items) == 2
 # Paginated items
 for row in rows.items:
-    print(row["ID"], row["summary"]["value"])
+    print(row["ID"], row["answer"]["value"])
 
 # Knowledge
 rows = jamai.table.list_table_rows("knowledge", "knowledge-simple")
-assert len(rows.items) == 2
 for row in rows.items:
     print(row["ID"], row["Title"]["value"])
     print(row["Title Embed"]["value"][:3])  # Knowledge Table has embeddings
 
 # Chat
 rows = jamai.table.list_table_rows("chat", "chat-simple")
-assert len(rows.items) == 2
 for row in rows.items:
     print(row["ID"], row["User"]["value"], row["AI"]["value"])
 
@@ -345,9 +373,8 @@ print(row["ID"], row["AI"]["value"])
 
 # --- Filter using a search term -- #
 rows = jamai.table.list_table_rows("action", "action-simple", search_query="Dune")
-assert len(rows.items) == 1
 for row in rows.items:
-    print(row["ID"], row["summary"]["value"])
+    print(row["ID"], row["answer"]["value"])
 ```
 
 ### Retrieving columns
@@ -357,7 +384,6 @@ We can retrieve columns by filtering them.
 ```python
 # --- Only fetch specific columns -- #
 rows = jamai.table.list_table_rows("action", "action-simple", columns=["length"])
-assert len(rows.items) == 2
 for row in rows.items:
     # "ID" and "Updated at" will always be fetched
     print(row["ID"], row["length"]["value"])
@@ -376,13 +402,7 @@ with TemporaryDirectory() as tmp_dir:
     with open(file_path, "w") as f:
         f.write("I bought a Mofusand book in 2024.\n\n")
         f.write("I went to Italy in 2018.\n\n")
-
-    response = jamai.table.embed_file(
-        p.FileUploadRequest(
-            file_path=file_path,
-            table_id="knowledge-simple",
-        )
-    )
+    response = jamai.table.embed_file(file_path, "knowledge-simple")
     assert response.ok
 
 # Create an Action Table with RAG
@@ -441,27 +461,27 @@ We can retrieve tables by listing the tables or by fetching a specific tables.
 ```python
 # --- List tables -- #
 # Action
-tables = jamai.table.list_tables("action")
+tables = jamai.table.list_tables("action", count_rows=True)
 assert len(tables.items) == 2
 # Paginated items
 for table in tables.items:
-    print(table.id, table.num_rows)
+    print(f"{table.id=}, {table.num_rows=}")
 
 # Knowledge
 tables = jamai.table.list_tables("knowledge")
 assert len(tables.items) == 1
 for table in tables.items:
-    print(table.id, table.num_rows)
+    print(f"{table.id=}, {table.num_rows=}")
 
 # Chat
 tables = jamai.table.list_tables("chat")
 assert len(tables.items) == 1
 for table in tables.items:
-    print(table.id, table.num_rows)
+    print(f"{table.id=}, {table.num_rows=}")
 
 # --- Fetch a specific table -- #
 table = jamai.table.get_table("action", "action-rag")
-print(table.id, table.num_rows)
+print(f"{table.id=}, {table.num_rows=}")
 ```
 
 ### Deleting rows
@@ -514,7 +534,7 @@ batch_size = 100
 for table_type in ["action", "knowledge", "chat"]:
     offset, total = 0, 1
     while offset < total:
-        tables = jamai.table.list_tables(table_type, offset, batch_size)
+        tables = jamai.table.list_tables(table_type, offset=offset, limit=batch_size)
         assert isinstance(tables.items, list)
         for table in tables.items:
             jamai.table.delete_table(table_type, table.id)
@@ -527,8 +547,6 @@ for table_type in ["action", "knowledge", "chat"]:
 The full script is as follows:
 
 ```python
-import os
-
 from jamaibase import JamAI
 from jamaibase import protocol as p
 
@@ -539,15 +557,16 @@ def create_tables(jamai: JamAI):
         p.ActionTableSchemaCreate(
             id="action-simple",
             cols=[
-                p.ColumnSchemaCreate(id="length", dtype="int"),
-                p.ColumnSchemaCreate(id="text", dtype="str"),
+                p.ColumnSchemaCreate(id="image", dtype="file"),  # Image input
+                p.ColumnSchemaCreate(id="length", dtype="int"),  # Integer input
+                p.ColumnSchemaCreate(id="question", dtype="str"),
                 p.ColumnSchemaCreate(
-                    id="summary",
+                    id="answer",
                     dtype="str",
                     gen_config=p.LLMGenConfig(
                         model="openai/gpt-4o-mini",  # Leave this out to use a default model
                         system_prompt="You are a concise assistant.",
-                        prompt="Summarise this in ${length} words:\n\n${text}",
+                        prompt="Image: ${image}\n\nQuestion: ${question}\n\nAnswer the question in ${length} words.",
                         temperature=0.001,
                         top_p=0.001,
                         max_tokens=100,
@@ -592,20 +611,22 @@ def create_tables(jamai: JamAI):
 
 
 def add_rows(jamai: JamAI):
-    text_a = '"Arrival" is a 2016 science fiction drama film directed by Denis Villeneuve and adapted by Eric Heisserer.'
-    text_b = "Dune: Part Two is a 2024 epic science fiction film directed by Denis Villeneuve."
+    text_a = 'Summarize this: "Arrival" is a 2016 science fiction drama film directed by Denis Villeneuve and adapted by Eric Heisserer.'
+    text_b = 'Summarize this: "Dune: Part Two is a 2024 epic science fiction film directed by Denis Villeneuve."'
+    text_c = "Identify the subject of the image."
 
+    # --- Action Table --- #
     # Streaming
     completion = jamai.table.add_table_rows(
         "action",
         p.RowAddRequest(
             table_id="action-simple",
-            data=[dict(length=5, text=text_a)],
+            data=[dict(length=5, question=text_a)],
             stream=True,
         ),
     )
     for chunk in completion:
-        if chunk.output_column_name != "summary":
+        if chunk.output_column_name != "answer":
             continue
         print(chunk.text, end="", flush=True)
     print("")
@@ -615,12 +636,40 @@ def add_rows(jamai: JamAI):
         "action",
         p.RowAddRequest(
             table_id="action-simple",
-            data=[dict(length=5, text=text_b)],
+            data=[dict(length=5, question=text_b)],
             stream=False,
         ),
     )
-    print(completion.rows[0].columns["summary"].text)
+    print(completion.rows[0].columns["answer"].text)
 
+    # Streaming (with image input)
+    upload_response = jamai.file.upload_file("clients/python/tests/files/jpeg/rabbit.jpeg")
+    completion = jamai.table.add_table_rows(
+        "action",
+        p.RowAddRequest(
+            table_id="action-simple",
+            data=[dict(image=upload_response.uri, length=5, question=text_c)],
+            stream=True,
+        ),
+    )
+    for chunk in completion:
+        if chunk.output_column_name != "answer":
+            continue
+        print(chunk.text, end="", flush=True)
+    print("")
+
+    # Non-streaming (with image input)
+    completion = jamai.table.add_table_rows(
+        "action",
+        p.RowAddRequest(
+            table_id="action-simple",
+            data=[dict(image=upload_response.uri, length=5, question=text_c)],
+            stream=False,
+        ),
+    )
+    print(completion.rows[0].columns["answer"].text)
+
+    # --- Chat Table --- #
     # Streaming
     completion = jamai.table.add_table_rows(
         "chat",
@@ -647,6 +696,7 @@ def add_rows(jamai: JamAI):
     )
     print(completion.rows[0].columns["AI"].text)
 
+    # --- Knowledge Table --- #
     # Streaming
     completion = jamai.table.add_table_rows(
         "knowledge",
@@ -674,10 +724,10 @@ def fetch_rows(jamai: JamAI):
     # --- List rows -- #
     # Action
     rows = jamai.table.list_table_rows("action", "action-simple")
-    assert len(rows.items) == 2
+    assert len(rows.items) == 4
     # Paginated items
     for row in rows.items:
-        print(row["ID"], row["summary"]["value"])
+        print(row["ID"], row["answer"]["value"])
 
     # Knowledge
     rows = jamai.table.list_table_rows("knowledge", "knowledge-simple")
@@ -700,13 +750,13 @@ def fetch_rows(jamai: JamAI):
     rows = jamai.table.list_table_rows("action", "action-simple", search_query="Dune")
     assert len(rows.items) == 1
     for row in rows.items:
-        print(row["ID"], row["summary"]["value"])
+        print(row["ID"], row["answer"]["value"])
 
 
 def fetch_columns(jamai: JamAI):
     # --- Only fetch specific columns -- #
     rows = jamai.table.list_table_rows("action", "action-simple", columns=["length"])
-    assert len(rows.items) == 2
+    assert len(rows.items) == 4
     for row in rows.items:
         # "ID" and "Updated at" will always be fetched
         print(row["ID"], row["length"]["value"])
@@ -721,13 +771,7 @@ def rag(jamai: JamAI):
         with open(file_path, "w") as f:
             f.write("I bought a Mofusand book in 2024.\n\n")
             f.write("I went to Italy in 2018.\n\n")
-
-        response = jamai.table.embed_file(
-            p.FileUploadRequest(
-                file_path=file_path,
-                table_id="knowledge-simple",
-            )
-        )
+        response = jamai.table.embed_file(file_path, "knowledge-simple")
         assert response.ok
 
     # Create an Action Table with RAG
@@ -782,27 +826,27 @@ def rag(jamai: JamAI):
 def fetch_tables(jamai: JamAI):
     # --- List tables -- #
     # Action
-    tables = jamai.table.list_tables("action")
+    tables = jamai.table.list_tables("action", count_rows=True)
     assert len(tables.items) == 2
     # Paginated items
     for table in tables.items:
-        print(table.id, table.num_rows)
+        print(f"{table.id=}, {table.num_rows=}")
 
     # Knowledge
     tables = jamai.table.list_tables("knowledge")
     assert len(tables.items) == 1
     for table in tables.items:
-        print(table.id, table.num_rows)
+        print(f"{table.id=}, {table.num_rows=}")
 
     # Chat
     tables = jamai.table.list_tables("chat")
     assert len(tables.items) == 1
     for table in tables.items:
-        print(table.id, table.num_rows)
+        print(f"{table.id=}, {table.num_rows=}")
 
     # --- Fetch a specific table -- #
     table = jamai.table.get_table("action", "action-rag")
-    print(table.id, table.num_rows)
+    print(f"{table.id=}, {table.num_rows=}")
 
 
 def delete_rows(jamai: JamAI):
@@ -838,7 +882,7 @@ def delete_all_tables(jamai: JamAI):
     for table_type in ["action", "knowledge", "chat"]:
         offset, total = 0, 1
         while offset < total:
-            tables = jamai.table.list_tables(table_type, offset, batch_size)
+            tables = jamai.table.list_tables(table_type, offset=offset, limit=batch_size)
             assert isinstance(tables.items, list)
             for table in tables.items:
                 jamai.table.delete_table(table_type, table.id)
