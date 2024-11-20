@@ -1,11 +1,9 @@
 services:
   infinity:
-    entrypoint:
-      [
-        "/bin/sh",
-        "-c",
-        "(. /app/.venv/bin/activate && infinity_emb v2 --port 6909 --model-id $${EMBEDDING_MODEL} --model-warmup --device cuda &);(. /app/.venv/bin/activate && infinity_emb v2 --port 6919 --model-id $${RERANKER_MODEL} --model-warmup --device cuda )",
-      ]
+    extends:
+      file: compose.cpu.yml
+      service: infinity
+    image: michaelf34/infinity:0.0.70  # Use GPU-compatible image, instead of torch cpu-only.
     deploy:
       resources:
         reservations:
