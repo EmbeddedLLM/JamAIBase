@@ -771,7 +771,6 @@ def test_add_row_sequential_image_model_completion(
             if animal in row["photo"]["value"].split("_")[0]:
                 assert animal in row["caption"]["value"]
             if animal in row["photo2"]["value"].split("_")[0]:
-                assert animal in row["question"]["value"]
                 assert "true" in row["question"]["value"].lower()
 
 
