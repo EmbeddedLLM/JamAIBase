@@ -1,4 +1,5 @@
 import { PUBLIC_JAMAI_URL } from '$env/static/public';
+import { error } from '@sveltejs/kit';
 import logger from '$lib/logger.js';
 import { knowledgeRowsPerPage } from '$lib/constants.js';
 import type { GenTable, GenTableRow } from '$lib/types.js';
@@ -7,42 +8,72 @@ export const load = async ({ depends, fetch, params, parent, url }) => {
 	depends('knowledge-table:slug');
 	await parent();
 	const page = parseInt(url.searchParams.get('page') ?? '1');
+	const orderAsc = parseInt(url.searchParams.get('asc') ?? '0');
+
+	if (!params.table_id) {
+		throw error(400, 'Missing table ID');
+	}
 
 	const getTable = async () => {
-		const fetchPromises = [
-			fetch(
-				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/knowledge/${params.table_id}?` +
-					new URLSearchParams({
-						offset: '0',
-						limit: '1'
-					})
-			),
-			fetch(
-				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/knowledge/${params.table_id}/rows?` +
-					new URLSearchParams({
-						offset: ((page - 1) * knowledgeRowsPerPage).toString(),
-						limit: knowledgeRowsPerPage.toString()
-					})
-			)
-		];
-
-		const [responseTableData, responseRows] = await Promise.all(fetchPromises);
-		const [tableData, rows] = await Promise.all([responseTableData.json(), responseRows.json()]);
-		if (!responseTableData.ok || !responseRows.ok) {
-			if (responseTableData.status !== 404 && responseTableData.status !== 422) {
-				logger.error('KNOWTBL_TBL_GET', { tableData, rows });
+		const tableDataRes = await fetch(
+			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/knowledge/${params.table_id}?` +
+				new URLSearchParams({
+					offset: '0',
+					limit: '1'
+				}),
+			{
+				headers: {
+					'x-project-id': params.project_id
+				}
 			}
-			return { error: responseTableData.status, message: { tableData, rows } };
+		);
+		const tableDataBody = await tableDataRes.json();
+
+		if (!tableDataRes.ok) {
+			if (tableDataRes.status !== 404 && tableDataRes.status !== 422) {
+				logger.error('KNOWTBL_TBL_GET', tableDataBody);
+			}
+			return { error: tableDataRes.status, message: tableDataBody };
 		} else {
 			return {
-				tableData: tableData as GenTable,
-				rows: rows.items as GenTableRow[],
-				total_rows: rows.total
+				data: tableDataBody as GenTable
+			};
+		}
+	};
+
+	const getRows = async () => {
+		const tableRowsRes = await fetch(
+			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/knowledge/${params.table_id}/rows?` +
+				new URLSearchParams({
+					offset: ((page - 1) * knowledgeRowsPerPage).toString(),
+					limit: knowledgeRowsPerPage.toString(),
+					order_descending: orderAsc === 1 ? 'false' : 'true'
+				}),
+			{
+				headers: {
+					'x-project-id': params.project_id
+				}
+			}
+		);
+		const tableRowsBody = await tableRowsRes.json();
+
+		if (!tableRowsRes.ok) {
+			if (tableRowsRes.status !== 404 && tableRowsRes.status !== 422) {
+				logger.error('KNOWTBL_TBL_GETROWS', tableRowsBody);
+			}
+			return { error: tableRowsRes.status, message: tableRowsBody };
+		} else {
+			return {
+				data: {
+					rows: tableRowsBody.items as GenTableRow[],
+					total_rows: tableRowsBody.total as number
+				}
 			};
 		}
 	};
 
 	return {
-		table: params.table_id ? await getTable() : undefined
+		table: getTable(),
+		tableRows: getRows()
 	};
 };

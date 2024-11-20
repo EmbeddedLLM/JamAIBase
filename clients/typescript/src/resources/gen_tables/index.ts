@@ -1,10 +1,16 @@
 import { Base } from "@/resources/base";
-import { promises as fs } from "fs";
-import mime from "mime-types";
 
-import { AddActionColumnRequest, CreateActionTableRequest } from "@/resources/gen_tables/action";
+import { isRunningInBrowser } from "@/helpers/utils";
+import { getFileName, getMimeType, readFile } from "@/helpers/utils.node";
+import {
+    AddActionColumnRequest,
+    AddActionColumnRequestSchema,
+    CreateActionTableRequest,
+    CreateActionTableRequestSchema
+} from "@/resources/gen_tables/action";
 import {
     CreateChatTableRequest,
+    CreateChatTableRequestSchema,
     GenTableRowsChatCompletionChunks,
     GenTableRowsChatCompletionChunksSchema,
     GenTableStreamChatCompletionChunk,
@@ -12,18 +18,21 @@ import {
     GenTableStreamReferences,
     GenTableStreamReferencesSchema,
     GetConversationThreadRequest,
+    GetConversationThreadRequestSchema,
     GetConversationThreadResponse,
     GetConversationThreadResponseSchema
 } from "@/resources/gen_tables/chat";
-import { CreateKnowledgeTableRequest, UploadFileRequest } from "@/resources/gen_tables/knowledge";
+import { CreateKnowledgeTableRequest, CreateKnowledgeTableRequestSchema, UploadFileRequest } from "@/resources/gen_tables/knowledge";
 import {
     AddColumnRequest,
+    AddColumnRequestSchema,
     AddRowRequest,
     DeleteRowRequest,
     DeleteRowsRequest,
     DeleteTableRequest,
     DropColumnsRequest,
     DuplicateTableRequest,
+    DuplicateTableRequestSchema,
     ExportTableRequest,
     ExportTableRequestSchema,
     GetRowRequest,
@@ -35,6 +44,7 @@ import {
     HybridSearchResponseSchema,
     ImportTableRequest,
     ListTableRequest,
+    ListTableRequestSchema,
     ListTableRowsRequest,
     ListTableRowsRequestSchema,
     OkResponse,
@@ -51,53 +61,118 @@ import {
     TableMetaResponse,
     TableMetaResponseSchema,
     UpdateGenConfigRequest,
+    UpdateGenConfigRequestSchema,
     UpdateRowRequest
 } from "@/resources/gen_tables/tables";
 import { ChunkError } from "@/resources/shared/error";
-import axios from "axios";
-import path from "path";
+import axios, { AxiosResponse } from "axios";
+import { Blob, FormData } from "formdata-node";
 
 export class GenTable extends Base {
-    public async listTables({ table_type, limit = 100, offset = 0, parent_id }: ListTableRequest): Promise<PageListTableMetaResponse> {
-        let getURL = `/api/v1/gen_tables/${table_type}?offset=${offset}&limit=${limit}`;
-        if (parent_id) {
-            getURL = getURL + `&parent_id=${parent_id}`;
+    // Helper method to handle stream responses
+    private handleGenTableStreamResponse(
+        response: AxiosResponse<any, any>
+    ): ReadableStream<GenTableStreamChatCompletionChunk | GenTableStreamReferences> {
+        this.logWarning(response);
+
+        if (response.status != 200) {
+            throw new Error(`Received Error Status: ${response.status}`);
         }
 
-        const response = await this.httpClient.get(getURL);
+        return new ReadableStream<GenTableStreamChatCompletionChunk | GenTableStreamReferences>({
+            async start(controller: ReadableStreamDefaultController<GenTableStreamChatCompletionChunk | GenTableStreamReferences>) {
+                response.data.on("data", (data: any) => {
+                    data = data.toString();
+                    if (data.endsWith("\n\n")) {
+                        const lines = data
+                            .split("\n\n")
+                            .filter((i: string) => i.trim())
+                            .flatMap((line: string) => line.split("\n")); // Split by \n to handle collation
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
+                        for (const line of lines) {
+                            const chunk = line
+                                .toString()
+                                .replace(/^data: /, "")
+                                .replace(/data: \[DONE\]\s+$/, "");
 
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = PageListTableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
+                            if (chunk.trim() === "[DONE]") return;
+
+                            try {
+                                const parsedValue = JSON.parse(chunk);
+                                if (parsedValue["object"] === "gen_table.completion.chunk") {
+                                    controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
+                                } else if (parsedValue["object"] === "gen_table.references") {
+                                    controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
+                                } else {
+                                    throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
+                                }
+                            } catch (err: any) {
+                                if (err instanceof ChunkError) {
+                                    controller.error(new ChunkError(err.message));
+                                } else {
+                                    continue;
+                                }
+                            }
+                        }
+                    } else {
+                        const chunk = data
+                            .toString()
+                            .replace(/^data: /, "")
+                            .replace(/data: \[DONE\]\s+$/, "");
+
+                        if (chunk.trim() === "[DONE]") return;
+
+                        try {
+                            const parsedValue = JSON.parse(chunk);
+                            if (parsedValue["object"] === "gen_table.completion.chunk") {
+                                controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
+                            } else if (parsedValue["object"] === "gen_table.references") {
+                                controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
+                            } else {
+                                throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
+                            }
+                        } catch (err: any) {
+                            if (err instanceof ChunkError) {
+                                controller.error(new ChunkError(err.message));
+                            }
+                        }
+                    }
+                });
+
+                response.data.on("error", (data: any) => {
+                    controller.error("Unexpected Error.");
+                });
+
+                response.data.on("end", () => {
+                    if (controller.desiredSize !== null) {
+                        controller.close();
+                    }
+                });
             }
         });
+    }
+
+    public async listTables(params: ListTableRequest): Promise<PageListTableMetaResponse> {
+        const parsedParams = ListTableRequestSchema.parse(params);
+        let getURL = `/api/v1/gen_tables/${params.table_type}`;
+
+        delete (parsedParams as any).table_type;
+
+        const response = await this.httpClient.get(getURL, {
+            params: {
+                ...parsedParams,
+                search_query: encodeURIComponent(parsedParams.search_query)
+            }
+        });
+
+        return this.handleResponse(response, PageListTableMetaResponseSchema);
     }
 
     public async getTable(params: TableMetaRequest): Promise<TableMetaResponse> {
         let getURL = `/api/v1/gen_tables/${params.table_type}/${params.table_id}`;
 
         const response = await this.httpClient.get(getURL);
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = TableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async listRows(params: ListTableRowsRequest): Promise<PageListTableRowsResponse> {
@@ -109,7 +184,8 @@ export class GenTable extends Base {
                 search_query: encodeURIComponent(parsedParams.search_query),
                 columns: parsedParams.columns ? parsedParams.columns?.map(encodeURIComponent) : [],
                 float_decimals: parsedParams.float_decimals,
-                vec_decimals: parsedParams.vec_decimals
+                vec_decimals: parsedParams.vec_decimals,
+                order_descending: parsedParams.order_descending
             },
             paramsSerializer: (params) => {
                 return Object.entries(params)
@@ -118,17 +194,7 @@ export class GenTable extends Base {
             }
         });
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        if (response.status == 200) {
-            const parsedData = PageListTableRowsResponseSchema.parse(response.data);
-            return parsedData;
-        } else {
-            throw new Error(`Received Error Status: ${response.status}`);
-        }
+        return this.handleResponse(response, PageListTableRowsResponseSchema);
     }
 
     public async getRow(params: GetRowRequest): Promise<GetRowResponse> {
@@ -146,103 +212,55 @@ export class GenTable extends Base {
             }
         });
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        if (response.status == 200) {
-            const parsedData = GetRowResponseSchema.parse(response.data);
-            return parsedData;
-        } else {
-            throw new Error(`Received Error Status: ${response.status}`);
-        }
+        return this.handleResponse(response, GetRowResponseSchema);
     }
 
     public async getConversationThread(params: GetConversationThreadRequest): Promise<GetConversationThreadResponse> {
-        let getURL = `/api/v1/gen_tables/chat/${params.table_id}/thread?table_id=${params.table_id}`;
-        const response = await this.httpClient.get(getURL);
+        const parsedParams = GetConversationThreadRequestSchema.parse(params);
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = GetConversationThreadResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
+        let getURL = `/api/v1/gen_tables/${parsedParams.table_type}/${parsedParams.table_id}/thread`;
+        const response = await this.httpClient.get(getURL, {
+            params: {
+                column_id: parsedParams.column_id,
+                row_id: parsedParams.row_id,
+                include: parsedParams.include
             }
         });
+
+        return this.handleResponse(response, GetConversationThreadResponseSchema);
     }
 
     /*
      *  Gen Table Create
      */
     public async createActionTable(params: CreateActionTableRequest): Promise<TableMetaResponse> {
+        const parsedParams = CreateActionTableRequestSchema.parse(params);
         const apiURL = "/api/v1/gen_tables/action";
         const response = await this.httpClient.post(
             apiURL,
             {
-                ...params,
+                ...parsedParams,
                 stream: false
             },
             {}
         );
-
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = TableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async createChatTable(params: CreateChatTableRequest): Promise<TableMetaResponse> {
+        const parsedParams = CreateChatTableRequestSchema.parse(params);
         const apiURL = "/api/v1/gen_tables/chat";
-        const response = await this.httpClient.post(apiURL, params);
+        const response = await this.httpClient.post(apiURL, parsedParams);
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = TableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async createKnowledgeTable(params: CreateKnowledgeTableRequest): Promise<TableMetaResponse> {
+        const parsedParams = CreateKnowledgeTableRequestSchema.parse(params);
         const apiURL = "/api/v1/gen_tables/knowledge";
-        const response = await this.httpClient.post(apiURL, params);
+        const response = await this.httpClient.post(apiURL, parsedParams);
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = TableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     /*
@@ -252,19 +270,7 @@ export class GenTable extends Base {
         let deleteURL = `/api/v1/gen_tables/${params.table_type}/${params.table_id}`;
         const response = await this.httpClient.delete(deleteURL);
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = OkResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, OkResponseSchema);
     }
 
     public async deleteRow(params: DeleteRowRequest): Promise<OkResponse> {
@@ -276,19 +282,7 @@ export class GenTable extends Base {
             }
         });
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = OkResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, OkResponseSchema);
     }
 
     /**
@@ -300,68 +294,43 @@ export class GenTable extends Base {
             table_id: params.table_id,
             where: params.where // Optional. SQL where clause. If not provided, will match all rows and thus deleting all table content.
         });
-
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                resolve(OkResponseSchema.parse({ ok: true }));
-            } else {
-                console.error("Received Error Status: ", response.status);
-                resolve(OkResponseSchema.parse({ ok: false }));
-            }
-        });
+        return this.handleResponse(response, OkResponseSchema);
     }
 
     /*
      * Gen Table Update
      */
-
     public async renameTable(params: RenameTableRequest): Promise<TableMetaResponse> {
         let postURL = `/api/v1/gen_tables/${params.table_type}/rename/${params.table_id_src}/${params.table_id_dst}`;
         const response = await this.httpClient.post(postURL, {}, {});
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = TableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, TableMetaResponseSchema);
     }
 
-    public async duplicateTable({
-        table_id_dst,
-        table_id_src,
-        table_type,
-        include_data = true,
-        deploy = false
-    }: DuplicateTableRequest): Promise<TableMetaResponse> {
-        let postURL = `/api/v1/gen_tables/${table_type}/duplicate/${table_id_src}/${table_id_dst}?include_data=${include_data}&deploy=${deploy}`;
-        const response = await this.httpClient.post(postURL, {}, {});
+    public async duplicateTable(params: DuplicateTableRequest): Promise<TableMetaResponse> {
+        if ("deploy" in params) {
+            console.warn(`The "deploy" argument is deprecated, use "create_as_child" instead.`);
+            params.create_as_child = params.deploy as boolean;
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
+            delete params.deploy;
         }
 
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = TableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
+        const parsedParams = DuplicateTableRequestSchema.parse(params);
+
+        let postURL = `/api/v1/gen_tables/${params.table_type}/duplicate/${params.table_id_src}`;
+        const response = await this.httpClient.post(
+            postURL,
+            {},
+            {
+                params: {
+                    table_id_dst: parsedParams.table_id_dst,
+                    include_data: parsedParams.include_data,
+                    create_as_child: parsedParams.create_as_child
+                }
             }
-        });
+        );
+
+        return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async renameColumns(params: RenameColumnsRequest): Promise<TableMetaResponse> {
@@ -375,19 +344,7 @@ export class GenTable extends Base {
             {}
         );
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = TableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async reorderColumns(params: ReorderColumnsRequest): Promise<TableMetaResponse> {
@@ -401,19 +358,7 @@ export class GenTable extends Base {
             {}
         );
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = TableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async dropColumns(params: DropColumnsRequest): Promise<TableMetaResponse> {
@@ -427,103 +372,47 @@ export class GenTable extends Base {
             {}
         );
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = TableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async addActionColumns(params: AddActionColumnRequest): Promise<TableMetaResponse> {
+        const parsedParams = AddActionColumnRequestSchema.parse(params);
         let postURL = `/api/v1/gen_tables/action/columns/add`;
 
-        const response = await this.httpClient.post(postURL, params);
+        const response = await this.httpClient.post(postURL, parsedParams);
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = TableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async addKnowledgeColumns(params: AddColumnRequest): Promise<TableMetaResponse> {
+        const parsedParams = AddColumnRequestSchema.parse(params);
         let postURL = `/api/v1/gen_tables/knowledge/columns/add`;
-        const response = await this.httpClient.post(postURL, params);
+        const response = await this.httpClient.post(postURL, parsedParams);
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = TableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async addChatColumns(params: AddColumnRequest): Promise<TableMetaResponse> {
+        const parsedParams = AddColumnRequestSchema.parse(params);
         let postURL = `/api/v1/gen_tables/chat/columns/add`;
-        const response = await this.httpClient.post(postURL, params);
+        const response = await this.httpClient.post(postURL, parsedParams);
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = TableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async updateGenConfig(params: UpdateGenConfigRequest): Promise<TableMetaResponse> {
+        const parsedParams = UpdateGenConfigRequestSchema.parse(params);
         let postURL = `/api/v1/gen_tables/${params.table_type}/gen_config/update`;
         const response = await this.httpClient.post(
             postURL,
             {
-                table_id: params.table_id,
-                column_map: params.column_map
+                table_id: parsedParams.table_id,
+                column_map: parsedParams.column_map
             },
             {}
         );
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = TableMetaResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async addRowStream(params: AddRowRequest): Promise<ReadableStream<GenTableStreamChatCompletionChunk | GenTableStreamReferences>> {
@@ -543,91 +432,12 @@ export class GenTable extends Base {
             }
         );
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        if (response.status != 200) {
-            throw new Error(`Received Error Status: ${response.status}`);
-        }
-
-        const stream = new ReadableStream<GenTableStreamChatCompletionChunk | GenTableStreamReferences>({
-            async start(controller: ReadableStreamDefaultController<GenTableStreamChatCompletionChunk | GenTableStreamReferences>) {
-                response.data.on("data", (data: any) => {
-                    data = data.toString();
-                    if (data.endsWith("\n\n")) {
-                        const lines = data
-                            .split("\n\n")
-                            .filter((i: string) => i.trim())
-                            .flatMap((line: string) => line.split("\n")); //? Split by \n to handle collation
-                        for (const line of lines) {
-                            const chunk = line
-                                .toString()
-                                .replace(/^data: /, "")
-                                .replace(/data: \[DONE\]\s+$/, "");
-
-                            if (chunk.trim() == "[DONE]") return;
-
-                            try {
-                                const parsedValue = JSON.parse(chunk);
-                                if (parsedValue["object"] === "gen_table.completion.chunk") {
-                                    controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
-                                } else if (parsedValue["object"] === "gen_table.references") {
-                                    controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
-                                } else {
-                                    throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
-                                }
-                            } catch (err: any) {
-                                if (err instanceof ChunkError) {
-                                    controller.error(new ChunkError(err.message));
-                                } else {
-                                    continue;
-                                }
-                            }
-                        }
-                    } else {
-                        const chunk = data
-                            .toString()
-                            .replace(/^data: /, "")
-                            .replace(/data: \[DONE\]\s+$/, "");
-
-                        if (chunk.trim() == "[DONE]") return;
-
-                        try {
-                            const parsedValue = JSON.parse(chunk);
-                            if (parsedValue["object"] === "gen_table.completion.chunk") {
-                                controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
-                            } else if (parsedValue["object"] === "gen_table.references") {
-                                controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
-                            } else {
-                                throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
-                            }
-                        } catch (err: any) {
-                            if (err instanceof ChunkError) {
-                                controller.error(new ChunkError(err.message));
-                            }
-                        }
-                    }
-                });
-
-                response.data.on("error", (data: any) => {
-                    controller.error("Unexpected Error.");
-                });
-
-                response.data.on("end", () => {
-                    if (controller.desiredSize !== null) {
-                        controller.close();
-                    }
-                });
-            }
-        });
-
-        return stream;
+        return this.handleGenTableStreamResponse(response);
     }
 
     public async addRow(params: AddRowRequest): Promise<GenTableRowsChatCompletionChunks> {
         const url = `/api/v1/gen_tables/${params.table_type}/rows/add`;
+
         const response = await this.httpClient.post(
             url,
             {
@@ -640,19 +450,7 @@ export class GenTable extends Base {
             {}
         );
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = GenTableRowsChatCompletionChunksSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, GenTableRowsChatCompletionChunksSchema);
     }
 
     public async regenRowStream(params: RegenRowRequest) {
@@ -672,87 +470,7 @@ export class GenTable extends Base {
             }
         );
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        if (response.status != 200) {
-            throw new Error(`Received Error Status: ${response.status}`);
-        }
-
-        const stream = new ReadableStream<GenTableStreamChatCompletionChunk | GenTableStreamReferences>({
-            async start(controller: ReadableStreamDefaultController<GenTableStreamChatCompletionChunk | GenTableStreamReferences>) {
-                response.data.on("data", (data: any) => {
-                    data = data.toString();
-                    if (data.endsWith("\n\n")) {
-                        const lines = data
-                            .split("\n\n")
-                            .filter((i: string) => i.trim())
-                            .flatMap((line: string) => line.split("\n")); //? Split by \n to handle collation
-
-                        for (const line of lines) {
-                            const chunk = line
-                                .toString()
-                                .replace(/^data: /, "")
-                                .replace(/data: \[DONE\]\s+$/, "");
-
-                            if (chunk.trim() == "[DONE]") return;
-
-                            try {
-                                const parsedValue = JSON.parse(chunk);
-                                if (parsedValue["object"] === "gen_table.completion.chunk") {
-                                    controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
-                                } else if (parsedValue["object"] === "gen_table.references") {
-                                    controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
-                                } else {
-                                    throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
-                                }
-                            } catch (err) {
-                                if (err instanceof ChunkError) {
-                                    controller.error(new ChunkError(err.message));
-                                }
-                                continue;
-                            }
-                        }
-                    } else {
-                        const chunk = data
-                            .toString()
-                            .replace(/^data: /, "")
-                            .replace(/data: \[DONE\]\s+$/, "");
-
-                        if (chunk.trim() == "[DONE]") return;
-
-                        try {
-                            const parsedValue = JSON.parse(chunk);
-                            if (parsedValue["object"] === "gen_table.completion.chunk") {
-                                controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
-                            } else if (parsedValue["object"] === "gen_table.references") {
-                                controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
-                            } else {
-                                throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
-                            }
-                        } catch (err: any) {
-                            if (err instanceof ChunkError) {
-                                controller.error(new ChunkError(err.message));
-                            }
-                        }
-                    }
-                });
-
-                response.data.on("error", (data: any) => {
-                    controller.error("Unexpected error.");
-                });
-
-                response.data.on("end", () => {
-                    if (controller.desiredSize !== null) {
-                        controller.close();
-                    }
-                });
-            }
-        });
-
-        return stream;
+        return this.handleGenTableStreamResponse(response);
     }
 
     public async regenRow(params: RegenRowRequest): Promise<GenTableRowsChatCompletionChunks> {
@@ -768,19 +486,7 @@ export class GenTable extends Base {
             },
             {}
         );
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = GenTableRowsChatCompletionChunksSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, GenTableRowsChatCompletionChunksSchema);
     }
 
     public async updateRow(params: UpdateRowRequest): Promise<OkResponse> {
@@ -792,19 +498,7 @@ export class GenTable extends Base {
             reindex: params.reindex
         });
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                resolve(OkResponseSchema.parse({ ok: true }));
-            } else {
-                console.error("Received Error Status: ", response.status);
-                resolve(OkResponseSchema.parse({ ok: false }));
-            }
-        });
+        return this.handleResponse(response, OkResponseSchema);
     }
 
     public async hybridSearch(params: HybridSearchRequest): Promise<HybridSearchResponse> {
@@ -814,21 +508,13 @@ export class GenTable extends Base {
 
         const response = await this.httpClient.post(apiURL, requestBody);
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        return new Promise((resolve, reject) => {
-            if (response.status == 200) {
-                const parsedData = HybridSearchResponseSchema.parse(response.data);
-                resolve(parsedData);
-            } else {
-                console.error("Received Error Status: ", response.status);
-            }
-        });
+        return this.handleResponse(response, HybridSearchResponseSchema);
     }
 
+    /**
+     * @deprecated This method will be removed in future versions.
+     * Use the embedFile method instead.
+     */
     // Function to upload a file
     public async uploadFile(params: UploadFileRequest): Promise<OkResponse> {
         const apiURL = `/api/v1/gen_tables/knowledge/upload_file`;
@@ -836,15 +522,17 @@ export class GenTable extends Base {
         // Create FormData to send as multipart/form-data
         const formData = new FormData();
         if (params.file) {
-            formData.append("file", params.file);
-            formData.append("file_name", params.file.name);
+            formData.append("file", params.file, params.file.name);
         } else if (params.file_path) {
-            const mimeType = mime.lookup(params.file_path!) || "application/octet-stream";
-            const fileName = path.basename(params.file_path!);
-            const data = await fs.readFile(params.file_path!);
-            const file = new Blob([data], { type: mimeType });
-            formData.append("file", file);
-            formData.append("file_name", fileName);
+            if (!isRunningInBrowser()) {
+                const mimeType = await getMimeType(params.file_path!);
+                const fileName = await getFileName(params.file_path!);
+                const data = await readFile(params.file_path!);
+                const file = new Blob([data], { type: mimeType });
+                formData.append("file", file, fileName);
+            } else {
+                throw new Error("Pass File instead of file path if you are using this function in client.");
+            }
         } else {
             throw new Error("Either File or file_path is required.");
         }
@@ -864,16 +552,46 @@ export class GenTable extends Base {
             }
         });
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
+        return this.handleResponse(response, OkResponseSchema);
+    }
+
+    public async embedFile(params: UploadFileRequest): Promise<OkResponse> {
+        const apiURL = `/api/v1/gen_tables/knowledge/embed_file`;
+
+        // Create FormData to send as multipart/form-data
+        const formData = new FormData();
+        if (params.file) {
+            formData.append("file", params.file, params.file.name);
+        } else if (params.file_path) {
+            if (!isRunningInBrowser()) {
+                const mimeType = await getMimeType(params.file_path!);
+                const fileName = await getFileName(params.file_path!);
+                const data = await readFile(params.file_path!);
+                const file = new Blob([data], { type: mimeType });
+                formData.append("file", file, fileName);
+            } else {
+                throw new Error("Pass File instead of file path if you are using this method in client.");
+            }
+        } else {
+            throw new Error("Either File or file_path is required.");
+        }
+        formData.append("table_id", params.table_id);
+
+        // Optional: Add additional fields if required by the API
+        if (params?.chunk_size) {
+            formData.append("chunk_size", params.chunk_size.toString());
+        }
+        if (params?.chunk_overlap) {
+            formData.append("chunk_overlap", params.chunk_overlap.toString());
         }
 
-        if (response.status != 200) {
-            throw new Error(`Received Error Status: ${response.status}`);
-        }
+        const response = await this.httpClient.post<OkResponse>(apiURL, formData, {
+            headers: {
+                "Content-Type": "multipart/form-data"
+            }
+        });
 
-        return response.data;
+        return this.handleResponse(response, OkResponseSchema);
     }
 
     public async importTableData(params: ImportTableRequest): Promise<GenTableRowsChatCompletionChunks> {
@@ -882,17 +600,18 @@ export class GenTable extends Base {
         const delimiter = params.delimiter ? params.delimiter : ",";
 
         const formData = new FormData();
-
         if (params.file) {
-            formData.append("file", params.file);
-            formData.append("file_name", params.file.name);
+            formData.append("file", params.file, params.file.name);
         } else if (params.file_path) {
-            const mimeType = mime.lookup(params.file_path!) || "application/octet-stream";
-            const fileName = path.basename(params.file_path!);
-            const data = await fs.readFile(params.file_path!);
-            const file = new Blob([data], { type: mimeType });
-            formData.append("file", file);
-            formData.append("file_name", fileName);
+            if (!isRunningInBrowser()) {
+                const mimeType = await getMimeType(params.file_path!);
+                const fileName = await getFileName(params.file_path!);
+                const data = await readFile(params.file_path!);
+                const file = new Blob([data], { type: mimeType });
+                formData.append("file", file, fileName);
+            } else {
+                throw new Error("Pass File instead of file path if you are using this function in client.");
+            }
         } else {
             throw new Error("Either File or file_path is required.");
         }
@@ -907,18 +626,7 @@ export class GenTable extends Base {
             }
         });
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        if (response.status != 200) {
-            throw new Error(`Received Error Status: ${response.status}`);
-        }
-
-        const parsedData = GenTableRowsChatCompletionChunksSchema.parse(response.data);
-
-        return parsedData;
+        return this.handleResponse(response, GenTableRowsChatCompletionChunksSchema);
     }
 
     public async importTableDataStream(
@@ -929,17 +637,18 @@ export class GenTable extends Base {
         const delimiter = params.delimiter ? params.delimiter : ",";
 
         const formData = new FormData();
-
         if (params.file) {
-            formData.append("file", params.file);
-            formData.append("file_name", params.file.name);
+            formData.append("file", params.file, params.file.name);
         } else if (params.file_path) {
-            const mimeType = mime.lookup(params.file_path!) || "application/octet-stream";
-            const fileName = path.basename(params.file_path!);
-            const data = await fs.readFile(params.file_path!);
-            const file = new Blob([data], { type: mimeType });
-            formData.append("file", file);
-            formData.append("file_name", fileName);
+            if (!isRunningInBrowser()) {
+                const mimeType = await getMimeType(params.file_path!);
+                const fileName = await getFileName(params.file_path!);
+                const data = await readFile(params.file_path!);
+                const file = new Blob([data], { type: mimeType });
+                formData.append("file", file, fileName);
+            } else {
+                throw new Error("Pass File instead of file path if you are using this function in client.");
+            }
         } else {
             throw new Error("Either File or file_path is required.");
         }
@@ -955,87 +664,7 @@ export class GenTable extends Base {
             responseType: "stream"
         });
 
-        const warning = response.headers["warning"];
-        if (warning) {
-            console.warn(warning);
-        }
-
-        if (response.status != 200) {
-            throw new Error(`Received Error Status: ${response.status}`);
-        }
-
-        const stream = new ReadableStream<GenTableStreamChatCompletionChunk | GenTableStreamReferences>({
-            async start(controller: ReadableStreamDefaultController<GenTableStreamChatCompletionChunk | GenTableStreamReferences>) {
-                response.data.on("data", (data: any) => {
-                    data = data.toString();
-                    if (data.endsWith("\n\n")) {
-                        const lines = data
-                            .split("\n\n")
-                            .filter((i: string) => i.trim())
-                            .flatMap((line: string) => line.split("\n")); //? Split by \n to handle collation
-                        for (const line of lines) {
-                            const chunk = line
-                                .toString()
-                                .replace(/^data: /, "")
-                                .replace(/data: \[DONE\]\s+$/, "");
-
-                            if (chunk.trim() == "[DONE]") return;
-
-                            try {
-                                const parsedValue = JSON.parse(chunk);
-                                if (parsedValue["object"] === "gen_table.completion.chunk") {
-                                    controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
-                                } else if (parsedValue["object"] === "gen_table.references") {
-                                    controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
-                                } else {
-                                    throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
-                                }
-                            } catch (err: any) {
-                                if (err instanceof ChunkError) {
-                                    controller.error(new ChunkError(err.message));
-                                } else {
-                                    continue;
-                                }
-                            }
-                        }
-                    } else {
-                        const chunk = data
-                            .toString()
-                            .replace(/^data: /, "")
-                            .replace(/data: \[DONE\]\s+$/, "");
-
-                        if (chunk.trim() == "[DONE]") return;
-
-                        try {
-                            const parsedValue = JSON.parse(chunk);
-                            if (parsedValue["object"] === "gen_table.completion.chunk") {
-                                controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
-                            } else if (parsedValue["object"] === "gen_table.references") {
-                                controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
-                            } else {
-                                throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
-                            }
-                        } catch (err: any) {
-                            if (err instanceof ChunkError) {
-                                controller.error(new ChunkError(err.message));
-                            }
-                        }
-                    }
-                });
-
-                response.data.on("error", (data: any) => {
-                    controller.error("Unexpected Error.");
-                });
-
-                response.data.on("end", () => {
-                    if (controller.desiredSize !== null) {
-                        controller.close();
-                    }
-                });
-            }
-        });
-
-        return stream;
+        return this.handleGenTableStreamResponse(response);
     }
 
     public async exportTableData(params: ExportTableRequest): Promise<Uint8Array> {
@@ -1056,16 +685,7 @@ export class GenTable extends Base {
                 responseType: "arraybuffer"
             });
 
-            const warning = response.headers["warning"];
-            if (warning) {
-                console.warn(warning);
-            }
-
-            if (response.status != 200) {
-                throw new Error(`Received Error Status: ${response.status}`);
-            }
-
-            return new Uint8Array(response.data);
+            return this.handleResponse(response);
         } catch (error) {
             if (axios.isAxiosError(error)) {
                 // Convert buffer data to string for better readability in error

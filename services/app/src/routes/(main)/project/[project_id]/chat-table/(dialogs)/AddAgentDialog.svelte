@@ -1,16 +1,16 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { Dialog as DialogPrimitive } from 'bits-ui';
+	import { page } from '$app/stores';
 	import { modelsAvailable } from '$globalStore';
-	import { pastChatAgents } from '../../tablesStore';
-	import { tableIDPattern } from '$lib/constants';
+	import { pastChatAgents } from '$lib/components/tables/tablesStore';
+	import { jamaiApiVersion, tableIDPattern } from '$lib/constants';
 	import logger from '$lib/logger';
-	import type { ChatRequest } from '$lib/types';
+	import type { GenTableCol } from '$lib/types';
 
 	import ModelSelect from '$lib/components/preset/ModelSelect.svelte';
 	import InputText from '$lib/components/InputText.svelte';
-	import Range from '$lib/components/Range.svelte';
-	import { toast } from 'svelte-sonner';
+	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 
@@ -19,20 +19,15 @@
 	let isLoading = false;
 	let agentName = '';
 	let selectedModel = '';
-	let temperature = '1';
-	let maxTokens = '1000';
-	let topP = '0.1';
-	let systemPrompt = '';
-	let userOpener = '';
-	let aiOpener = '';
 
 	async function handleAddAgent() {
-		if (!agentName) return toast.error('Agent ID is required');
-		if (!selectedModel) return toast.error('Model not selected');
+		if (!agentName) return toast.error('Agent ID is required', { id: 'agent-id-req' });
+		if (!selectedModel) return toast.error('Model not selected', { id: 'model-not-selected' });
 
 		if (!tableIDPattern.test(agentName))
 			return toast.error(
-				'Agent ID must contain only alphanumeric characters and underscores/hyphens/periods, and start and end with alphanumeric characters'
+				'Agent ID must contain only alphanumeric characters and underscores/hyphens/periods, and start and end with alphanumeric characters, between 1 and 100 characters.',
+				{ id: 'agent-id-invalid' }
 			);
 
 		if (isLoading) return;
@@ -41,10 +36,12 @@
 		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat`, {
 			method: 'POST',
 			headers: {
-				'Content-Type': 'application/json'
+				'Content-Type': 'application/json',
+				'x-project-id': $page.params.project_id
 			},
 			body: JSON.stringify({
 				id: agentName,
+				version: jamaiApiVersion,
 				cols: [
 					{
 						id: 'User',
@@ -57,17 +54,10 @@
 						dtype: 'str',
 						vlen: 0,
 						gen_config: {
+							object: 'gen_config.llm',
 							model: selectedModel,
-							messages: [
-								{
-									role: 'system',
-									content: systemPrompt
-								}
-							],
-							temperature: parseFloat(temperature),
-							max_tokens: parseInt(maxTokens),
-							top_p: parseFloat(topP)
-						} satisfies Partial<ChatRequest>
+							multi_turn: true
+						} satisfies GenTableCol['gen_config']
 					}
 				]
 			})
@@ -77,51 +67,15 @@
 		if (!response.ok) {
 			logger.error('CHATTBL_AGENT_ADD', responseBody);
 			toast.error('Failed to add agent', {
-				description: responseBody.message || JSON.stringify(responseBody)
+				id: responseBody.message || JSON.stringify(responseBody),
+				description: CustomToastDesc,
+				componentProps: {
+					description: responseBody.message || JSON.stringify(responseBody),
+					requestID: responseBody.request_id
+				}
 			});
 		} else {
-			if (userOpener || aiOpener) {
-				const openerResponse = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat/rows/add`, {
-					method: 'POST',
-					headers: {
-						Accept: 'text/event-stream',
-						'Content-Type': 'application/json'
-					},
-					body: JSON.stringify({
-						table_id: responseBody.id,
-						data: [
-							{
-								User: userOpener,
-								AI: aiOpener
-							}
-						],
-						stream: false
-					})
-				});
-
-				if (!openerResponse.ok) {
-					const openerResponseBody = await openerResponse.json();
-					logger.error('CHATTBL_AGENT_ADDOPENER', openerResponseBody);
-					toast.error('Failed to add conversation opener', {
-						description: responseBody.message || JSON.stringify(responseBody)
-					});
-				}
-			}
-
-			$pastChatAgents = [
-				{
-					id: agentName,
-					cols: [],
-					lock_till: 0,
-					updated_at: new Date().toISOString(),
-					indexed_at_fts: null,
-					indexed_at_sca: null,
-					indexed_at_vec: null,
-					parent_id: null,
-					title: ''
-				},
-				...$pastChatAgents
-			];
+			$pastChatAgents = [responseBody, ...$pastChatAgents];
 
 			isAddingAgent = false;
 			agentName = '';
@@ -132,135 +86,40 @@
 </script>
 
 <Dialog.Root bind:open={isAddingAgent}>
-	<Dialog.Content style="min-width: 65rem; height: 90vh;">
+	<Dialog.Content
+		data-testid="new-agent-dialog"
+		class="h-[80vh] max-h-fit w-[clamp(0px,30rem,100%)]"
+	>
 		<Dialog.Header>New agent</Dialog.Header>
 
-		<div class="grow py-3 w-full overflow-auto">
-			<div class="flex flex-col gap-2 px-6 pl-8 py-2 w-full text-center">
-				<span class="font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
+		<div class="grow flex flex-col gap-3 py-3 w-full overflow-auto">
+			<div class="flex flex-col gap-1 px-4 sm:px-6 w-full text-center">
+				<label for="agent-id" class="font-medium text-left text-xs sm:text-sm text-black">
 					Agent ID*
-				</span>
+				</label>
 
-				<InputText bind:value={agentName} placeholder="Required" />
+				<InputText bind:value={agentName} name="agent-id" placeholder="Required" />
 			</div>
 
-			<div class="flex flex-col gap-1 px-6 pl-8 py-2">
-				<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-					Models*
-				</span>
+			<div class="flex flex-col gap-1 px-4 sm:px-6">
+				<span class="font-medium text-left text-xs sm:text-sm text-black"> Models* </span>
 
 				<ModelSelect
 					capabilityFilter="chat"
 					sameWidth={true}
 					bind:selectedModel
-					buttonText={selectedModel || 'Select model'}
-					class={!selectedModel ? 'italic text-muted-foreground' : ''}
+					buttonText={($modelsAvailable.find((model) => model.id == selectedModel)?.name ??
+						selectedModel) ||
+						'Select model'}
+					class="{!selectedModel
+						? 'italic text-muted-foreground'
+						: ''} bg-[#F2F4F7] data-dark:bg-[#42464e] hover:bg-[#e1e2e6] border-transparent"
 				/>
-			</div>
-
-			<div class="grid grid-cols-3 gap-4 px-6 pl-8 py-2 w-full text-center">
-				<div class="flex flex-col gap-1">
-					<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-						Temperature*
-					</span>
-
-					<input
-						type="number"
-						step=".01"
-						bind:value={temperature}
-						on:blur={() =>
-							(temperature =
-								parseFloat(temperature) <= 0 ? '0.01' : parseFloat(temperature).toFixed(2))}
-						class="px-3 py-2 w-44 text-sm bg-transparent data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#42464E] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-					/>
-
-					<Range bind:value={temperature} min=".01" max="1" step=".01" />
-				</div>
-
-				<div class="flex flex-col gap-1">
-					<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-						Max tokens*
-					</span>
-
-					<input
-						type="number"
-						bind:value={maxTokens}
-						on:blur={() =>
-							(maxTokens = parseInt(maxTokens) <= 0 ? '1' : parseInt(maxTokens).toString())}
-						class="px-3 py-2 w-44 text-sm bg-transparent data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#42464E] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-					/>
-
-					<Range
-						bind:value={maxTokens}
-						min="1"
-						max={$modelsAvailable.find((model) => model.id == selectedModel)?.context_length ?? 0}
-						step="1"
-					/>
-				</div>
-
-				<div class="flex flex-col gap-1">
-					<span class="py-2 font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-						Top-p*
-					</span>
-
-					<input
-						type="number"
-						step=".001"
-						bind:value={topP}
-						on:blur={() => (topP = parseFloat(topP) <= 0 ? '0.001' : parseFloat(topP).toFixed(3))}
-						class="px-3 py-2 w-44 text-sm bg-transparent data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#42464E] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-					/>
-
-					<Range bind:value={topP} min=".001" max="1" step=".001" />
-				</div>
-			</div>
-
-			<div class="grid grid-rows-[min-content_1fr] px-6 pl-8 py-4 overflow-auto">
-				<span class="font-medium text-sm text-[#999] data-dark:text-[#C9C9C9]">
-					Customize system prompt
-				</span>
-
-				<textarea
-					bind:value={systemPrompt}
-					id="system-prompt"
-					placeholder="Enter system prompt"
-					class="mt-4 p-2 h-64 text-[14px] rounded-md disabled:text-black/60 data-dark:disabled:text-white/60 bg-[#F4F5FA] data-dark:bg-[#42464e] border border-[#DDD] data-dark:border-[#42464E] outline-none placeholder:italic placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-				/>
-			</div>
-
-			<!-- <span class="mt-6 px-8 font-medium">Conversation opener</span> -->
-
-			<div class="grid grid-cols-2 px-6">
-				<div class="grid grid-rows-[min-content_1fr] px-2 py-4 overflow-auto">
-					<span class="font-medium text-sm text-[#999] data-dark:text-[#C9C9C9]">
-						User message
-					</span>
-
-					<textarea
-						bind:value={userOpener}
-						id="user-message"
-						placeholder="Enter user message"
-						class="mt-4 p-2 h-96 text-[14px] rounded-md disabled:text-black/60 data-dark:disabled:text-white/60 bg-[#F4F5FA] data-dark:bg-[#42464e] border border-[#DDD] data-dark:border-[#42464E] outline-none placeholder:italic placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-					/>
-				</div>
-
-				<div class="grid grid-rows-[min-content_1fr] px-2 pr-0 py-4 overflow-auto">
-					<span class="font-medium text-sm text-[#999] data-dark:text-[#C9C9C9]">
-						AI response
-					</span>
-
-					<textarea
-						bind:value={aiOpener}
-						id="ai-response"
-						placeholder="Enter AI response"
-						class="mt-4 p-2 h-96 text-[14px] rounded-md disabled:text-black/60 data-dark:disabled:text-white/60 bg-[#F4F5FA] data-dark:bg-[#42464e] border border-[#DDD] data-dark:border-[#42464E] outline-none placeholder:italic placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-					/>
-				</div>
 			</div>
 		</div>
 
 		<Dialog.Actions>
-			<div class="flex gap-2">
+			<div class="flex gap-2 overflow-x-auto overflow-y-hidden">
 				<DialogPrimitive.Close asChild let:builder>
 					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
 						Cancel
@@ -269,6 +128,7 @@
 				<Button
 					on:click={handleAddAgent}
 					type="button"
+					disabled={isLoading}
 					loading={isLoading}
 					class="relative grow px-6 rounded-full"
 				>

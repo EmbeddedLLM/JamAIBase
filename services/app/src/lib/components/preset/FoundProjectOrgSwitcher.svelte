@@ -1,4 +1,6 @@
 <script lang="ts">
+	/* Hooks API proxy returns organization ID */
+	import { tick } from 'svelte';
 	import { activeOrganization } from '$globalStore';
 	import type { Organization } from '$lib/types';
 
@@ -9,7 +11,7 @@
 	export let message = 'Project not found.';
 </script>
 
-<div class="flex items-center justify-center mx-4 my-0 h-full">
+<div class="flex items-center justify-center px-8 my-0 h-full">
 	<div class="flex flex-col gap-4 max-w-[25rem]">
 		<div class="flex items-center">
 			<span class="relative -top-[0.05rem] text-3xl font-extralight">
@@ -32,10 +34,11 @@
 		</div>
 		<div class="flex items-center justify-between">
 			<Button
-				on:click={() => {
+				on:click={async () => {
 					if (projectOrg) {
 						$activeOrganization = projectOrg;
 					}
+					await tick();
 					window.location.reload();
 				}}
 				type="button"

@@ -7,13 +7,12 @@
 	import {
 		pastActionTables,
 		pastChatAgents,
-		pastChatConversations,
 		pastKnowledgeTables
-	} from '../tablesStore';
+	} from '$lib/components/tables/tablesStore';
 	import logger from '$lib/logger';
 
-	import { toast } from 'svelte-sonner';
 	import InputText from '$lib/components/InputText.svelte';
+	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 
@@ -36,7 +35,10 @@
 		const response = await fetch(
 			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/rename/${isEditingTableID}/${editedTableID}`,
 			{
-				method: 'POST'
+				method: 'POST',
+				headers: {
+					'x-project-id': $page.params.project_id
+				}
 			}
 		);
 
@@ -44,7 +46,12 @@
 			const responseBody = await response.json();
 			logger.error(toUpper(`${tableType}TBL_RENAMETBL`), responseBody);
 			toast.error('Failed to rename table', {
-				description: responseBody.message || JSON.stringify(responseBody)
+				id: responseBody.message || JSON.stringify(responseBody),
+				description: CustomToastDesc,
+				componentProps: {
+					description: responseBody.message || JSON.stringify(responseBody),
+					requestID: responseBody.request_id
+				}
 			});
 
 			if (editedCb) editedCb(false);
@@ -99,18 +106,9 @@
 				}
 				case 'chat': {
 					const indexAgents = $pastChatAgents.findIndex((table) => table.id === isEditingTableID);
-					const indexConversations = $pastChatConversations.findIndex(
-						(table) => table.id === isEditingTableID
-					);
 					if (indexAgents !== -1) {
 						$pastChatAgents.unshift({
 							...$pastChatAgents.splice(indexAgents, 1)[0],
-							id: editedTableID,
-							updated_at: new Date().toISOString()
-						});
-					} else if (indexConversations !== -1) {
-						$pastChatConversations.unshift({
-							...$pastChatConversations.splice(indexConversations, 1)[0],
 							id: editedTableID,
 							updated_at: new Date().toISOString()
 						});
@@ -125,9 +123,9 @@
 					break;
 			}
 
-			isEditingTableID = null;
-
 			if (editedCb) editedCb(true, editedTableID);
+
+			isEditingTableID = null;
 		}
 
 		isLoadingSaveEdit = false;
@@ -142,7 +140,7 @@
 		}
 	}}
 >
-	<Dialog.Content class="max-h-[90vh] min-w-[35rem]">
+	<Dialog.Content data-testid="rename-table-dialog" class="max-h-[90vh] w-[clamp(0px,35rem,100%)]">
 		<Dialog.Header>Edit table ID</Dialog.Header>
 
 		<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
@@ -151,10 +149,8 @@
 			on:submit|preventDefault={handleSaveTableID}
 			class="grow w-full overflow-auto"
 		>
-			<div class="flex flex-col gap-2 px-6 pl-8 py-5 h-full w-full text-center">
-				<span class="font-medium text-left text-sm text-[#999] data-dark:text-[#C9C9C9]">
-					Table ID*
-				</span>
+			<div class="flex flex-col gap-1 px-4 sm:px-6 py-3 h-full w-full text-center">
+				<span class="font-medium text-left text-xs sm:text-sm text-black"> Table ID* </span>
 
 				<InputText value={isEditingTableID} name="table_id" placeholder="Required" />
 			</div>
@@ -164,7 +160,7 @@
 		</form>
 
 		<Dialog.Actions>
-			<div class="flex gap-2">
+			<div class="flex gap-2 overflow-x-auto overflow-y-hidden">
 				<DialogPrimitive.Close asChild let:builder>
 					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
 						Cancel

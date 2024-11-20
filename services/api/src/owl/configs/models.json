@@ -1,134 +1,114 @@
 {
   "llm_models": [
     {
-      "id": "openai/gpt-3.5-turbo",
-      "object": "model",
-      "name": "OpenAI GPT-3.5 Turbo",
-      "context_length": 16385,
-      "languages": ["en", "cn"],
-      "capabilities": ["chat"],
-      "owned_by": "openai"
-    },
-    {
-      "id": "openai/gpt-4o",
-      "object": "model",
-      "name": "OpenAI GPT-4",
-      "context_length": 8192,
-      "languages": ["en", "cn"],
-      "capabilities": ["chat"],
-      "owned_by": "openai"
+      "id": "openai/gpt-4o-mini",
+      "name": "OpenAI GPT-4o Mini",
+      "context_length": 128000,
+      "languages": ["mul"],
+      "capabilities": ["chat", "image"],
+      "deployments": [
+        {
+          "litellm_id": "",
+          "api_base": "",
+          "provider": "openai"
+        }
+      ]
     },
     {
       "id": "anthropic/claude-3-haiku-20240307",
-      "object": "model",
-      "name": "Claude 3 Haiku",
+      "name": "Anthropic Claude 3 Haiku",
       "context_length": 200000,
-      "languages": ["en"],
+      "languages": ["mul"],
       "capabilities": ["chat"],
-      "owned_by": "anthropic"
+      "deployments": [
+        {
+          "litellm_id": "",
+          "api_base": "",
+          "provider": "anthropic"
+        }
+      ]
     },
     {
-      "id": "anthropic/claude-3-sonnet-20240229",
-      "object": "model",
-      "name": "Claude 3 Sonnet",
-      "context_length": 200000,
-      "languages": ["en"],
+      "id": "together_ai/meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+      "name": "Together AI Meta Llama 3.1 (8B)",
+      "context_length": 130000,
+      "languages": ["mul"],
       "capabilities": ["chat"],
-      "owned_by": "anthropic"
-    },
-    {
-      "id": "anthropic/claude-3-opus-20240229",
-      "object": "model",
-      "name": "Claude 3 Opus",
-      "context_length": 200000,
-      "languages": ["en"],
-      "capabilities": ["chat"],
-      "owned_by": "anthropic"
-    },
-    {
-      "id": "together_ai/Qwen/Qwen1.5-14B-Chat",
-      "object": "model",
-      "name": "Qwen 1.5 Chat (14B)",
-      "context_length": 32768,
-      "languages": ["en", "cn"],
-      "capabilities": ["chat"],
-      "owned_by": "together_ai"
-    },
-    {
-      "id": "together_ai/Qwen/Qwen1.5-72B-Chat",
-      "object": "model",
-      "name": "Qwen 1.5 Chat (72B)",
-      "context_length": 4096,
-      "languages": ["en", "cn"],
-      "capabilities": ["chat"],
-      "owned_by": "together_ai"
-    },
-    {
-      "id": "together_ai/mistralai/Mixtral-8x22B-Instruct-v0.1",
-      "object": "model",
-      "name": "Mixtral Instruct v0.1 (8x22B / 141B)",
-      "context_length": 65536,
-      "languages": ["en"],
-      "capabilities": ["chat"],
-      "owned_by": "together_ai"
+      "deployments": [
+        {
+          "litellm_id": "",
+          "api_base": "",
+          "provider": "together_ai"
+        }
+      ]
     }
   ],
-
   "embed_models": [
     {
+      "id": "ellm/sentence-transformers/all-MiniLM-L6-v2",
+      "name": "ELLM MiniLM L6 v2",
+      "context_length": 512,
+      "embedding_size": 384,
+      "languages": ["mul"],
+      "capabilities": ["embed"],
+      "deployments": [
+        {
+          "litellm_id": "openai/sentence-transformers/all-MiniLM-L6-v2",
+          "api_base": "http://infinity:6909",
+          "provider": "ellm"
+        }
+      ]
+    },
+    {
       "id": "openai/text-embedding-3-large-3072",
-      "litellm_id": "text-embedding-3-large",
+      "name": "OpenAI Text Embedding 3 Large (3072-dim)",
       "context_length": 8192,
       "embedding_size": 3072,
       "languages": ["mul"],
-      "owned_by": "openai"
-    },
-    {
-      "id": "openai/text-embedding-3-large-1024",
-      "litellm_id": "text-embedding-3-large",
-      "context_length": 8192,
-      "embedding_size": 1024,
-      "dimensions": 1024,
-      "languages": ["mul"],
-      "owned_by": "openai"
+      "capabilities": ["embed"],
+      "deployments": [
+        {
+          "litellm_id": "text-embedding-3-large",
+          "api_base": "",
+          "provider": "openai"
+        }
+      ]
     },
     {
       "id": "openai/text-embedding-3-large-256",
-      "litellm_id": "text-embedding-3-large",
+      "name": "OpenAI Text Embedding 3 Large (256-dim)",
       "context_length": 8192,
       "embedding_size": 256,
       "dimensions": 256,
       "languages": ["mul"],
-      "owned_by": "openai"
-    },
-    {
-      "id": "openai/text-embedding-3-small-1536",
-      "litellm_id": "text-embedding-3-small",
-      "context_length": 8192,
-      "embedding_size": 1536,
-      "languages": ["mul"],
-      "owned_by": "openai"
+      "capabilities": ["embed"],
+      "deployments": [
+        {
+          "litellm_id": "text-embedding-3-large",
+          "api_base": "",
+          "provider": "openai"
+        }
+      ]
     },
     {
       "id": "openai/text-embedding-3-small-512",
-      "litellm_id": "text-embedding-3-small",
+      "name": "OpenAI Text Embedding 3 Small (512-dim)",
       "context_length": 8192,
       "embedding_size": 512,
       "dimensions": 512,
       "languages": ["mul"],
-      "owned_by": "openai"
-    },
-    {
-      "id": "cohere/embed-english-v3.0",
-      "litellm_id": "embed-english-v3.0",
-      "context_length": 512,
-      "embedding_size": 1024,
-      "languages": ["en"],
-      "owned_by": "cohere"
+      "capabilities": ["embed"],
+      "deployments": [
+        {
+          "litellm_id": "text-embedding-3-small",
+          "api_base": "",
+          "provider": "openai"
+        }
+      ]
     },
     {
       "id": "cohere/embed-multilingual-v3.0",
-      "litellm_id": "embed-multilingual-v3.0",
+      "name": "Cohere Embed Multilingual v3.0",
       "context_length": 512,
       "embedding_size": 1024,
       "languages": ["mul"],
@@ -150,13 +130,18 @@
       "embedding_size": 1024,
       "languages": ["mul"],
       "api_base": "http://infinity:6909",
-      "owned_by": "ellm"
+      "owned_by": "ellm",
+      "capabilities": ["embed"],
+      "deployments": [
+        {
+          "litellm_id": "embed-multilingual-v3.0",
+          "api_base": "",
+          "provider": "cohere"
+        }
+      ]
     }
   ],
-
   "rerank_models": [
-    { "id": "cohere/rerank-english-v3.0", "context_length": 512, "languages": ["en"], "owned_by": "cohere" },
-    { "id": "cohere/rerank-multilingual-v3.0", "context_length": 512, "languages": ["mul"], "owned_by": "cohere" },
     {
       "id": "ellm/mixedbread-ai/mxbai-rerank-xsmall-v1",
       "context_length": 512,
@@ -166,10 +151,33 @@
     },
     {
       "id": "ellm/cross-encoder/ms-marco-TinyBERT-L-2",
-      "context_length": 8192,
+      "name": "ELLM TinyBERT L2",
+      "context_length": 512,
+      "languages": ["en"],
+      "capabilities": ["rerank"],
+      "deployments": [
+        {
+          "litellm_id": "",
+          "api_base": "http://infinity:6919",
+          "provider": "ellm"
+        }
+      ]
+    },
+    {
+      "id": "cohere/rerank-multilingual-v3.0",
+      "name": "Cohere Rerank Multilingual v3.0",
+      "context_length": 512,
       "languages": ["mul"],
       "api_base": "http://infinity:6909",
-      "owned_by": "ellm"
+      "owned_by": "ellm",
+      "capabilities": ["rerank"],
+      "deployments": [
+        {
+          "litellm_id": "",
+          "api_base": "",
+          "provider": "cohere"
+        }
+      ]
     }
   ]
 }

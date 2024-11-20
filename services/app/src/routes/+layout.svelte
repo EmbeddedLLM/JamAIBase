@@ -46,10 +46,10 @@
 
 	$: if (activeOrganizationId) {
 		$activeOrganization =
-			userData?.organizations?.find((org) => org.organization_id === activeOrganizationId) ?? null;
+			userData?.member_of?.find((org) => org.organization_id === activeOrganizationId) ?? null;
 	}
 	$: if (browser && $activeOrganization) {
-		document.cookie = `activeOrganizationId=${$activeOrganization?.organization_id}; path=/; max-age=3153600000; samesite=strict`;
+		document.cookie = `activeOrganizationId=${$activeOrganization?.organization_id}; path=/; max-age=604800; samesite=strict`;
 	}
 
 	onMount(() => {

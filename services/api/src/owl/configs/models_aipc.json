@@ -1,0 +1,241 @@
+{
+  "llm_models": [
+    {
+      "id": "ellm/phi3-mini-int4",
+      "name": "ELLM Phi-3 Instruct",
+      "context_length": 4096,
+      "languages": ["en", "cn"],
+      "capabilities": ["chat"],
+      "deployments": [
+        {
+          "litellm_id": "openai/phi3-mini-int4",
+          "api_base": "http://localhost:5555/v1",
+          "provider": "ellm"
+        }
+      ]
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "name": "OpenAI GPT-4o Mini",
+      "context_length": 128000,
+      "languages": ["mul"],
+      "capabilities": ["chat", "image"],
+      "deployments": [
+        {
+          "litellm_id": "",
+          "api_base": "",
+          "provider": "openai"
+        }
+      ]
+    },
+    {
+      "id": "openai/gpt-4o",
+      "name": "OpenAI GPT-4o",
+      "context_length": 128000,
+      "languages": ["mul"],
+      "capabilities": ["chat", "image"],
+      "deployments": [
+        {
+          "litellm_id": "openai/gpt-4o-2024-08-06",
+          "api_base": "",
+          "provider": "openai"
+        }
+      ]
+    },
+    {
+      "id": "openai/gpt-4-turbo",
+      "name": "OpenAI GPT-4 Turbo",
+      "context_length": 128000,
+      "languages": ["mul"],
+      "capabilities": ["chat", "image"],
+      "deployments": [
+        {
+          "litellm_id": "",
+          "api_base": "",
+          "provider": "openai"
+        }
+      ]
+    },
+    {
+      "id": "anthropic/claude-3.5-sonnet",
+      "name": "Anthropic Claude 3.5 Sonnet",
+      "context_length": 200000,
+      "languages": ["mul"],
+      "capabilities": ["chat"],
+      "deployments": [
+        {
+          "litellm_id": "anthropic/claude-3-5-sonnet-20240620",
+          "api_base": "",
+          "provider": "anthropic"
+        }
+      ]
+    },
+    {
+      "id": "anthropic/claude-3-haiku-20240307",
+      "name": "Anthropic Claude 3 Haiku",
+      "context_length": 200000,
+      "languages": ["mul"],
+      "capabilities": ["chat"],
+      "deployments": [
+        {
+          "litellm_id": "",
+          "api_base": "",
+          "provider": "anthropic"
+        }
+      ]
+    },
+    {
+      "id": "anthropic/claude-3-sonnet-20240229",
+      "name": "Anthropic Claude 3 Sonnet",
+      "context_length": 200000,
+      "languages": ["mul"],
+      "capabilities": ["chat"],
+      "deployments": [
+        {
+          "litellm_id": "",
+          "api_base": "",
+          "provider": "anthropic"
+        }
+      ]
+    },
+    {
+      "id": "anthropic/claude-3-opus-20240229",
+      "name": "Anthropic Claude 3 Opus",
+      "context_length": 200000,
+      "languages": ["mul"],
+      "capabilities": ["chat"],
+      "deployments": [
+        {
+          "litellm_id": "",
+          "api_base": "",
+          "provider": "anthropic"
+        }
+      ]
+    },
+    {
+      "id": "together_ai/meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+      "name": "Together AI Meta Llama 3.1 (405B)",
+      "context_length": 128000,
+      "languages": ["mul"],
+      "capabilities": ["chat"],
+      "deployments": [
+        {
+          "litellm_id": "",
+          "api_base": "",
+          "provider": "together_ai"
+        }
+      ]
+    }
+  ],
+  "embed_models": [
+    {
+      "id": "ellm/sentence-transformers/all-MiniLM-L6-v2",
+      "name": "ELLM MiniLM L6 v2",
+      "context_length": 512,
+      "embedding_size": 384,
+      "languages": ["mul"],
+      "capabilities": ["embed"],
+      "deployments": [
+        {
+          "litellm_id": "openai/sentence-transformers/all-MiniLM-L6-v2",
+          "api_base": "http://infinity:6909",
+          "provider": "ellm"
+        }
+      ]
+    },
+    {
+      "id": "openai/text-embedding-3-large-3072",
+      "name": "OpenAI Text Embedding 3 Large (3072-dim)",
+      "context_length": 8192,
+      "embedding_size": 3072,
+      "languages": ["mul"],
+      "capabilities": ["embed"],
+      "deployments": [
+        {
+          "litellm_id": "text-embedding-3-large",
+          "api_base": "",
+          "provider": "openai"
+        }
+      ]
+    },
+    {
+      "id": "openai/text-embedding-3-large-256",
+      "name": "OpenAI Text Embedding 3 Large (256-dim)",
+      "context_length": 8192,
+      "embedding_size": 256,
+      "dimensions": 256,
+      "languages": ["mul"],
+      "capabilities": ["embed"],
+      "deployments": [
+        {
+          "litellm_id": "text-embedding-3-large",
+          "api_base": "",
+          "provider": "openai"
+        }
+      ]
+    },
+    {
+      "id": "openai/text-embedding-3-small-512",
+      "name": "OpenAI Text Embedding 3 Small (512-dim)",
+      "context_length": 8192,
+      "embedding_size": 512,
+      "dimensions": 512,
+      "languages": ["mul"],
+      "capabilities": ["embed"],
+      "deployments": [
+        {
+          "litellm_id": "text-embedding-3-small",
+          "api_base": "",
+          "provider": "openai"
+        }
+      ]
+    },
+    {
+      "id": "cohere/embed-multilingual-v3.0",
+      "name": "Cohere Embed Multilingual v3.0",
+      "context_length": 512,
+      "embedding_size": 1024,
+      "languages": ["mul"],
+      "capabilities": ["embed"],
+      "owned_by": "cohere",
+      "deployments": [
+        {
+          "litellm_id": "embed-multilingual-v3.0",
+          "api_base": "",
+          "provider": "cohere"
+        }
+      ]
+    }
+  ],
+  "rerank_models": [
+    {
+      "id": "ellm/cross-encoder/ms-marco-TinyBERT-L-2",
+      "name": "ELLM TinyBERT L2",
+      "context_length": 512,
+      "languages": ["en"],
+      "capabilities": ["rerank"],
+      "deployments": [
+        {
+          "litellm_id": "",
+          "api_base": "http://infinity:6919",
+          "provider": "ellm"
+        }
+      ]
+    },
+    {
+      "id": "cohere/rerank-multilingual-v3.0",
+      "name": "Cohere Rerank Multilingual v3.0",
+      "context_length": 512,
+      "languages": ["mul"],
+      "capabilities": ["rerank"],
+      "owned_by": "cohere",
+      "deployments": [
+        {
+          "litellm_id": "",
+          "api_base": "",
+          "provider": "cohere"
+        }
+      ]
+    }
+  ]
+}

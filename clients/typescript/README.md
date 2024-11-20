@@ -42,7 +42,7 @@ Welcome to JamAI Base – the real-time database that orchestrates Large Languag
 
 ### Flexibility
 
--   **LLM Support**: Supports any LLMs, including OpenAI GPT-4, Anthropic Claude 3, Mistral AI Mixtral, and Meta Llama3.
+-   **LLM Support**: Supports any LLMs, including OpenAI GPT-4, Anthropic Claude 3, and Meta Llama3.
 -   **Capabilities**: Leverage state-of-the-art AI capabilities effortlessly.
 
 ### Declarative Paradigm
@@ -157,19 +157,6 @@ const jamai = new JamAI({
 });
 ```
 
-Create an API client with basic authorization credentials:
-
-```javascript
-import JamAI from "jamaibase";
-
-const jamai = new JamAI({
-    baseURL: "https://api.jamaibase.com",
-    credentials: {
-        username: "your-username",
-        password: "your-password"
-    }
-});
-```
 
 Create an API client with maxretry and timeout:
 
@@ -210,7 +197,7 @@ import JamAI from "jamaibase/index.umd.js";
 Types can be imported from resources:
 
 ```javascript
-import { ChatRequest } from "jamaibase/resources/llm/chat";
+import { ChatRequest } from "jamaibase/dist/resources/llm/chat";
 
 let response: ChatRequest;
 ```
@@ -221,7 +208,7 @@ Example of adding a row to action table:
 
 ```javascript
 try {
-    const response = await jamai.addRow({
+    const response = await jamai.table.addRow({
         table_type: "action",
         table_id: "workout-suggestion",
         data: [
@@ -244,7 +231,7 @@ Example of adding row with streaming output
 
 ```javascript
 try {
-    const stream = await jamai.addRowStream({
+    const stream = await jamai.table.addRowStream({
         table_type: "action",
         table_id: "action-table-example-1",
         data: [
@@ -300,7 +287,7 @@ To integrate JamAI into a React application, follow these steps:
 2.  Install jamai
 
 ```bash
-    npm install jamai
+    npm install jamaibase
 ```
 
 3. Create and Use the JamAI Client in your React component
@@ -310,7 +297,7 @@ To integrate JamAI into a React application, follow these steps:
 
 import { useEffect, useState } from "react";
 import JamAI from "jamaibase";
-import { PageListTableMetaResponse } from "jamaibase/resources/gen_tables/tables";
+import { PageListTableMetaResponse } from "jamaibase/dist/resources/gen_tables/tables";
 
 export default function Home() {
     const [tableData, setTableData] = useState<PageListTableMetaResponse>();
@@ -323,7 +310,7 @@ export default function Home() {
                 projectId: process.env.JAMAI_PROJECT_ID,
             });
             try {
-                const response = await jamai.listTables({
+                const response = await jamai.table.listTables({
                     table_type: "action",
                 });
                 setTableData(response);
@@ -411,7 +398,7 @@ export async function GET(request: NextRequest) {
     const tableType = (searchParams.get("type") || "action") as TableTypes;
 
     try {
-        let data: PageListTableMetaResponse = await jamai.listTables({
+        let data: PageListTableMetaResponse = await jamai.table.listTables({
             table_type: tableType,
         });
         return NextResponse.json(data);
@@ -433,7 +420,7 @@ export async function GET(request: NextRequest) {
 
 "use client";
 
-import { PageListTableMetaResponse } from "jamaibase/resources/gen_tables/tables";
+import { PageListTableMetaResponse } from "jamaibase/dist/resources/gen_tables/tables";
 import { ChangeEvent, useEffect, useState } from "react";
 
 export default function Home() {
@@ -640,7 +627,7 @@ export const actions = {
 
         console.log("data: ", data);
         try {
-            const response = await jamai.createActionTable({
+            const response = await jamai.table.createActionTable({
                 id: tableId!,
                 cols: [{ id: columnName!, dtype: columnDType! }],
             });
@@ -880,7 +867,7 @@ export default defineEventHandler(async (event) => {
     const { type = "action" } = getQuery(event);
 
     try {
-        const data = await jamai.listTables({ table_type: type });
+        const data = await jamai.table.listTables({ table_type: type });
         return { success: true, data: data };
     } catch (error) {
         console.error("Error fetching tables:", error);
@@ -980,7 +967,7 @@ export default defineEventHandler(async (event) => {
     const { table_id, column_name, column_d_type } = await readBody(event);
 
     try {
-        const response = await jamai.createActionTable({
+        const response = await jamai.table.createActionTable({
             id: table_id,
             cols: [{ id: column_name, dtype: column_d_type }]
         });

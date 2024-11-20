@@ -1,0 +1,4 @@
+include:
+  - path:
+      - compose.cpu.yml
+      - amd.yml

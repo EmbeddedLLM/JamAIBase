@@ -80,7 +80,7 @@ async def exception_handler(request: Request, exc: Exception):
             [
                 {
                     "type": "unexpected_error",
-                    "msg": f"Encountered error: {repr(exc)}",
+                    "msg": f"Encountered error: {exc!r}",
                 }
             ]
         ),
@@ -94,8 +94,9 @@ async def health() -> Response:
 
 
 if __name__ == "__main__":
-    import uvicorn
     import os
+
+    import uvicorn
 
     if os.name == "nt":
         import asyncio

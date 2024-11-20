@@ -2,13 +2,14 @@
 
 ![JamAI Base Cover](JamAI_Base_Cover.png)
 
-<!-- prettier-ignore -->
+<!-- prettier-ignore-start -->
 ![Linting](https://github.com/EmbeddedLLM/JamAIBase/actions/workflows/lint.yml/badge.svg)
 ![CI](https://github.com/EmbeddedLLM/JamAIBase/actions/workflows/ci.yml/badge.svg)
 
-<!-- prettier-ignore -->
 > [!TIP]
 > [Explore our docs](#explore-the-documentation)
+
+<!-- prettier-ignore-end -->
 
 ## Overview
 
@@ -84,7 +85,7 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
 
 ### Flexibility
 
-- **LLM Support**: Supports any LLMs, including OpenAI GPT-4, Anthropic Claude 3, Mistral AI Mixtral, and Meta Llama3.
+- **LLM Support**: Supports any LLMs, including OpenAI GPT-4, Anthropic Claude 3, and Meta Llama3.
 - **Capabilities**: Leverage state-of-the-art AI capabilities effortlessly.
 
 ### Declarative Paradigm
@@ -136,11 +137,6 @@ Join our vibrant developer community for comprehensive documentation, tutorials,
 
 - **Discord**: [Join our Discord](https://discord.gg/rV6DECA8Dw)
 - **GitHub**: [Star our GitHub repository](https://github.com/EmbeddedLLM/JamAIBase)
-
-### Community Videos
-
-- [Build Mixture of Agents (MoA) & RAG with Open Source Models in Minutes with JamAI Base](https://www.youtube.com/watch?v=PWNEYUkFYog)
-- [Llama 3.1 405B & 70B vs MacBook Pro. Apple Silicon is overpowered! Bonus: Apple's OpenELM](https://www.youtube.com/watch?v=fXHje7gFGK4)
 
 ## Contributing
 

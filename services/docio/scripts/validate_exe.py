@@ -1,12 +1,13 @@
 from mimetypes import guess_type
 from pathlib import Path
+
 import httpx
 
 
 def get_local_uri():
     return [
-        Path("../../clients/python/tests/txt/weather.txt").as_posix(),
-        Path("../../clients/python/tests/pdf/ca-warn-report.pdf").as_posix(),
+        Path("../../clients/python/tests/files/txt/weather.txt").as_posix(),
+        Path("../../clients/python/tests/files/pdf/ca-warn-report.pdf").as_posix(),
         Path("README.md").as_posix(),
     ]
 

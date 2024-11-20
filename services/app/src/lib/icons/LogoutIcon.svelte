@@ -1,25 +1,28 @@
 <script lang="ts">
-	let className: string | undefined | null = undefined
-	export { className as class }
+	let className: string | undefined | null = undefined;
+	export { className as class };
 </script>
 
 <svg
-	width="15"
-	height="15"
-	viewBox="0 0 15 15"
+	width="11"
+	height="14"
+	viewBox="0 0 11 14"
 	fill="none"
 	xmlns="http://www.w3.org/2000/svg"
 	class={className}
 >
-	<g clip-path="url(#clip0_2539_22171)">
-		<path
-			d="M6.875 4.375L6 5.25L7.625 6.875H1.25V8.125H7.625L6 9.75L6.875 10.625L10 7.5L6.875 4.375ZM12.5 11.875H7.5V13.125H12.5C13.1875 13.125 13.75 12.5625 13.75 11.875V3.125C13.75 2.4375 13.1875 1.875 12.5 1.875H7.5V3.125H12.5V11.875Z"
-			fill="currentColor"
-		/>
-	</g>
-	<defs>
-		<clipPath id="clip0_2539_22171">
-			<rect width="15" height="15" fill="currentColor" />
-		</clipPath>
-	</defs>
+	<path
+		d="M5.5 7.21552H9.99963M9.99963 7.21552L8.07122 9.14394M9.99963 7.21552L8.07122 5.28711"
+		stroke="currentColor"
+		stroke-width="1"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+	/>
+	<path
+		d="M9.99926 3.3581V2.7153C9.99926 2.00527 9.4237 1.42969 8.71366 1.42969H2.28561C1.57559 1.42969 1 2.00527 1 2.7153V11.7146C1 12.4246 1.57559 13.0002 2.28561 13.0002H8.71366C9.4237 13.0002 9.99926 12.4246 9.99926 11.7146V11.0718"
+		stroke="currentColor"
+		stroke-width="1"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+	/>
 </svg>

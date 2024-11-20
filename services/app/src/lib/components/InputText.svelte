@@ -19,7 +19,7 @@
 	}>();
 
 	$: inputClass = cn(
-		`${obfuscate ? 'pl-3 pr-12' : 'px-3'} py-2 w-full text-sm placeholder:italic bg-transparent data-dark:bg-[#42464e] rounded-md border border-[#DDD] data-dark:border-[#42464E] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors`,
+		`${obfuscate ? 'pl-3 pr-12' : 'px-3'} py-2 w-full text-sm placeholder:italic bg-[#F2F4F7] data-dark:bg-[#42464e] rounded-md border border-transparent placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors`,
 		className
 	);
 	let showVal = false;
@@ -34,14 +34,7 @@
 	<slot name="leading" />
 
 	{#if type === 'search'}
-		<input
-			{...$$restProps}
-			bind:value
-			on:input={handleInput}
-			autocomplete="new-password"
-			type="search"
-			class={inputClass}
-		/>
+		<input {...$$restProps} bind:value on:input={handleInput} type="search" class={inputClass} />
 	{:else if obfuscate && !showVal}
 		<input
 			{...$$restProps}
@@ -56,7 +49,7 @@
 			{...$$restProps}
 			bind:value
 			on:input={handleInput}
-			autocomplete="new-password"
+			autocomplete={obfuscate ? 'new-password' : undefined}
 			type="text"
 			class={inputClass}
 		/>

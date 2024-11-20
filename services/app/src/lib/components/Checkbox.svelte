@@ -40,7 +40,7 @@
 	role="checkbox"
 	value="on"
 	class={cn(
-		'peer h-4 w-4 shrink-0 rounded-sm border border-[#4169e1] data-dark:border-[#5b7ee5] ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:border-neutral-500 aria-checked:bg-[#4169e1] data-dark:checked:bg-[#5b7ee5] aria-checked:text-white aria-checked:border-[#4169e1] data-dark:aria-checked:border-[#5b7ee5] overflow-hidden',
+		'peer h-4 w-4 shrink-0 rounded-sm hover:bg-white focus-visible:bg-white border border-[#98A2B3] data-dark:border-[#5b7ee5] ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:border-neutral-500 aria-checked:bg-[#BF416E] data-dark:checked:bg-[#5b7ee5] aria-checked:text-white aria-checked:border-[#BF416E] data-dark:aria-checked:border-[#5b7ee5] overflow-hidden',
 		className
 	)}
 >

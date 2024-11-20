@@ -11,17 +11,27 @@ on:
     tags:
       - "v*"
 
+# Cancel in-progress CI jobs if there is a new push
+# https://stackoverflow.com/a/72408109
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  python_tests:
-    name: Python unit tests
+  sdk_tests:
+    name: SDK unit tests
     runs-on: ubuntu-latest-l
+    # runs-on: namespace-profile-ubuntu-latest-8cpu-16gb-96gb
     strategy:
       matrix:
         python-version: ["3.10"]
+    timeout-minutes: 60
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -37,7 +47,7 @@ jobs:
           set -e
           bash scripts/remove_cloud_modules.sh
           cd clients/python
-          python -m pip install .[all]
+          python -m pip install .[test]
 
       - name: Check Docker Version
         run: docker version
@@ -50,15 +60,11 @@ jobs:
         env:
           JH_PAT: ${{ secrets.JH_PAT }}
 
-      - name: Launch services
-        timeout-minutes: 15
+      - name: Edit env file
         run: |
           set -e
-          export API_DEVICE=cpu
-          export EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-          export RERANKER_MODEL=cross-encoder/ms-marco-TinyBERT-L-2
+          mv .env.example .env
 
-          # Edit .env file
           ORGS=$(printenv | grep API_KEY | xargs -I {} echo {} | cut -d '=' -f 1)
           KEYS=$(printenv | grep API_KEY | xargs -I {} echo {} | cut -d '=' -f 2-)
           # Convert them into arrays
@@ -72,93 +78,124 @@ jobs:
             # Replace the org with the key in the .env file
             sed -i "s/$org=.*/$org=$key/g" .env
           done
-
-          docker compose -f docker/compose.cpu.yml up --quiet-pull -d
-
-          # Wait for the service to finish starting up
-          set +e
-          while true; do
-              docker ps
-              response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${OWL_PORT:-6969}/api/health)
-              echo $response
-              if [ $response -eq 200 ]; then
-                  break
-              fi
-              printf "> Waiting for API service ...\n"
-              sleep 10
-          done
-          printf "> DONE\n"
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          HYPERBOLIC_API_KEY: ${{ secrets.HYPERBOLIC_API_KEY }}
+
+      - name: Launch services (OSS)
+        id: launch_oss
+        timeout-minutes: 20
+        run: |
+          set -e
+          docker compose -p jamai -f docker/compose.cpu.yml --profile minio up --quiet-pull -d --wait
+
+        env:
           COMPOSE_DOCKER_CLI_BUILD: 1
           DOCKER_BUILDKIT: 1
 
+      - name: Inspect owl Python version
+        run: docker exec jamai-owl-1 python -V
+
       - name: Inspect owl environment
-        run: docker exec jamai_owl pip list
+        run: docker exec jamai-owl-1 pip list
 
-      # - name: Pytest (owl)
-      #   run: |
-      #     set -e
-      #     python -m pytest -vv --doctest-modules --junitxml=junit/test-results-${{ matrix.python-version }}.xml --cov-report=xml services/api/tests
-
-      - name: Pytest (Python client)
+      - name: Python SDK tests (OSS)
+        id: python_sdk_test_oss
+        if: always() && steps.launch_oss.outcome == 'success'
         run: |
           set -e
           export JAMAI_API_BASE=http://localhost:6969/api
-          python -m pytest -vv --doctest-modules --junitxml=junit/test-results-${{ matrix.python-version }}.xml --cov-report=xml clients/python/tests
+          python -m pytest -vv \
+            --timeout 300 \
+            --doctest-modules \
+            --junitxml=junit/test-results-${{ matrix.python-version }}.xml \
+            --cov-report=xml \
+            --no-flaky-report \
+            clients/python/tests/oss
+
+      - name: Inspect owl logs if Python SDK tests failed
+        if: failure() &&  steps.python_sdk_test_oss.outcome == 'failure'
+        run: docker exec jamai-owl-1 cat /app/api/logs/owl.log
 
       - name: Upload Pytest Test Results
         uses: actions/upload-artifact@v4
         with:
           name: pytest-results-${{ matrix.python-version }}
           path: junit/test-results-${{ matrix.python-version }}.xml
-        # Use always() to always run this step to publish test results when there are test failures
-        if: ${{ always() }}
+        # Always run this step to publish test results even when there are test failures
+        if: always()
 
-      #- name: Generate OpenAPI Json Schema
-      #  run: mkdir -p artifacts && curl http://127.0.0.1:7770/api/openapi.json >> ./artifacts/openapi.json
+      - name: TS/JS SDK tests (OSS)
+        id: ts_sdk_test_oss
+        if: always() && steps.launch_oss.outcome == 'success'
+        run: |
+          cd clients/typescript
+          echo "BASEURL=http://localhost:6969" >> __tests__/.env
+          npm install
+          npm run test
 
-      #- name: Upload OpenAPI Json Schema
-      #  uses: actions/upload-artifact@v4
-      #  with:
-      #    name: openapi-json
-      #    path: artifacts/openapi.json
+      - name: Inspect owl logs if TS/JS SDK tests failed
+        if: failure() &&  steps.ts_sdk_test_oss.outcome == 'failure'
+        run: docker exec jamai-owl-1 cat /app/api/logs/owl.log
 
-  # readmeio_update:
-  #   needs: python_tests
-  #   name: Push OpenAPI to ReadMe.io
-  #   runs-on: ubuntu-latest-l
-  #   strategy:
-  #     matrix:
-  #       python-version: ["3.10"]
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
+      - name: Update owl service for S3 test
+        run: |
+          # Update the .env file to include the new environment variable
+          echo 'OWL_FILE_DIR=s3://file' >> .env
+          echo 'S3_ENDPOINT=http://minio:9000' >> .env
+          echo 'S3_ACCESS_KEY_ID=minioadmin' >> .env
+          echo 'S3_SECRET_ACCESS_KEY=minioadmin' >> .env
 
-  #     - name: Download OpenAPI Json Schema
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         name: openapi-json
-  #         path: artifacts
+          # Restart the owl service with the updated environment
+          docker compose -p jamai -f docker/compose.cpu.yml up --quiet-pull -d --wait --no-deps --build --force-recreate owl
 
-  #     # - name: Display structure of downloaded files
-  #     #   run: ls -R artifacts
+      - name: Python SDK tests (File API, OSS)
+        id: python_sdk_test_oss_file
+        if: always() && steps.launch_oss.outcome == 'success'
+        run: |
+          set -e
+          export JAMAI_API_BASE=http://localhost:6969/api
+          python -m pytest -vv \
+            --timeout 300 \
+            --doctest-modules \
+            --junitxml=junit/test-results-${{ matrix.python-version }}.xml \
+            --cov-report=xml \
+            --no-flaky-report \
+            clients/python/tests/oss/test_file.py
 
-  #     # Run GitHub Action to sync OpenAPI file at ./path-to-file.json
-  #     - name: Update ReadMe API Reference Documentation
-  #       # We recommend specifying a fixed version, i.e. @v8
-  #       # Docs: https://docs.github.com/actions/using-workflows/workflow-syntax-for-github-actions#example-using-versioned-actions
-  #       uses: readmeio/rdme@v8
-  #       with:
-  #         rdme: openapi artifacts/openapi.json --key=${{ secrets.README_API_KEY }} --id=${{ secrets.API_DEFINITION_ID }}
+      - name: Inspect owl logs if Python SDK tests failed
+        if: failure() &&  steps.python_sdk_test_oss_file.outcome == 'failure'
+        run: docker exec jamai-owl-1 cat /app/api/logs/owl.log
 
-  #     # - name: Generate Stainless SDK
-  #     #   uses: stainless-api/upload-openapi-spec-action@main
-  #     #   with:
-  #     #     stainless_api_key: ${{ secrets.STAINLESS_API_KEY }}
-  #     #     input_path: "artifacts/openapi.json"
-  #     #     config_path: "ellm.stainless.yaml"
-  #     #     project_name: "jamai"
+  lance_tests:
+    name: Lance tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Inspect git version
+        run: |
+          git --version
+
+      - name: Install owl
+        run: |
+          set -e
+          cd services/api
+          python -m pip install .[test]
+
+      - name: Run tests
+        run: pytest services/api/tests/test_lance.py

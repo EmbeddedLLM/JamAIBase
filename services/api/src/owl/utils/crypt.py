@@ -11,7 +11,6 @@ from hashlib import blake2b
 
 from Cryptodome.Cipher import AES
 from Cryptodome.Random import get_random_bytes
-from loguru import logger
 
 
 def _encrypt(message: str, password: str, aes_mode: int) -> str:

@@ -1,0 +1,15 @@
+# Litestream SQlite replication for main.db
+#
+# shell
+# ```
+# $ docker compose -f services/replication/docker-compose.yaml --env-file .env up
+# ```
+
+services:
+  litestream:
+    image: litestream/litestream
+    env_file: ../../.env
+    volumes:
+      - ${OWL_DB_DIR}:/data
+      - ./entrypoint.sh:/entrypoint.sh
+    entrypoint: ["/entrypoint.sh"]

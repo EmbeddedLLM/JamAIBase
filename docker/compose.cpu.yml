@@ -2,15 +2,14 @@ services:
   infinity:
     image: michaelf34/infinity:0.0.70-cpu
     container_name: jamai_infinity
-    command:
-      [
+    command: [
         "v2",
         "--engine", "torch",
         "--port", "6909",
         "--model-warmup",
         "--model-id", "${EMBEDDING_MODEL}", 
         "--model-id", "${RERANKER_MODEL}",
-      ]
+    ]
     healthcheck:
       test: ["CMD-SHELL", "curl --fail http://localhost:6909/health"]
       interval: 10s
@@ -27,7 +26,6 @@ services:
 
   unstructuredio:
     image: downloads.unstructured.io/unstructured-io/unstructured-api:latest
-    container_name: jamai_unstructuredio
     entrypoint: ["/usr/bin/env", "bash", "-c", "uvicorn prepline_general.api.app:app --log-config logger_config.yaml --port 6989 --host 0.0.0.0"]
     healthcheck:
       test: ["CMD-SHELL", "wget http://localhost:6989/healthcheck -O /dev/null || exit 1"]
@@ -44,8 +42,8 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.docio
     image: jamai/docio
+    pull_policy: build
     command: ["python", "-m", "docio.entrypoints.api"]
-    container_name: jamai_docio
     healthcheck:
       test: ["CMD-SHELL", "curl --fail http://localhost:6979/health || exit 1"]
       interval: 10s
@@ -82,7 +80,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.owl
     image: jamai/owl
-    container_name: jamai_owl
+    pull_policy: build
     command: ["python", "-m", "owl.entrypoints.api"]
     depends_on:
       infinity:
@@ -105,21 +103,46 @@ services:
     volumes:
       - ${PWD}/db:/app/api/db
       - ${PWD}/logs:/app/api/logs
+      - ${PWD}/file:/app/api/file
     ports:
       - "${API_PORT:-6969}:6969"
     networks:
       - jamai
+
+  starling:
+    extends:
+      service: owl
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        celery -A owl.entrypoints.starling worker --loglevel=info --max-memory-per-child 65536 --autoscale=2,4 & \
+        celery -A owl.entrypoints.starling beat --loglevel=info & \
+        FLOWER_UNAUTHENTICATED_API=1 celery -A owl.entrypoints.starling flower --loglevel=info
+    command: !reset []
+    depends_on:
+      owl:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:5555/api/workers || exit 1"]
+      interval: 10s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
+    ports: !override
+      - "${STARLING_PORT:-5555}:5555"
 
   frontend:
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       args:
-        CHECK_ORIGIN: "false"
-        JAMAI_URL: "http://owl:6969"
-        JAMAI_SERVICE_KEY: ""
+        JAMAI_URL: ${JAMAI_URL}
+        PUBLIC_JAMAI_URL: ${PUBLIC_JAMAI_URL}
+        PUBLIC_IS_SPA: ${PUBLIC_IS_SPA}
+        CHECK_ORIGIN: ${CHECK_ORIGIN}
     image: jamai/frontend
-    container_name: jamai_frontend
+    pull_policy: build
     command: ["node", "server"]
     depends_on:
       owl:
@@ -138,6 +161,26 @@ services:
       - ../.env
     ports:
       - "${FRONTEND_PORT:-4000}:4000"
+    networks:
+      - jamai
+
+  # By default, minio service is not enabled, and only used for testing. use --profile minio along docker compose up if minio is needed.
+  minio:
+    profiles: ["minio"]
+    image: minio/minio
+    entrypoint: /bin/sh -c " minio server /data --console-address ':9001' & until (mc config host add myminio http://localhost:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}) do echo '...waiting...' && sleep 1; done; mc mb myminio/file; wait "
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
+    ports:
+      - "9000:9000"
+      - "9001:9001"
     networks:
       - jamai
 

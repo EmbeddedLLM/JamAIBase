@@ -135,8 +135,8 @@ export function insertAtCursor(el: HTMLInputElement | HTMLTextAreaElement, value
 	}
 }
 
-export function textToFileDownload(filename: string, data: string) {
-	const blob = new Blob([data], { type: 'text/csv' });
+export function textToFileDownload(filename: string, data: string | Blob) {
+	const blob = typeof data === 'string' ? new Blob([data], { type: 'text/csv' }) : data;
 	//@ts-expect-error IE support
 	if (window.navigator.msSaveOrOpenBlob) {
 		//@ts-expect-error IE support
@@ -153,4 +153,16 @@ export function textToFileDownload(filename: string, data: string) {
 
 export function extendArray<T>(arr: T[], length: number, fillWith: any = ''): T[] {
 	return arr.concat(Array(Math.max(0, length - arr.length)).fill(fillWith));
+}
+
+export function isValidUri(string: string): URL | null {
+	let url: URL;
+
+	try {
+		url = new URL(string);
+	} catch (_) {
+		return null;
+	}
+
+	return url;
 }

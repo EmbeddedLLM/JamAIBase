@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from asyncio import ensure_future
 from functools import wraps
+from time import perf_counter
 from traceback import format_exception
 from typing import Any, Callable, Coroutine, Union
 
@@ -90,5 +92,26 @@ def repeat_every(
             ensure_future(loop())
 
         return wrapped
+
+    return decorator
+
+
+def repeat_every_blocking(
+    *,
+    seconds: float,
+    wait_first: bool = False,
+):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if wait_first:
+                time.sleep(seconds)
+            while True:
+                t0 = perf_counter()
+                func(*args, **kwargs)
+                t = perf_counter() - t0
+                time.sleep(max(0, seconds - t))
+
+        return wrapper
 
     return decorator

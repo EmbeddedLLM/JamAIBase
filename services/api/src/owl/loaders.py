@@ -7,6 +7,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents.base import Document
 from loguru import logger
 
+from jamaibase.exceptions import BadInputError
 from owl.configs.manager import ENV_CONFIG
 from owl.docio import DocIOAPIFileLoader
 from owl.protocol import Chunk, SplitChunksParams, SplitChunksRequest
@@ -50,7 +51,10 @@ def format_chunks(documents: list[Document], file_name: str) -> list[Chunk]:
 
 
 async def load_file(
-    file_name: str, content: bytes, chunk_size: int, chunk_overlap: int
+    file_name: str,
+    content: bytes,
+    chunk_size: int,
+    chunk_overlap: int,
 ) -> list[Chunk]:
     """
     Asynchronously loads and processes a file, converting its content into a list of Chunk objects.
@@ -79,10 +83,8 @@ async def load_file(
         if ext in (".csv", ".tsv", ".json", ".jsonl"):
             loader = DocIOAPIFileLoader(tmp_path, ENV_CONFIG.docio_url)
             documents = loader.load()
-            logger.debug("File '{file_name}' loaded: {docs}", file_name=file_name, docs=documents)
-
+            logger.debug('File "{file_name}" loaded: {docs}', file_name=file_name, docs=documents)
             chunks = format_chunks(documents, file_name)
-
             if ext == ".json":
                 chunks = split_chunks(
                     SplitChunksRequest(
@@ -103,10 +105,8 @@ async def load_file(
                 xml_keep_tags=True,
             )
             documents = await loader.aload()
-            logger.debug("File '{file_name}' loaded: {docs}", file_name=file_name, docs=documents)
-
+            logger.debug('File "{file_name}" loaded: {docs}', file_name=file_name, docs=documents)
             chunks = format_chunks(documents, file_name)
-
             chunks = split_chunks(
                 SplitChunksRequest(
                     chunks=chunks,
@@ -128,35 +128,56 @@ async def load_file(
                 overlap=chunk_overlap,
             )
             documents = await loader.aload()
-            logger.debug("File '{file_name}' loaded: {docs}", file_name=file_name, docs=documents)
-
+            logger.debug('File "{file_name}" loaded: {docs}', file_name=file_name, docs=documents)
             chunks = format_chunks(documents, file_name)
 
         elif ext == ".pdf":
-            logger.info(f"pdf file: {file_name}")
-            loader = UnstructuredAPIFileLoader(
-                tmp_path,
-                url=ENV_CONFIG.unstructuredio_url,
-                api_key=ENV_CONFIG.unstructuredio_api_key_plain,
-                mode="elements",
-                strategy="hi_res",
-                chunking_strategy="by_title",
-                max_characters=chunk_size,
-                overlap=chunk_overlap,
-                multipage_sections=False,  # respect page boundaries
-                include_page_breaks=True,
+
+            def unstructured_api_file_loader(
+                strategy: str, split_pdf_page: bool
+            ) -> UnstructuredAPIFileLoader:
+                return UnstructuredAPIFileLoader(
+                    tmp_path,
+                    url=ENV_CONFIG.unstructuredio_url,
+                    api_key=ENV_CONFIG.unstructuredio_api_key_plain,
+                    mode="elements",
+                    strategy=strategy,
+                    chunking_strategy="by_title",
+                    max_characters=chunk_size,
+                    overlap=chunk_overlap,
+                    multipage_sections=False,  # respect page boundaries
+                    include_page_breaks=True,
+                    split_pdf_page=split_pdf_page,
+                )
+
+            if ENV_CONFIG.owl_fast_pdf_parsing:
+                strategy, split_pdf_page = "fast", False
+                documents = await unstructured_api_file_loader(
+                    strategy=strategy, split_pdf_page=split_pdf_page
+                ).aload()
+                if len(documents) == 0:
+                    strategy = "ocr_only"
+                    logger.info(
+                        "[Scan PDF Detected]: No text or content is found, running `ocr` mode."
+                    )
+            else:
+                strategy, split_pdf_page = "hi_res", True
+
+            documents = await unstructured_api_file_loader(
+                strategy=strategy, split_pdf_page=split_pdf_page
+            ).aload()
+            logger.info(
+                f"File '{file_name}' parsed in `{strategy}` mode {'with' if split_pdf_page else 'without'} partitioning."
             )
-            documents = await loader.aload()
-            logger.debug("File '{file_name}' loaded: {docs}", file_name=file_name, docs=documents)
-            logger.info(f"Load documents: {documents}")
-
+            logger.debug(f"File '{file_name}' content: {documents}")
             chunks = format_chunks(documents, file_name)
-
-            chunks = combine_table_chunks(chunks=chunks)
+            if strategy == "hi_res":
+                chunks = combine_table_chunks(chunks=chunks)
 
         else:
-            raise ValueError(f"Unsupported file type: {ext}")
+            raise BadInputError(f'File type "{ext}" is not supported at the moment.')
 
+    logger.info(f'File "{file_name}" loaded and split into {len(chunks):,d} chunks.')
     return chunks
 
 

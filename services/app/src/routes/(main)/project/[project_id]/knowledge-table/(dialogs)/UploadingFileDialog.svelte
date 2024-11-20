@@ -4,8 +4,8 @@
 	export let isUploadingFile: boolean;
 </script>
 
-<Dialog.Root onOutsideClick={(e) => e.preventDefault()} open={isUploadingFile}>
-	<Dialog.Content class="min-h-[25rem] max-w-[24rem]">
+<Dialog.Root closeOnEscape={false} closeOnOutsideClick={false} open={isUploadingFile}>
+	<Dialog.Content class="min-h-[25rem] w-[clamp(0px,24rem,100%)]">
 		<div class="grow flex flex-col items-center justify-center gap-1 p-6 w-full overflow-auto">
 			<svg
 				viewBox="0 0 172 146"

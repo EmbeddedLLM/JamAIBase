@@ -14,6 +14,194 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - The version number mentioned here refers to the cloud version. For each release, all SDKs will have the same major and minor version, but their patch version may differ. For example, latest Python SDK might be `v0.2.0` whereas TS SDK might be `v0.2.1`, but both will be compatible with release `v0.2`.
 
+## [v0.3] (2024-11-20)
+
+### ADDED
+
+Python SDK - jamaibase
+
+- Added `missing_ok` to all delete methods
+- Added Organization Admin API via `admin.organization` methods
+- Added Backend Admin API via `admin.backend` methods
+- Added Templates API via `template` methods
+- Added File API via `file` methods
+- Added `GenConfig` protocols: `LLMGenConfig` and `EmbedGenConfig`
+- `list_tables` method:
+  - Added `parent_id` param. Resolved #252
+  - Added `search_query` param to search table IDs
+- Added `timeout` and `file_upload_timeout` parameters in client init method.
+- Added PAT methods
+
+TS SDK - jamaibase
+
+- Added `create_child_table` method to create conversation table as a child table. Resolves #283
+- Grouped methods into `table`, `llm`, `file`, `template`
+
+UI
+
+- Electron App
+  - Added script for compiling JamAIBase Electron App.
+  - Added detailed instructions for building and running the JamAIBase Electron App in the `services/app/README.md`.
+  - Added Electron main process initialization script.
+  - Added Electron Forge configuration for packaging and making redistributables.
+  - Added `.gitignore` entries for Electron build artifacts.
+
+Backend - owl (API server)
+
+- Projects are now available in OSS
+- GenTable
+  - **Breaking**: Added `version` and `meta` to table metadata and associated migration script
+  - Added ability to turn any column into multi-turn chat via the `multi_turn` parameter in `LLMGenConfig`
+  - Added table ID search when listing tables
+  - Added `GenConfig` protocols: `LLMGenConfig` and `EmbedGenConfig`
+  - Added default prompts for table creation and column add
+  - Write rows to table with dynamically decided batch size, capped at `max_write_batch_size` that speeds up file uploading. Resolves #225
+  - Added ability to sort by table attribute or row column in ascending or descending order when listing tables or rows
+  - Support file type input column. #120
+    - image file extensions: `jpeg/jpg`, `png`, `webp`, `gif`
+    - restriction: single image file per output completion
+- Templates gallery
+- File API
+- GenExecutor
+  - Added regeneration mode: `run_all`, `run_before`, `run_selected` and `run_after`. #221
+- LLM
+  - OSS model list patch API & Cloud per-org model list API
+  - Internal-only models
+  - Include `name` into `EmbeddingModelConfig` and `RerankingModelConfig`
+  - Added "openai/gpt-4o-mini", "openai/gpt-4-turbo", "together_ai/meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo"
+  - Added model priority for default assignment
+- Admin
+  - Added get and set methods for internal organization ID
+  - Added project list endpoint with ability to search within project names
+  - Added ability to sort by attribute in ascending or descending order when listing organizations or projects
+  - Added user RBAC for backend admin endpoints
+- Billing
+  - Added pricing and usage tracking for embedding & reranking
+- Auth
+  - Implement Personal Access Token, deprecate organization API keys
+
+AIPC
+
+- Added new models and configurations in `models_aipc.json`.
+
+CI/CD
+
+- Added jamaibase-app compilation CI.
+- Added cloud unit tests
+- Pinned `torch` dependency to version `~2.2.0` in `services/docio/pyproject.toml`. #265
+- Added Lance tests
+- Added TS/JS SDK tests
+
+### CHANGES / FIXED
+
+Python SDK - jamaibase
+
+- **Breaking**: `get_conversation_thread()` has two new required arguments: `table_type` and `column_id`
+- `duplicate_table()` arguments changed:
+  - Added `create_as_child` argument, and deprecated `deploy`. Resolves #196
+  - `table_id_dst` is now an optional argument
+- Default values changed
+  - `ChatRequest.stop`: `[]` -> `None`
+  - `ChatRequest.temperature`: `1.0` -> `0.2`
+  - `ChatRequest.top_p`: `1.0` -> `0.6`
+- Vector columns can now be excluded from the results of `list_table_rows()`, `get_table_row()`, `hybrid_search()` methods by passing in a negative `vec_decimals` value.
+- Exception classes are now moved into `jamaibase` from `owl`
+
+TS SDK - jamaibase
+
+- Changed COl_ID and TABLE_ID regex. #296
+- Removed browser-only modules
+
+UI
+
+- Bump `app` version from `0.1.0` to `0.2.0`.
+- Fix `CORS Error` and JamAI Base Electron App compilation steps. #260
+
+Backend - owl (API server)
+
+- **Breaking**: Delete endpoints will raise 404 if the resource is not found
+- GenTable
+  - **Breaking**: Table list endpoint now defaults to not counting table rows
+  - **Breaking**: Duplicate table endpoint `/v1/gen_tables/{table_type}/duplicate/{table_id_src}/{table_id_dst}` is deprecated in favour of `/v1/gen_tables/{table_type}/duplicate/{table_id_src}`
+  - **Breaking**: `/v1/gen_tables/{table_type}/{table_id}/thread` has one new required query parameter: `column_id`
+    - It also supports `action` and `knowledge` table now.
+  - Changed the search method for row filtering from FTS to regex
+  - Add deprecation warning for `deploy` param to the "duplicate table" endpoint
+  - Default models
+    - If any of chat, embedding, or reranking model is set to "", then a default model is dynamically assigned
+    - Prioritise ELLM models when setting default model
+  - Refactor column validation
+  - Allow single character table and column ID
+  - Vector columns can now be excluded from the results of `list_table_rows()`, `get_table_row()`, `hybrid_search()` methods by passing in a negative `vec_decimals` value.
+  - Bug fixes
+    - CSV import with vector data now works correctly
+    - Full-text-search (FTS) now properly executes term query rather than phrase query
+    - CSV import numeric data as string now works correctly. #300
+    - Ensure chat table sequential regen
+- LLM
+  - Default model will prefer ELLM models
+  - Model list are now sorted by ID
+  - Changed target of "openai/gpt-4o" to "openai/gpt-4o-2024-08-06"
+  - Set `stream_options={"include_usage": True}` to fix discrepancy between stream and non-stream token usage
+  - Added model availability check
+  - Added support for internal models
+  - Make setting `owned_by` optional in model config JSON
+  - Reduce context exceed log verbosity
+  - Bug fixes
+    - Model config has been updated
+- Billing
+  - Logic has been rewritten
+  - New pricing model. Resolves #235
+  - Event now accepts deltas and values which can update multiple fields at once
+  - Revamp LLM cost computation to be based on LiteLLM
+  - Defined `owl_internal_org_id` to control internal resources
+- Implement separate janitor process. Resolves #233
+  - Compute storage usage
+  - Perform Lance table periodic reindexing and optimisation
+- DB
+  - Change `NullPoll` -> `QueuePool` for better performance on admin DB
+- Auth
+  - Refactored auth logic to be based on FastAPI Dependency injection
+  - Set auth timeout to 60s and return 503 if timeout
+- Only enable logging when called via entrypoints
+- Use `Annotated` with `Depends` to get DB session
+
+Backend - starling (Janitor)
+
+- Don't timeout for Lance periodic tasks
+
+CI/CD
+
+- Fix `api` and `docio`. Updated `scripts/compile_api_exe.ps1` and `scripts/compile_docio_exe.ps1` to use specific versions of `pyinstaller` and `cryptography` and install `python-magic`.
+- Python lint:
+  - Use Ruff instead of `black` + `flake8` + `isort`
+  - Update Python lint rules
+- Cancel in-progress CI jobs if there is a new push
+- Set timeouts
+  - PyTest per-test timeout at 90 seconds
+  - GitHub Action per-job timeout at 60 minutes
+
+### REMOVED
+
+Python SDK - jamaibase
+
+- Remove unused protocols
+- Remove client-side gen config validation
+- Removed redundant "file_name" Form fields from gen table methods
+
+TS SDK - jamaibase
+
+- Removed redundant "file_name" Form fields from gen table methods
+
+Backend - owl (API server)
+
+- Removed owl client, it is merged into `jamaibase`
+- LLM
+  - Removed "together_ai/Qwen/Qwen1.5" series models
+- GenTable
+  - Removed redundant "file_name" Form field
+  - Removed File Table, raw files will be stored in S3 instead
+
 ## [Python] [v0.2.1] - 2024-08-18
 
 ### CHANGED / FIXED
@@ -48,7 +236,10 @@ TS/JS SDK - jamaibase
 - `listRows()` and `getRow()` methods and `hybridSearch()` request body now accepts 2 additional arguments:
   - `float_decimals` (int, optional): Number of decimals for float values. Defaults to 0 (no rounding).
   - `vec_decimals` (int, optional): Number of decimals for vectors. Defaults to 0 (no rounding).
-- Add `search_query` param in `listRows()`
+- Added `search_query` param in `listRows()`
+- Added unit tests for the TypeScript/JavaScript SDK, including both OSS and Cloud environments
+- Enhanced the Base class to generate a user agent string
+- Added checks and methods to ensure the SDK works in both Node.js and browser environments
 
 `Embeddings` endpoint
 
@@ -178,7 +369,7 @@ Backend - owl (API server)
   - pdf: digital/scanned/mixed
     - docio loader and unstructured-io loader with (elements) `fast`, `ocr_only` and `hi_res` chunkers
     - enabled `split_pdf_pages` setting to speed up partitioning
-    - calculate recall to differenciate between digital pdf (recall > 0.9) and scanned/mixed pdf
+    - calculate recall to differentiate between digital pdf (recall > 0.9) and scanned/mixed pdf
     - digital pdf
       - `fast` chunks and `hi_res` table only chunks
     - scanned/mixed pdf

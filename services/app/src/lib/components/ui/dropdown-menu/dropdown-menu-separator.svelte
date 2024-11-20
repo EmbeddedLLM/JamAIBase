@@ -9,6 +9,6 @@
 </script>
 
 <DropdownMenuPrimitive.Separator
-	class={cn('-mx-1 my-1 h-px bg-[#E5E5E5] data-dark:bg-[#484C55]', className)}
+	class={cn('-mx-1 my-1 h-px bg-[#F2F4F7] data-dark:bg-[#484C55]', className)}
 	{...$$restProps}
 />

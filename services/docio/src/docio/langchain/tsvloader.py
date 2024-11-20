@@ -1,15 +1,15 @@
 import csv
-from tempfile import TemporaryDirectory
-from os.path import join, splitext
-from loguru import logger
-import pandas as pd
 from io import TextIOWrapper
+from os.path import join
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Union
+from tempfile import TemporaryDirectory
+from typing import Dict, Iterator, Optional, Sequence, Union
 
-from langchain_core.documents import Document
+import pandas as pd
 from langchain_community.document_loaders.base import BaseLoader
 from langchain_community.document_loaders.helpers import detect_file_encodings
+from langchain_core.documents import Document
+from loguru import logger
 
 
 class TSVLoader(BaseLoader):
@@ -116,10 +116,10 @@ class TSVLoader(BaseLoader):
                             if self.source_column is not None
                             else str(self.file_path)
                         )
-                    except KeyError:
+                    except KeyError as e:
                         raise ValueError(
                             f"Source column '{self.source_column}' not found in TSV file."
-                        )
+                        ) from e
                     content = "\n".join(
                         f"{k.strip()}: {v.strip() if v is not None else v}"
                         for k, v in row.items()
@@ -129,6 +129,8 @@ class TSVLoader(BaseLoader):
                     for col in self.metadata_columns:
                         try:
                             metadata[col] = row[col]
-                        except KeyError:
-                            raise ValueError(f"Metadata column '{col}' not found in TSV file.")
+                        except KeyError as e:
+                            raise ValueError(
+                                f"Metadata column '{col}' not found in TSV file."
+                            ) from e
                     yield Document(page_content=content, metadata=metadata)

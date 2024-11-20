@@ -14,7 +14,7 @@
 	bind:this={tooltip}
 	style="--arrow-size: {arrowSize}px; {style || ''}"
 	class={cn(
-		"absolute p-2 bg-black text-white rounded-lg after:content-[''] after:absolute after:left-3 after:-bottom-5 pointer-events-none transition-opacity",
+		"absolute px-1.5 py-[3px] text-xs bg-[#1D2939] text-white rounded-sm after:content-[''] after:absolute after:left-1/2 after:-translate-x-1/2 pointer-events-none transition-opacity",
 		showArrow ? 'after:block' : 'after:hidden',
 		className
 	)}
@@ -24,7 +24,8 @@
 
 <style>
 	span::after {
-		border-top: var(--arrow-size) solid black;
+		bottom: -(calc(10px + var(--arrow-size)));
+		border-top: var(--arrow-size) solid #1d2939;
 		border-bottom: var(--arrow-size) solid transparent;
 		border-left: var(--arrow-size) solid transparent;
 		border-right: var(--arrow-size) solid transparent;

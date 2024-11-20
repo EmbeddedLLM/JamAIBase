@@ -19,6 +19,19 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [ -f "src/routes/_layout.server.ts" ]; then
+    mv "src/routes/_layout.server.ts" "src/routes/+layout.server.ts"
+fi
+if [ -f "src/routes/+layout.ts" ]; then
+    mv "src/routes/+layout.ts" "src/routes/_layout.ts"
+fi
+
+# SPA hack
+if [ "$PUBLIC_IS_SPA" == "true" ]; then
+    mv "src/routes/+layout.server.ts" "src/routes/_layout.server.ts"
+    mv "src/routes/_layout.ts" "src/routes/+layout.ts"
+fi
+
 # Build the project in /temp
 vite build
 
@@ -26,10 +39,9 @@ vite build
 rm -rf build
 mv temp build
 
-# Static adapter doesn't generate files for these pages, breaking nav
-if [ "$PUBLIC_IS_SPA" != "false" ]; then
-    cp -r build/project/default/action-table build/project/default/chat-table
-    cp -r build/project/default/action-table build/project/default/knowledge-table
+if [ "$PUBLIC_IS_SPA" == "true" ]; then
+    mv "src/routes/_layout.server.ts" "src/routes/+layout.server.ts"
+    mv "src/routes/+layout.ts" "src/routes/_layout.ts"
 fi
 
 # Reload PM2 app if not in dev mode
