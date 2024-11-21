@@ -1,6 +1,6 @@
 services:
   infinity:
-    image: michaelf34/infinity:0.0.70  # Use GPU-compatible image, instead of torch cpu-only.
+    image: michaelf34/infinity:0.0.70 # Use GPU-compatible image, instead of torch cpu-only.
     deploy:
       resources:
         reservations:
