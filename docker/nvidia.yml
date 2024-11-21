@@ -1,8 +1,5 @@
 services:
   infinity:
-    extends:
-      file: compose.cpu.yml
-      service: infinity
     image: michaelf34/infinity:0.0.70  # Use GPU-compatible image, instead of torch cpu-only.
     deploy:
       resources:
