@@ -78,6 +78,9 @@ jobs:
             # Replace the org with the key in the .env file
             sed -i "s/$org=.*/$org=$key/g" .env
           done
+          sed -i "s:EMBEDDING_MODEL=.*:EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2:g" .env
+          sed -i "s:RERANKER_MODEL=.*:RERANKER_MODEL=cross-encoder/ms-marco-TinyBERT-L-2:g" .env
+          echo 'OWL_MODELS_CONFIG=models_ci.json' >> .env
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -92,9 +95,6 @@ jobs:
           set -e
           docker compose -p jamai -f docker/compose.cpu.yml --profile minio up --quiet-pull -d --wait
         env:
-          EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
-          RERANKER_MODEL: cross-encoder/ms-marco-TinyBERT-L-2
-          OWL_MODELS_CONFIG: models_ci.json
           COMPOSE_DOCKER_CLI_BUILD: 1
           DOCKER_BUILDKIT: 1
 
@@ -153,10 +153,6 @@ jobs:
 
           # Restart the owl service with the updated environment
           docker compose -p jamai -f docker/compose.cpu.yml up --quiet-pull -d --wait --no-deps --build --force-recreate owl
-        env:
-          EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
-          RERANKER_MODEL: cross-encoder/ms-marco-TinyBERT-L-2
-          OWL_MODELS_CONFIG: models_ci.json
 
       - name: Python SDK tests (File API, OSS)
         id: python_sdk_test_oss_file
