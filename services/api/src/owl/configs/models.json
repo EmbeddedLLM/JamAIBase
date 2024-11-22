@@ -133,7 +133,7 @@
       "deployments": [
         {
           "litellm_id": "",
-          "api_base": "http://infinity:6919",
+          "api_base": "http://infinity:6909",
           "provider": "ellm"
         }
       ]
