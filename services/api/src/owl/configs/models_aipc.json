@@ -129,15 +129,15 @@
   ],
   "embed_models": [
     {
-      "id": "ellm/sentence-transformers/all-MiniLM-L6-v2",
-      "name": "ELLM MiniLM L6 v2",
+      "id": "ellm/BAAI/bge-small-en-v1.5",
+      "name": "ELLM BAAI BGE Small EN v1.5",
       "context_length": 512,
-      "embedding_size": 384,
+      "embedding_size": 1024,
       "languages": ["mul"],
       "capabilities": ["embed"],
       "deployments": [
         {
-          "litellm_id": "openai/sentence-transformers/all-MiniLM-L6-v2",
+          "litellm_id": "openai/BAAI/bge-small-en-v1.5",
           "api_base": "http://infinity:6909",
           "provider": "ellm"
         }
@@ -209,15 +209,15 @@
   ],
   "rerank_models": [
     {
-      "id": "ellm/cross-encoder/ms-marco-TinyBERT-L-2",
-      "name": "ELLM TinyBERT L2",
+      "id": "ellm/mixedbread-ai/mxbai-rerank-xsmall-v1",
+      "name": "ELLM MxBAI Rerank XSmall v1",
       "context_length": 512,
       "languages": ["en"],
       "capabilities": ["rerank"],
       "deployments": [
         {
           "litellm_id": "",
-          "api_base": "http://infinity:6919",
+          "api_base": "http://infinity:6909",
           "provider": "ellm"
         }
       ]

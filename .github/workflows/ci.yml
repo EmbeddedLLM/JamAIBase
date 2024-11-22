@@ -78,6 +78,9 @@ jobs:
             # Replace the org with the key in the .env file
             sed -i "s/$org=.*/$org=$key/g" .env
           done
+          sed -i "s:EMBEDDING_MODEL=.*:EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2:g" .env
+          sed -i "s:RERANKER_MODEL=.*:RERANKER_MODEL=cross-encoder/ms-marco-TinyBERT-L-2:g" .env
+          echo 'OWL_MODELS_CONFIG=models_ci.json' >> .env
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -91,7 +94,6 @@ jobs:
         run: |
           set -e
           docker compose -p jamai -f docker/compose.cpu.yml --profile minio up --quiet-pull -d --wait
-
         env:
           COMPOSE_DOCKER_CLI_BUILD: 1
           DOCKER_BUILDKIT: 1
@@ -118,6 +120,7 @@ jobs:
 
       - name: Inspect owl logs if Python SDK tests failed
         if: failure() &&  steps.python_sdk_test_oss.outcome == 'failure'
+        timeout-minutes: 1
         run: docker exec jamai-owl-1 cat /app/api/logs/owl.log
 
       - name: Upload Pytest Test Results
@@ -139,6 +142,7 @@ jobs:
 
       - name: Inspect owl logs if TS/JS SDK tests failed
         if: failure() &&  steps.ts_sdk_test_oss.outcome == 'failure'
+        timeout-minutes: 1
         run: docker exec jamai-owl-1 cat /app/api/logs/owl.log
 
       - name: Update owl service for S3 test
@@ -168,6 +172,7 @@ jobs:
 
       - name: Inspect owl logs if Python SDK tests failed
         if: failure() &&  steps.python_sdk_test_oss_file.outcome == 'failure'
+        timeout-minutes: 1
         run: docker exec jamai-owl-1 cat /app/api/logs/owl.log
 
   lance_tests:
