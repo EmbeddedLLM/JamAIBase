@@ -120,6 +120,7 @@ jobs:
 
       - name: Inspect owl logs if Python SDK tests failed
         if: failure() &&  steps.python_sdk_test_oss.outcome == 'failure'
+        timeout-minutes: 1
         run: docker exec jamai-owl-1 cat /app/api/logs/owl.log
 
       - name: Upload Pytest Test Results
@@ -141,6 +142,7 @@ jobs:
 
       - name: Inspect owl logs if TS/JS SDK tests failed
         if: failure() &&  steps.ts_sdk_test_oss.outcome == 'failure'
+        timeout-minutes: 1
         run: docker exec jamai-owl-1 cat /app/api/logs/owl.log
 
       - name: Update owl service for S3 test
@@ -170,6 +172,7 @@ jobs:
 
       - name: Inspect owl logs if Python SDK tests failed
         if: failure() &&  steps.python_sdk_test_oss_file.outcome == 'failure'
+        timeout-minutes: 1
         run: docker exec jamai-owl-1 cat /app/api/logs/owl.log
 
   lance_tests:
