@@ -5,7 +5,7 @@ services:
       [
         "/bin/sh",
         "-c",
-        "(. /app/.venv/bin/activate && HIP_VISIBLE_DEVICES=0 infinity_emb v2 --port 6909 --model-id $${EMBEDDING_MODEL} --model-warmup --device cuda --engine torch --no-bettertransformer --no-compile  &);(. /app/.venv/bin/activate && HIP_VISIBLE_DEVICES=1 infinity_emb v2 --port 6919 --model-id $${RERANKER_MODEL} --model-warmup --device cuda --engine torch --no-bettertransformer --no-compile)",
+        ". /app/.venv/bin/activate && HIP_VISIBLE_DEVICES=0 infinity_emb v2 --port 6909 --model-id $${EMBEDDING_MODEL} --model-id $${RERANKER_MODEL} --model-warmup --device cuda --engine torch --no-bettertransformer --no-compile",
       ]
     # # https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html
     # # instruction to specify the AMD GPU resources

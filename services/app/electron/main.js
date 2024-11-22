@@ -68,10 +68,6 @@ app.whenReady().then(() => {
 		// 	cmd: [path.resolve('resources/infinity_server/infinity_server.exe'), 'v1', '--host', '127.0.0.1', '--port', '6909', '--model-warmup', '--device', 'cpu', '--model-name-or-path', 'sentence-transformers/all-MiniLM-L6-v2'],
 		// 	cwd: path.resolve('resources/infinity_server'),
 		// },
-		// reranker: {
-		// 	cmd: [path.resolve('resources/infinity_server/infinity_server.exe'), 'v1', '--host', '127.0.0.1', '--port', '6919', '--model-warmup', '--device', 'cpu', '--model-name-or-path', 'cross-encoder/ms-marco-TinyBERT-L-2'],
-		// 	cwd: path.resolve('resources/infinity_server'),
-		// },
 		// ellm_api_server: {
 		// 	cmd: [path.resolve('resources/ellm_api_server/ellm_api_server.exe'), '--model_path', path.resolve('resources/phi3-mini-directml-int4-awq-block-128'), '--port', '5555'],
 		// 	cwd: path.resolve('resources'),
