@@ -1,6 +1,6 @@
 services:
   infinity:
-    image: michaelf34/infinity:0.0.70-cpu
+    image: michaelf34/infinity:0.0.70
     container_name: jamai_infinity
     command: ["v2", "--engine", "torch", "--port", "6909", "--model-warmup", "--model-id", "${EMBEDDING_MODEL}", "--model-id", "${RERANKER_MODEL}"]
     healthcheck:
@@ -19,6 +19,7 @@ services:
 
   unstructuredio:
     image: downloads.unstructured.io/unstructured-io/unstructured-api:latest
+    platform: linux/amd64
     entrypoint: ["/usr/bin/env", "bash", "-c", "uvicorn prepline_general.api.app:app --log-config logger_config.yaml --port 6989 --host 0.0.0.0"]
     healthcheck:
       test: ["CMD-SHELL", "wget http://localhost:6989/healthcheck -O /dev/null || exit 1"]
@@ -50,7 +51,7 @@ services:
       - jamai
 
   dragonfly:
-    image: "ghcr.io/embeddedllm/dragonfly"
+    image: "docker.dragonflydb.io/dragonflydb/dragonfly"
     ulimits:
       memlock: -1
     healthcheck:
