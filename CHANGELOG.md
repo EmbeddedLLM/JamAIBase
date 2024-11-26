@@ -16,15 +16,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [v0.3.1] (2024-11-26)
 
-### ADDED
+This is a bug fix release for frontend code. SDKs are not affected.
 
 ### CHANGES / FIXED
 
-Backend
+Frontend
 
-- Enable Projects for OSS 
-
-
+- Enable Projects for OSS
 
 ## [v0.3] (2024-11-20)
 
