@@ -14,6 +14,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - The version number mentioned here refers to the cloud version. For each release, all SDKs will have the same major and minor version, but their patch version may differ. For example, latest Python SDK might be `v0.2.0` whereas TS SDK might be `v0.2.1`, but both will be compatible with release `v0.2`.
 
+## [v0.3.1] (2024-11-26)
+
+### ADDED
+
+### CHANGES / FIXED
+
+Backend
+
+- Enable Projects for OSS 
+
+
+
 ## [v0.3] (2024-11-20)
 
 ### ADDED
