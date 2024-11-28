@@ -209,7 +209,8 @@ class LLMEngine:
         model: str = "",
         capabilities: list[str] | None = None,
     ) -> ModelInfoResponse:
-        models: ModelListConfig = self.request.state.all_models.models
+        model_list: ModelListConfig = self.request.state.all_models
+        models = model_list.models
         # Filter by name
         if model != "":
             models = [m for m in models if m.id == model]
