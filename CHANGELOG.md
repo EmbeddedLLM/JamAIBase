@@ -21,6 +21,11 @@ Backend - owl (API server)
 - Fix bge-small embedding size (1024 -> 384)
 - Correctly filter models at auth level
 
+Frontend
+
+- Added support for multiple multiturn columns in Chat table chat view.
+- Added multiturn chat toggle to column settings.
+
 Docker
 
 - Added Mac Apple Silicon `compose.mac.yml`
