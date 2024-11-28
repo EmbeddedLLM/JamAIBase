@@ -95,7 +95,7 @@
 			]
 		];
 
-		// generationStatus = true;
+		generationStatus = true;
 		loadedStreams = Object.fromEntries(
 			tableData.cols
 				.map((col) =>
@@ -194,16 +194,18 @@
 										}
 									}
 								} else {
-									if ((parsedValue.choices[0].message.content ?? '').includes('\n')) {
-										loadedStreams[parsedValue.output_column_name] = [
-											...loadedStreams[parsedValue.output_column_name],
-											latestStreams[parsedValue.output_column_name] +
-												(parsedValue.choices[0]?.message?.content ?? '')
-										];
-										latestStreams[parsedValue.output_column_name] = '';
-									} else {
-										latestStreams[parsedValue.output_column_name] +=
-											parsedValue.choices[0]?.message?.content ?? '';
+									if (loadedStreams[parsedValue.output_column_name]) {
+										if ((parsedValue.choices[0].message.content ?? '').includes('\n')) {
+											loadedStreams[parsedValue.output_column_name] = [
+												...loadedStreams[parsedValue.output_column_name],
+												latestStreams[parsedValue.output_column_name] +
+													(parsedValue.choices[0]?.message?.content ?? '')
+											];
+											latestStreams[parsedValue.output_column_name] = '';
+										} else {
+											latestStreams[parsedValue.output_column_name] +=
+												parsedValue.choices[0]?.message?.content ?? '';
+										}
 									}
 								}
 							} else {
