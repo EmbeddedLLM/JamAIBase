@@ -6,12 +6,12 @@
 	import { page } from '$app/stores';
 	import { genTableRows } from '$lib/components/tables/tablesStore';
 	import logger from '$lib/logger';
-	import type { GenTable, GenTableCol } from '$lib/types';
+	import type { GenTable, GenTableCol, Thread } from '$lib/types';
 
 	import ChatTable from '$lib/components/tables/ChatTable.svelte';
 	import { ColumnSettings, TablePagination } from '$lib/components/tables/(sub)';
 	import { ActionsDropdown, GenerateButton } from '../../(components)';
-	import SlideToggle from './ModeToggle.svelte';
+	import ModeToggle from './ModeToggle.svelte';
 	import ChatMode from './ChatMode.svelte';
 	import { AddColumnDialog, DeleteDialogs } from '../../(dialogs)';
 	import SearchBar from '$lib/components/preset/SearchBar.svelte';
@@ -23,16 +23,16 @@
 	import ArrowBackIcon from '$lib/icons/ArrowBackIcon.svelte';
 
 	export let data;
-	$: ({ table, tableRows, thread, userData } = data);
+	$: ({ table, tableRows, userData } = data);
 	let tableData: GenTable | undefined;
 	let tableRowsCount: number | undefined;
-	let tableThread: Awaited<typeof thread>['data'];
-	let tableThreadError: { error: number; message: any };
+	let tableThread: Thread[][] = [];
+	let threadLoaded = false;
 	let tableError: { error: number; message: Awaited<typeof table>['message'] } | undefined;
 	let tableLoaded = false;
 
 	$: table, resetTable();
-	const resetTable = () => {
+	function resetTable() {
 		Promise.all([
 			table.then((tableRes) => {
 				tableData = structuredClone(tableRes.data); // Client reorder column
@@ -45,14 +45,87 @@
 				tableRowsCount = tableRowsRes.data?.total_rows;
 			})
 		]).then(() => (tableLoaded = true));
+	}
 
-		thread.then((threadRes) => {
-			tableThread = threadRes.data;
-			if (threadRes.error) {
-				tableThreadError = { error: threadRes.error, message: threadRes.message };
-			}
-		});
-	};
+	$: tableLoaded, fetchThreads();
+	async function fetchThreads() {
+		if (!tableData) return;
+
+		const outputCols = tableData.cols.filter(
+			(col) =>
+				col.gen_config?.object === 'gen_config.llm' &&
+				col.gen_config.multi_turn &&
+				/\${User}/g.test(col.gen_config.prompt ?? '')
+		);
+		const threadsResponses = await Promise.allSettled(
+			outputCols.map((col) =>
+				fetch(
+					`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat/${tableData!.id}/thread?` +
+						new URLSearchParams({
+							column_id: col.id
+						}),
+					{
+						headers: {
+							'x-project-id': $page.params.project_id
+						}
+					}
+				)
+			)
+		);
+		const threadsBodys = await Promise.allSettled(
+			threadsResponses.map((val) => (val.status === 'fulfilled' ? val.value.json() : val.reason))
+		);
+
+		tableThread = [];
+
+		const threadLength = threadsBodys.find(
+			(promise) => promise.status === 'fulfilled' && promise.value.object === 'chat.thread'
+			//@ts-ignore
+		)?.value.thread.length!;
+		for (let i = 0; i < threadLength; i++) {
+			if (i === 0) continue;
+			threadsResponses.forEach((promise, idx) => {
+				const threadBody = threadsBodys[idx];
+				if (promise.status === 'fulfilled') {
+					if (threadBody.status === 'fulfilled') {
+						if (promise.value.ok) {
+							if (threadBody.value.thread[i].role === 'system') return;
+							tableThread[i] = [
+								...(tableThread[i] ?? []),
+								{ ...threadBody.value.thread[i], column_id: outputCols[idx].id }
+							];
+						} else {
+							logger.error('CHATTBL_CHAT_GETERR', threadBody.value);
+							tableThread[i] = [
+								{
+									error: promise.value.status,
+									message: threadBody.value,
+									column_id: outputCols[idx].id
+								}
+							];
+						}
+					} else {
+						logger.error('CHATTBL_CHAT_GETPARSE', 'Failed to parse to parse thread response');
+						tableThread[i] = [
+							{
+								error: promise.value.status,
+								message: 'Failed to parse thread response',
+								column_id: outputCols[idx].id
+							}
+						];
+					}
+				} else {
+					logger.error('CHATTBL_CHAT_GETUNKNOWN', 'Failed to get thread');
+					tableThread[i] = [
+						{ error: 500, message: 'Failed to get thread', column_id: outputCols[idx].id }
+					];
+				}
+			});
+		}
+		tableThread = tableThread.filter((i) => i);
+
+		threadLoaded = true;
+	}
 
 	let streamingRows: Record<string, string[]> = {};
 
@@ -70,7 +143,6 @@
 		type: 'input',
 		showDialog: false
 	};
-	let isAddingRow = false;
 	let isDeletingColumn: string | null = null;
 	let isDeletingRow: string[] | null = null;
 	let isColumnSettingsOpen: { column: GenTableCol | null; showMenu: boolean } = {
@@ -88,6 +160,8 @@
 				await invalidate('chat-table:slug');
 				isLoadingSearch = false;
 			}
+
+			await fetchThreads();
 
 			selectedRows = [];
 			if (hideColumnSettings) isColumnSettingsOpen = { ...isColumnSettingsOpen, showMenu: false };
@@ -158,7 +232,7 @@
 		inert={isColumnSettingsOpen.showMenu}
 		class="flex items-center justify-between pl-4 pr-2 sm:pr-4 mt-[1.5px] sm:mt-3 mb-1 gap-2"
 	>
-		<div class="flex items-center gap-2 text-sm sm:text-base">
+		<div class="grow flex items-center gap-2 text-sm sm:text-base">
 			<a href="/project/{$page.params.project_id}/chat-table" class="[all:unset] !hidden sm:!block">
 				<Button
 					variant="ghost"
@@ -184,122 +258,98 @@
 				{/await}
 			</span>
 
-			{#if tableData?.parent_id}
-				<span
-					title={tableData?.parent_id}
-					style="background-color: #CAE7FD; color: #0295FF;"
-					class="flex-[0_0_auto] hidden xxs:block px-1.5 py-0 sm:py-1 w-min whitespace-nowrap rounded-[2px] select-none capitalize font-medium text-xxs sm:text-xs line-clamp-1 break-all"
-				>
-					{tableData?.parent_id}
-				</span>
-			{/if}
+			<div class="flex-[0_0_auto] grow flex items-center justify-between gap-1">
+				{#if tableLoaded || (tableData && $genTableRows)}
+					<div>
+						{#if chatTableMode != 'chat'}
+							<SearchBar
+								bind:searchQuery
+								{isLoadingSearch}
+								debouncedSearch={debouncedSearchRows}
+								label="Search rows"
+							/>
+						{/if}
+					</div>
 
-			{#if chatTableMode == 'chat'}
-				<Button
-					variant="ghost"
-					title="Column settings"
-					on:click={() => {
-						const aiColumn = tableData?.cols?.find((col) => col.id == 'AI');
-						if (aiColumn) {
-							isColumnSettingsOpen = { column: aiColumn, showMenu: true };
-						}
-					}}
-					class="gap-1 px-0 sm:px-2.5 py-0 sm:py-1.5 h-8 sm:h-[unset] w-8 sm:w-[unset] text-[#475467] bg-[#F2F4F7] hover:bg-[#E4E7EC] aspect-square sm:aspect-auto"
-				>
-					<TuneIcon class="h-4 stroke-[0.8]" />
+					<div class="flex items-center gap-1">
+						{#if chatTableMode != 'chat'}
+							<div
+								title={selectedRows.length === 0 ? 'Select row to generate output' : undefined}
+								style="grid-template-columns: minmax(0, 1fr) {selectedRows.length !== 0
+									? 'minmax(0, 1fr)'
+									: 'minmax(0, 0fr)'};"
+								class="grid place-items-end items-center gap-1 {selectedRows.length !== 0 ||
+								Object.keys(streamingRows).length !== 0
+									? 'opacity-100'
+									: 'opacity-80 grayscale-[90]'} transition-[opacity,grid-template-columns]"
+							>
+								<GenerateButton
+									inert={selectedRows.length === 0 ? true : undefined}
+									tableType="chat"
+									bind:selectedRows
+									bind:streamingRows
+									{tableData}
+									{refetchTable}
+									class={selectedRows.length === 0 ? 'z-[5] translate-x-1 pointer-events-none' : ''}
+								/>
 
-					<span class="hidden sm:block text-sm">Settings</span>
-				</Button>
-			{/if}
-		</div>
+								<Button
+									inert={selectedRows.length === 0 ? true : undefined}
+									title="Delete row(s)"
+									on:click={() => (isDeletingRow = selectedRows)}
+									class="flex items-center gap-2 p-0 md:px-3 h-8 sm:h-9 text-[#F04438] bg-[#F2F4F7] hover:bg-[#E4E7EC] focus-visible:bg-[#E4E7EC] active:bg-[#E4E7EC]  aspect-square md:aspect-auto {selectedRows.length !==
+									0
+										? 'opacity-100'
+										: 'opacity-0 pointer-events-none'} transition-opacity"
+								>
+									<Trash_2 class="h-4 w-4" />
 
-		<div class="flex-[0_0_auto] flex items-center gap-1.5">
-			{#if tableLoaded || (tableData && $genTableRows)}
-				<SlideToggle
-					validateBeforeChange={() => {
-						// Prevent toggling if streaming
-						if (generationStatus || Object.keys(streamingRows).length) {
-							return false;
-						} else return true;
-					}}
-					checked={chatTableMode == 'table'}
-					on:checkedChange={(e) => {
-						if (e.detail.value) {
-							chatTableMode = 'table';
-						} else {
-							chatTableMode = 'chat';
-						}
-					}}
-				/>
-			{:else}
-				<Skeleton class="h-[32px] sm:h-[36px] w-[68px] sm:w-[72px] rounded-sm" />
-			{/if}
+									<span class="hidden md:block">Delete row(s)</span>
+								</Button>
+							</div>
+						{/if}
+
+						<ModeToggle
+							validateBeforeChange={() => {
+								// Prevent toggling if streaming
+								if (generationStatus || Object.keys(streamingRows).length) {
+									return false;
+								} else return true;
+							}}
+							checked={chatTableMode == 'table'}
+							on:checkedChange={(e) => {
+								if (e.detail.value) {
+									chatTableMode = 'table';
+								} else {
+									chatTableMode = 'chat';
+								}
+							}}
+						/>
+
+						<ActionsDropdown tableType="chat" bind:isAddingColumn {tableData} {refetchTable} />
+					</div>
+				{:else}
+					<Skeleton class="h-[32px] sm:h-[36px] w-[32px] sm:w-[36px] rounded-full" />
+					<div class="flex items-center gap-1">
+						<Skeleton class="h-[32px] sm:h-[36px] w-[32px] sm:w-[100px] rounded-full" />
+						<Skeleton class="h-[32px] sm:h-[36px] w-[64px] sm:w-[72px] rounded-full" />
+						<Skeleton class="h-[32px] sm:h-[36px] w-[32px] sm:w-[36px] rounded-full" />
+					</div>
+				{/if}
+			</div>
 		</div>
 	</div>
 
 	{#if chatTableMode == 'chat'}
-		<ChatMode bind:generationStatus thread={tableThread} threadError={tableThreadError} />
+		<ChatMode
+			bind:generationStatus
+			bind:isColumnSettingsOpen
+			{tableData}
+			thread={tableThread}
+			{threadLoaded}
+			{refetchTable}
+		/>
 	{:else}
-		<div
-			inert={isColumnSettingsOpen.showMenu}
-			class="flex items-center justify-between px-4 mb-1.5 sm:mb-2"
-		>
-			{#if tableLoaded || (tableData && $genTableRows)}
-				<SearchBar
-					bind:searchQuery
-					{isLoadingSearch}
-					debouncedSearch={debouncedSearchRows}
-					label="Search rows"
-					class={searchQuery ? 'w-[12rem]' : 'w-[6.5rem]'}
-				/>
-
-				<div class="flex items-center gap-1">
-					<div
-						title={selectedRows.length === 0 ? 'Select row to generate output' : undefined}
-						style="grid-template-columns: minmax(0, 1fr) {selectedRows.length !== 0
-							? 'minmax(0, 1fr)'
-							: 'minmax(0, 0fr)'};"
-						class="grid place-items-end items-center gap-1 {selectedRows.length !== 0 ||
-						Object.keys(streamingRows).length !== 0
-							? 'opacity-100'
-							: 'opacity-80 [&_*]:!text-[#98A2B3] [&_button]:bg-[#E4E7EC] [&>button>div]:bg-[#E4E7EC]'} transition-[opacity,grid-template-columns]"
-					>
-						<GenerateButton
-							inert={selectedRows.length === 0 ? true : undefined}
-							tableType="chat"
-							bind:selectedRows
-							bind:streamingRows
-							{tableData}
-							{refetchTable}
-							class={selectedRows.length === 0 ? 'z-[5] translate-x-1 pointer-events-none' : ''}
-						/>
-
-						<Button
-							inert={selectedRows.length === 0 ? true : undefined}
-							title="Delete row(s)"
-							on:click={() => (isDeletingRow = selectedRows)}
-							class="flex items-center gap-2 p-0 md:px-3 h-8 sm:h-9 text-[#F04438] bg-[#F2F4F7] hover:bg-[#E4E7EC] focus-visible:bg-[#E4E7EC] active:bg-[#E4E7EC]  aspect-square md:aspect-auto {selectedRows.length !==
-							0
-								? 'opacity-100'
-								: 'opacity-0 pointer-events-none'} transition-opacity"
-						>
-							<Trash_2 class="h-4 w-4" />
-
-							<span class="hidden md:block">Delete row(s)</span>
-						</Button>
-					</div>
-
-					<ActionsDropdown tableType="chat" bind:isAddingColumn {tableData} {refetchTable} />
-				</div>
-			{:else}
-				<Skeleton class="h-[32px] sm:h-[38px] w-[102px] rounded-full" />
-				<div class="flex items-center gap-1">
-					<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[100px] rounded-md" />
-					<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[38px] rounded-md" />
-				</div>
-			{/if}
-		</div>
-
 		<ChatTable
 			bind:userData
 			bind:tableData
@@ -307,8 +357,9 @@
 			bind:selectedRows
 			bind:isColumnSettingsOpen
 			bind:isDeletingColumn
-			{streamingRows}
+			bind:streamingRows
 			{table}
+			{refetchTable}
 		/>
 
 		{#if !tableError}

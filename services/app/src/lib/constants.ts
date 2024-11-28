@@ -21,7 +21,7 @@ export const knowledgeTableStaticCols = [
 	'Text Embed',
 	'File ID'
 ];
-export const chatTableStaticCols = ['ID', 'Updated at', 'User', 'AI'];
+export const chatTableStaticCols = ['ID', 'Updated at', 'User'];
 export const knowledgeTableEmbedCols = ['Title Embed', 'Text Embed'];
 export const knowledgeTableFiletypes = [
 	'.csv',

@@ -104,9 +104,6 @@
 			//? Revert back to original value
 			genTableRows.revert(originalValues);
 		} else {
-			//Delete all data except for inputs
-			genTableRows.clearOutputs(tableData, toRegenRowIds);
-
 			const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
 
 			let isStreaming = true;
@@ -210,7 +207,7 @@
 			variant="ghost"
 			on:click={(e) => e.stopPropagation()}
 			title="Column actions"
-			class="flex-[0_0_auto] ml-auto p-0 h-7 w-7 aspect-square"
+			class="flex-[0_0_auto] !z-0 ml-auto p-0 h-7 w-7 aspect-square"
 		>
 			<MoreVertIcon class="h-[18px] w-[18px]" />
 		</Button>
@@ -235,7 +232,7 @@
 
 		{#if !readonly && (tableType !== 'chat' || !chatTableStaticCols.includes(column.id)) && (tableType !== 'knowledge' || !knowledgeTableStaticCols.includes(column.id))}
 			<DropdownMenu.Group>
-				<!-- {#if selectedRows.length > 0}
+				{#if selectedRows.length > 0}
 					<DropdownMenu.Sub>
 						<DropdownMenu.SubTrigger>
 							<StarIcon class="h-[15px] w-[15px] mr-1.5" />
@@ -253,7 +250,7 @@
 							</DropdownMenu.Item>
 						</DropdownMenu.SubContent>
 					</DropdownMenu.Sub>
-				{/if} -->
+				{/if}
 
 				<DropdownMenu.Item
 					on:click={async () => {

@@ -2,7 +2,7 @@ import { PUBLIC_JAMAI_URL } from '$env/static/public';
 import { error } from '@sveltejs/kit';
 import logger from '$lib/logger.js';
 import { chatRowsPerPage } from '$lib/constants.js';
-import type { GenTable, GenTableRow, ChatRequest } from '$lib/types.js';
+import type { GenTable, GenTableRow } from '$lib/types.js';
 
 export const load = async ({ depends, fetch, params, parent, url }) => {
 	depends('chat-table:slug');
@@ -72,35 +72,8 @@ export const load = async ({ depends, fetch, params, parent, url }) => {
 		}
 	};
 
-	const getThread = async () => {
-		const tableThreadRes = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat/${params.table_id}/thread?` +
-				new URLSearchParams({
-					column_id: 'AI'
-				}),
-			{
-				headers: {
-					'x-project-id': params.project_id
-				}
-			}
-		);
-		const tableThreadBody = await tableThreadRes.json();
-
-		if (!tableThreadRes.ok) {
-			if (tableThreadRes.status !== 404 && tableThreadRes.status !== 422) {
-				logger.error('CHATTBL_TBL_GETTHREAD', tableThreadBody);
-			}
-			return { error: tableThreadRes.status, message: tableThreadBody };
-		} else {
-			return {
-				data: tableThreadBody.thread as ChatRequest['messages']
-			};
-		}
-	};
-
 	return {
 		table: getTable(),
-		tableRows: getRows(),
-		thread: getThread()
+		tableRows: getRows()
 	};
 };

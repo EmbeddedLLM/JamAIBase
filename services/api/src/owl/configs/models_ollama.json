@@ -62,7 +62,7 @@
       "id": "ellm/BAAI/bge-small-en-v1.5",
       "name": "ELLM BAAI BGE Small EN v1.5",
       "context_length": 512,
-      "embedding_size": 1024,
+      "embedding_size": 384,
       "languages": ["mul"],
       "capabilities": ["embed"],
       "deployments": [

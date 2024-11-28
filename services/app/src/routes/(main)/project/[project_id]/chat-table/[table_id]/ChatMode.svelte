@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { onMount, tick } from 'svelte';
-	import { invalidate } from '$app/navigation';
 	import { browser } from '$app/environment';
 	import { page } from '$app/stores';
 	import showdown from 'showdown';
@@ -10,7 +9,7 @@
 	import '../../../../../../showdown-theme.css';
 	import logger from '$lib/logger';
 	import { codeblock, codehighlight, table as tableExtension } from '$lib/showdown';
-	import type { ChatRequest, GenTableStreamEvent } from '$lib/types';
+	import type { GenTable, GenTableCol, GenTableStreamEvent, Thread } from '$lib/types';
 
 	import RowStreamIndicator from '$lib/components/preset/RowStreamIndicator.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
@@ -18,11 +17,15 @@
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
 	import SendIcon from '$lib/icons/SendIcon.svelte';
 	import RegenerateIcon from '$lib/icons/RegenerateIcon.svelte';
+	import MultiturnChatIcon from '$lib/icons/MultiturnChatIcon.svelte';
+	import TuneIcon from '$lib/icons/TuneIcon.svelte';
 
-	// export let table: PageData['table'];
-	export let thread: ChatRequest['messages'] | undefined;
-	export let threadError: { error: number; message: any };
+	export let tableData: GenTable | undefined;
+	export let thread: Thread[][];
+	export let threadLoaded: boolean;
 	export let generationStatus: boolean;
+	export let isColumnSettingsOpen: { column: GenTableCol | null; showMenu: boolean };
+	export let refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
 
 	/* let thread: ChatRequest['messages'] = [];
 	$: table, resetThread();
@@ -41,8 +44,8 @@
 		extensions: [showdownHtmlEscape, codeblock, codehighlight, tableExtension]
 	});
 
-	let loadedStream: string[] = [];
-	let latestStream = '';
+	let loadedStreams: Record<string, string[]> = {};
+	let latestStreams: Record<string, string> = {};
 
 	let showRawTexts = false;
 
@@ -72,7 +75,7 @@
 	}
 
 	async function handleChatSubmit() {
-		if (!thread) return;
+		if (!tableData || !thread) return;
 		if (generationStatus || !chatMessage.trim()) return;
 		const cachedChatMessage = chatMessage;
 		chatMessage = '';
@@ -83,13 +86,34 @@
 		//? Add user message to the chat
 		thread = [
 			...thread,
-			{
-				role: 'user',
-				content: cachedChatMessage
-			}
+			[
+				{
+					column_id: '',
+					role: 'user',
+					content: cachedChatMessage
+				}
+			]
 		];
 
-		generationStatus = true;
+		// generationStatus = true;
+		loadedStreams = Object.fromEntries(
+			tableData.cols
+				.map((col) =>
+					col.gen_config?.object === 'gen_config.llm' && col.gen_config.multi_turn
+						? [[col.id, []]]
+						: []
+				)
+				.flat()
+		);
+		latestStreams = Object.fromEntries(
+			tableData.cols
+				.map((col) =>
+					col.gen_config?.object === 'gen_config.llm' && col.gen_config.multi_turn
+						? [[col.id, '']]
+						: []
+				)
+				.flat()
+		);
 
 		//? Show user message
 		await tick();
@@ -160,22 +184,26 @@
 							}
 
 							if (parsedValue.object == 'gen_table.completion.chunk') {
-								if (
-									parsedValue.choices[0].finish_reason &&
-									parsedValue.choices[0].finish_reason === 'error'
-								) {
-									logger.error('CHATTBL_CHAT_ADDSTREAM', parsedValue);
-									console.error('STREAMING_ERROR', parsedValue);
-									alert(`Error while streaming: ${parsedValue.choices[0].message.content}`);
-								} else if (parsedValue.output_column_name === 'AI') {
+								if (parsedValue.choices[0].finish_reason) {
+									switch (parsedValue.choices[0].finish_reason) {
+										case 'error': {
+											logger.error('CHATTBL_CHAT_ADDSTREAM', parsedValue);
+											console.error('STREAMING_ERROR', parsedValue);
+											alert(`Error while streaming: ${parsedValue.choices[0].message.content}`);
+											break;
+										}
+									}
+								} else {
 									if ((parsedValue.choices[0].message.content ?? '').includes('\n')) {
-										loadedStream = [
-											...loadedStream,
-											latestStream + (parsedValue.choices[0]?.message?.content ?? '')
+										loadedStreams[parsedValue.output_column_name] = [
+											...loadedStreams[parsedValue.output_column_name],
+											latestStreams[parsedValue.output_column_name] +
+												(parsedValue.choices[0]?.message?.content ?? '')
 										];
-										latestStream = '';
+										latestStreams[parsedValue.output_column_name] = '';
 									} else {
-										latestStream += parsedValue.choices[0]?.message?.content ?? '';
+										latestStreams[parsedValue.output_column_name] +=
+											parsedValue.choices[0]?.message?.content ?? '';
 									}
 								}
 							} else {
@@ -194,169 +222,19 @@
 
 			thread = [
 				...thread,
-				{
+				Object.keys(loadedStreams).map((key) => ({
+					column_id: key,
 					role: 'assistant',
-					content: [...loadedStream, latestStream].join('')
-				}
+					content: [...loadedStreams[key], latestStreams[key]].join('')
+				}))
 			];
-			loadedStream = [];
-			latestStream = '';
+			loadedStreams = {};
+			latestStreams = {};
 
-			invalidate('chat-table:slug');
+			refetchTable();
 		}
 
 		generationStatus = false;
-	}
-
-	async function handleRegenerate() {
-		if (!thread || thread.length === 0) return;
-		if (thread.at(-1)?.role !== 'assistant') return;
-
-		const cachedAssistantResponse = thread.at(-1)?.content ?? '';
-		thread = thread.slice(0, -1);
-
-		generationStatus = true;
-
-		const rowsResponse = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat/${$page.params.table_id}/rows?${new URLSearchParams(
-				{
-					offset: '0',
-					limit: '1'
-				}
-			)}`,
-			{
-				headers: {
-					'x-project-id': $page.params.project_id
-				}
-			}
-		);
-		const rowsBody = await rowsResponse.json();
-
-		if (!rowsResponse.ok) {
-			logger.error('CHATTBL_CHAT_REGENGETROW', rowsBody);
-			console.error(rowsBody);
-			return resetThread();
-		}
-
-		if (!rowsBody?.items?.length) {
-			alert('No rows found');
-			return resetThread();
-		}
-
-		const regenResponse = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat/rows/regen`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'x-project-id': $page.params.project_id
-			},
-			body: JSON.stringify({
-				table_id: $page.params.table_id,
-				row_ids: [rowsBody.items[0].ID],
-				stream: true
-			})
-		});
-
-		if (regenResponse.status != 200) {
-			const regenResponseBody = await regenResponse.json();
-			logger.error('CHATTBL_CHAT_REGEN', regenResponseBody);
-			toast.error('Failed to regenerate row', {
-				id: regenResponseBody.message || JSON.stringify(regenResponseBody),
-				description: CustomToastDesc,
-				componentProps: {
-					description: regenResponseBody.message || JSON.stringify(regenResponseBody),
-					requestID: regenResponseBody.request_id
-				}
-			});
-			resetThread();
-		} else {
-			const reader = regenResponse.body!.pipeThrough(new TextDecoderStream()).getReader();
-
-			let isStreaming = true;
-			let lastMessage = '';
-			while (isStreaming) {
-				try {
-					const { value, done } = await reader.read();
-					if (done) break;
-
-					if (value.endsWith('\n\n')) {
-						const lines = (lastMessage + value)
-							.split('\n\n')
-							.filter((i) => i.trim())
-							.flatMap((line) => line.split('\n')); //? Split by \n to handle collation
-
-						lastMessage = '';
-
-						for (const line of lines) {
-							const sumValue = line.replace(/^data: /, '').replace(/data: \[DONE\]\s+$/, '');
-
-							if (sumValue.trim() == '[DONE]') break;
-
-							let parsedValue;
-							try {
-								parsedValue = JSON.parse(sumValue) as GenTableStreamEvent;
-							} catch (err) {
-								console.error('Error parsing:', sumValue);
-								logger.error('CHATTBL_CHAT_REGENSTREAMPARSE', { parsing: sumValue, error: err });
-								continue;
-							}
-
-							if (parsedValue.object == 'gen_table.completion.chunk') {
-								if (
-									parsedValue.choices[0].finish_reason &&
-									parsedValue.choices[0].finish_reason === 'error'
-								) {
-									logger.error('CHATTBL_CHAT_REGENSTREAM', parsedValue);
-									console.error('STREAMING_ERROR', parsedValue);
-									alert(`Error while streaming: ${parsedValue.choices[0].message.content}`);
-								} else if (parsedValue.output_column_name === 'AI') {
-									if ((parsedValue.choices[0].message.content ?? '').includes('\n')) {
-										loadedStream = [
-											...loadedStream,
-											latestStream + (parsedValue.choices[0]?.message?.content ?? '')
-										];
-										latestStream = '';
-									} else {
-										latestStream += parsedValue.choices[0]?.message?.content ?? '';
-									}
-								}
-							} else {
-								console.warn('Unknown message:', parsedValue);
-							}
-						}
-					} else {
-						lastMessage += value;
-					}
-				} catch (err) {
-					logger.error('CHATTBL_ROW_REGENSTREAM', err);
-					console.error(err);
-					break;
-				}
-			}
-
-			thread = [
-				...thread,
-				{
-					role: 'assistant',
-					content: [...loadedStream, latestStream].join('')
-				}
-			];
-			loadedStream = [];
-			latestStream = '';
-
-			invalidate('chat-table:slug');
-		}
-
-		generationStatus = false;
-
-		function resetThread() {
-			thread = [
-				...(thread ?? []),
-				{
-					role: 'assistant',
-					content: cachedAssistantResponse
-				}
-			];
-		}
 	}
 
 	onMount(() => {
@@ -376,7 +254,7 @@
 			chatWindow.scrollTop = chatWindow.scrollHeight;
 		}
 	};
-	$: loadedStream, scrollToBotttom();
+	$: loadedStreams, scrollToBotttom();
 
 	function handleResize(e: MouseEvent) {
 		if (!isResizing) return;
@@ -436,100 +314,228 @@
 	bind:this={chatWindow}
 	data-testid="chat-window"
 	id="chat-window"
-	class="relative grow flex flex-col gap-4 pt-6 pb-16 px-6 lg:px-20 2xl:px-36 3xl:px-72 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
+	class="relative grow flex flex-col gap-4 pt-6 pb-16 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
 >
-	{#if thread}
+	{#if threadLoaded}
 		{#each thread as threadItem, index}
-			{@const { role, content: message } = threadItem}
-			{#if role == 'assistant'}
-				<div
-					data-testid="chat-message"
-					class="relative self-start xl:mr-[20%] p-4 max-w-full rounded-xl bg-[#F2F4F7] data-dark:bg-[#5B7EE5] text-text group scroll-my-2"
-				>
-					<p
-						class="flex-col gap-4 response-message whitespace-pre-line text-sm {generationStatus &&
-						index === thread.length - 1 &&
-						message.length !== 0
-							? 'block response-cursor'
-							: 'flex'}"
-					>
-						{#if showRawTexts}
-							{message}
-						{:else}
-							{@const rawHtml = converter.makeHtml(message)}
-							{@html rawHtml}
-							<!-- {#await addCitations(message_id, rawHtml, references)}
-								{@html rawHtml}
-							{:then promiseMessage}
-								{@html promiseMessage}
-							{/await} -->
-						{/if}
-					</p>
-
-					<!-- {#if !generationStatus && index == thread.length - 1}
-						<div
-							class='absolute xl:top-3.5 top-[unset] xl:bottom-[unset] -bottom-9 xl:-right-9 right-[unset] xl:left-[unset] left-0'
-						>
-							<Button
-								variant="ghost"
-								on:click={() => showReferences(activeLineItem)}
-								class="relative p-0 h-7 w-7 opacity-0 group-hover:opacity-100 fill-secondary-content rounded-[0.25rem] transition-opacity duration-75 group/btn"
-							>
-								<ReferencesIcon class="h-6 text-[#666] data-dark:text-white" />
-
-								<Tooltip
-									arrowSize={5}
-									class="top-1/2 -translate-y-1/2 left-9 z-[100] flex flex-col py-1.5 gap-2 w-max text-xs whitespace-pre-line opacity-0 group-hover/btn:opacity-100 after:-left-2.5 after:bottom-1/2 after:translate-y-1/2 after:rotate-90 duration-75"
+			{@const nonErrorMessage = threadItem.find((v) => 'content' in v && v.role === 'user')}
+			{@const messages = nonErrorMessage ? [nonErrorMessage] : threadItem}
+			{@const messagesWithContent = messages.filter(
+				(v) => ('content' in v && v.content?.trim()) || 'error' in v
+			)}
+			<div
+				style="--message-len: {messagesWithContent.length};"
+				class="flex-[0_0_auto] grid message-container gap-3 px-6 lg:px-20 2xl:px-36 3xl:px-72 overflow-x-auto overflow-y-hidden"
+			>
+				{#each messages as message}
+					{@const { column_id } = message}
+					{#if 'content' in message}
+						{@const { content, role } = message}
+						{#if content?.trim()}
+							{#if role == 'assistant'}
+								<div
+									class="flex flex-col gap-1 {messagesWithContent.length === 1
+										? 'col-span-1 xl:col-span-2'
+										: ''} group/message-container"
 								>
-									<span class="text-sm">References</span>
-								</Tooltip>
-							</Button>
+									<div class="flex items-center justify-between">
+										<button
+											on:click={() => {
+												const targetCol = tableData?.cols?.find((col) => col.id == column_id);
+												if (targetCol) {
+													isColumnSettingsOpen = { column: targetCol, showMenu: true };
+												}
+											}}
+											class="flex items-center gap-2 text-sm"
+										>
+											<span
+												style="background-color: #FFEAD5; color: #FD853A;"
+												class="w-min p-0.5 py-1 whitespace-nowrap rounded-[0.1875rem] select-none flex items-center"
+											>
+												<span class="capitalize text-xs font-medium px-1"> output </span>
+												<span
+													class="bg-white w-min px-1 text-xs font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
+												>
+													str
+												</span>
+
+												<hr class="ml-1 h-3 border-l border-[#FD853A]" />
+												<div class="relative h-4 w-[18px]">
+													<MultiturnChatIcon class="absolute h-[18px] -translate-y-px" />
+												</div>
+											</span>
+
+											<span class="line-clamp-2">
+												{column_id}
+											</span>
+										</button>
+									</div>
+
+									<div
+										data-testid="chat-message"
+										class="relative self-start {messagesWithContent.length === 1
+											? 'xl:mr-[20%]'
+											: 'w-full'} p-4 max-w-full rounded-xl bg-[#F2F4F7] data-dark:bg-[#5B7EE5] text-text group scroll-my-2"
+									>
+										<p
+											class="flex-col gap-4 response-message whitespace-pre-line text-sm {generationStatus &&
+											index === thread.length - 1 &&
+											content.length !== 0
+												? 'block response-cursor'
+												: 'flex'}"
+										>
+											{#if showRawTexts}
+												{message}
+											{:else}
+												{@const rawHtml = converter.makeHtml(content)}
+												{@html rawHtml}
+											{/if}
+										</p>
+									</div>
+								</div>
+							{:else if role == 'user'}
+								<div
+									class="flex flex-col gap-1 {messagesWithContent.length === 1
+										? 'col-span-1 xl:col-span-2'
+										: ''}"
+								>
+									<div
+										data-testid="chat-message"
+										class="relative self-end flex flex-col max-w-full lg:ml-[20%] rounded-xl bg-white data-dark:bg-[#444] group scroll-my-2"
+									>
+										<p
+											class="p-4 text-sm [overflow-wrap:anywhere] focus:outline-none whitespace-pre-wrap"
+										>
+											{content}
+										</p>
+									</div>
+								</div>
+							{/if}
+						{/if}
+					{:else if messages.every((v) => ('content' in v && v.role === 'assistant') || 'error' in v)}
+						<div
+							class="flex flex-col gap-1 {messagesWithContent.length === 1
+								? 'col-span-1 xl:col-span-2'
+								: ''} group/message-container"
+						>
+							<div class="flex items-center justify-between">
+								<button
+									on:click={() => {
+										const targetCol = tableData?.cols?.find((col) => col.id == column_id);
+										if (targetCol) {
+											isColumnSettingsOpen = { column: targetCol, showMenu: true };
+										}
+									}}
+									class="flex items-center gap-2 text-sm"
+								>
+									<span
+										style="background-color: #FFEAD5; color: #FD853A;"
+										class="w-min p-0.5 py-1 whitespace-nowrap rounded-[0.1875rem] select-none flex items-center"
+									>
+										<span class="capitalize text-xs font-medium px-1"> output </span>
+										<span
+											class="bg-white w-min px-1 text-xs font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
+										>
+											str
+										</span>
+
+										<hr class="ml-1 h-3 border-l border-[#FD853A]" />
+										<div class="relative h-4 w-[18px]">
+											<MultiturnChatIcon class="absolute h-[18px] -translate-y-px" />
+										</div>
+									</span>
+
+									<span class="line-clamp-2">
+										{column_id}
+									</span>
+								</button>
+							</div>
+
+							<div
+								data-testid="chat-message"
+								class="relative self-start {messagesWithContent.length === 1
+									? 'xl:mr-[20%]'
+									: 'w-full'} p-4 w-full max-w-full rounded-xl bg-[#F2F4F7] data-dark:bg-[#5B7EE5] text-text group scroll-my-2"
+							>
+								<div class="flex items-center justify-center py-8 h-full">
+									<span class="relative -top-[0.05rem] text-3xl font-extralight">
+										{message.error}
+									</span>
+									<div
+										class="flex items-center ml-4 pl-4 min-h-10 border-l border-[#ccc] data-dark:border-[#666]"
+									>
+										<h1 class="whitespace-pre-wrap">
+											{message.message.message || JSON.stringify(message)}
+										</h1>
+									</div>
+								</div>
+							</div>
 						</div>
-					{/if} -->
-				</div>
-			{:else if role == 'user'}
-				<div
-					data-testid="chat-message"
-					class="relative self-end flex flex-col max-w-full lg:ml-[20%] rounded-xl bg-white data-dark:bg-[#444] group scroll-my-2"
-				>
-					<p class="p-4 text-sm [overflow-wrap:anywhere] focus:outline-none whitespace-pre-wrap">
-						{message}
-					</p>
-				</div>
-			{/if}
+					{:else}
+						empty block
+					{/if}
+				{/each}
+			</div>
 		{/each}
 
-		{#if generationStatus || loadedStream.length || latestStream}
-			<div
-				data-testid="chat-message"
-				data-streaming="true"
-				class="relative self-start xl:mr-[20%] p-4 max-w-full rounded-xl bg-[#F2F4F7] data-dark:bg-[#5B7EE5] text-text group scroll-my-2"
-			>
-				<p
-					class="flex-col gap-4 response-message whitespace-pre-line text-sm {loadedStream.length ||
-					latestStream
-						? 'block response-cursor'
-						: 'flex'}"
+		<div
+			style="--message-len: {Object.keys(loadedStreams).length};"
+			class="flex-[0_0_auto] grid message-container gap-3 px-6 lg:px-20 2xl:px-36 3xl:px-72 overflow-x-auto overflow-y-hidden"
+		>
+			{#each Object.keys(loadedStreams) as key}
+				{@const loadedStream = loadedStreams[key]}
+				{@const latestStream = latestStreams[key] ?? ''}
+				<div
+					class="flex flex-col gap-1 {Object.keys(loadedStreams).length === 1
+						? 'col-span-1 xl:col-span-2'
+						: ''}"
 				>
-					{@html converter.makeHtml(loadedStream.join(''))}
-					{latestStream}
+					<div class="flex items-center gap-2 text-sm">
+						<span
+							style="background-color: #FFEAD5; color: #FD853A;"
+							class="w-min p-0.5 py-1 whitespace-nowrap rounded-[0.1875rem] select-none flex items-center"
+						>
+							<span class="capitalize text-xs font-medium px-1"> output </span>
+							<span
+								class="bg-white w-min px-1 text-xs font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
+							>
+								str
+							</span>
 
-					{#if loadedStream.length === 0 && latestStream === ''}
-						<RowStreamIndicator />
-					{/if}
-				</p>
-			</div>
-		{/if}
-	{:else if threadError}
-		<div class="flex items-center justify-center sm:mx-24 my-0 h-full">
-			<span class="relative -top-[0.05rem] text-3xl font-extralight">
-				{threadError.error}
-			</span>
-			<div
-				class="flex items-center ml-4 pl-4 min-h-10 border-l border-[#ccc] data-dark:border-[#666]"
-			>
-				<h1>{JSON.stringify(threadError.message)}</h1>
-			</div>
+							<hr class="ml-1 h-3 border-l border-[#FD853A]" />
+							<div class="relative h-4 w-[18px]">
+								<MultiturnChatIcon class="absolute h-[18px] -translate-y-px" />
+							</div>
+						</span>
+
+						<span class="line-clamp-2">
+							{key}
+						</span>
+					</div>
+
+					<div
+						data-testid="chat-message"
+						data-streaming="true"
+						class="relative self-start {Object.keys(loadedStreams).length === 1
+							? 'xl:mr-[20%]'
+							: 'w-full'} p-4 max-w-full rounded-xl bg-[#F2F4F7] data-dark:bg-[#5B7EE5] text-text group scroll-my-2"
+					>
+						<p
+							class="flex-col gap-4 response-message whitespace-pre-line text-sm {loadedStream.length ||
+							latestStream
+								? 'block response-cursor'
+								: 'flex'}"
+						>
+							{@html converter.makeHtml(loadedStream.join(''))}
+							{latestStream}
+
+							{#if loadedStream.length === 0 && latestStream === ''}
+								<RowStreamIndicator />
+							{/if}
+						</p>
+					</div>
+				</div>
+			{/each}
 		</div>
 	{:else}
 		<div class="absolute top-0 bottom-0 left-0 right-0 flex items-center justify-center">
@@ -588,29 +594,38 @@
 			>
 				<SendIcon class="h-7" />
 			</Button>
-
-			<div data-testid="stop-regen-btn" class="absolute -top-14 left-1/2 -translate-x-1/2">
-				<!-- {#if generationStatus}
-					<Button
-						title="Stop generating"
-						on:click={() => abortController?.abort()}
-						class="flex gap-1 px-6 py-3 text-text bg-white data-dark:bg-[#202226] hover:bg-[#F0F0F0] data-dark:hover:bg-[#42464E] data-dark:border border-[#42464E] rounded-lg shadow-float"
-					>
-						<StopIcon class="h-6 w-6" />
-						<span class="@xl:block hidden">Stop generating</span>
-					</Button> -->
-				{#if !generationStatus && thread?.length && thread.at(-1)?.role === 'assistant'}
-					<Button
-						variant="ghost"
-						title="Regenerate previous response"
-						on:click={handleRegenerate}
-						class="flex gap-1.5 px-3.5 @xl:pr-4 py-2.5 text-text bg-white data-dark:bg-[#202226] hover:bg-[#F0F0F0] data-dark:hover:bg-[#42464E] data-dark:border border-[#42464E] rounded-lg shadow-float"
-					>
-						<RegenerateIcon class="h-6 w-6" />
-						<span class="@xl:block hidden">Regenerate</span>
-					</Button>
-				{/if}
-			</div>
 		</div>
 	</div>
 </div>
+
+<!-- <div class="flex items-center justify-center sm:mx-24 my-0 h-full">
+			<span class="relative -top-[0.05rem] text-3xl font-extralight">
+				{threadError.error}
+			</span>
+			<div
+				class="flex items-center ml-4 pl-4 min-h-10 border-l border-[#ccc] data-dark:border-[#666]"
+			>
+				<h1>{JSON.stringify(threadError.message)}</h1>
+			</div>
+		</div> -->
+
+<style>
+	:global(::-webkit-scrollbar) {
+		width: 6px;
+		height: 0px;
+		border: 0px solid hsl(0, 0%, 27%);
+		border-top: 0;
+		border-bottom: 0;
+	}
+
+	.message-container {
+		grid-auto-flow: column;
+		grid-auto-columns: 100%;
+	}
+
+	@media (min-width: 1280px) {
+		.message-container {
+			grid-auto-columns: 50%;
+		}
+	}
+</style>

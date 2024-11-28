@@ -1761,16 +1761,7 @@ class AddKnowledgeColumnSchema(TableSchemaCreate):
 
 
 class ChatTableSchemaCreate(TableSchemaCreate):
-    @model_validator(mode="after")
-    def check_cols(self) -> Self:
-        super().check_cols()
-        num_text_cols = sum(c.id.lower() in ("user", "ai") for c in self.cols)
-        if num_text_cols != 2:
-            raise ValueError("Schema must contain column names: 'User' and 'AI'.")
-        for c in self.cols:
-            if c.id.lower() == "ai":
-                c.gen_config.multi_turn = True
-        return self
+    pass
 
 
 class AddChatColumnSchema(TableSchemaCreate):

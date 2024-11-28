@@ -32,15 +32,12 @@ from owl.protocol import (
     ChatRole,
     Chunk,
     CompletionUsage,
-    EmbeddingModelConfig,
     ExternalKeys,
-    LLMModelConfig,
     ModelInfo,
     ModelInfoResponse,
     ModelListConfig,
     RAGParams,
     References,
-    RerankingModelConfig,
 )
 from owl.utils import mask_content, mask_string, select_external_api_key
 
@@ -207,54 +204,12 @@ class LLMEngine:
             self._log_exception(model, messages, api_key, **hyperparams)
             return UnexpectedError(err_mssg)
 
-    def _get_valid_deployments(
-        self,
-        model: LLMModelConfig | EmbeddingModelConfig | RerankingModelConfig,
-        valid_providers: list[str],
-    ):
-        valid_deployments = []
-        for deployment in model.deployments:
-            if deployment.provider in valid_providers:
-                valid_deployments.append(deployment)
-        return valid_deployments
-
     def model_info(
         self,
         model: str = "",
         capabilities: list[str] | None = None,
     ) -> ModelInfoResponse:
-        all_models: ModelListConfig = self.request.state.all_models
-        # define all possible api providers
-        available_providers = [
-            "openai",
-            "anthropic",
-            "together_ai",
-            "cohere",
-            "sambanova",
-            "cerebras",
-            "hyperbolic",
-        ]
-        # remove providers without credentials
-        available_providers = [
-            provider
-            for provider in available_providers
-            if getattr(self.external_keys, provider) != ""
-        ]
-
-        # add custom and ellm providers as allow no credentials
-        available_providers.extend(
-            [
-                "custom",
-                "ellm",
-            ]
-        )
-        models = []
-        # Iterate over the llm, embed, rerank list
-        for m in all_models.models:
-            valid_deployments = self._get_valid_deployments(m, available_providers)
-            if len(valid_deployments) > 0:
-                m.deployments = valid_deployments
-                models.append(m)
+        models: ModelListConfig = self.request.state.all_models.models
         # Filter by name
         if model != "":
             models = [m for m in models if m.id == model]

@@ -45,13 +45,21 @@
 		className
 	)}
 >
-	<svg width="22" height="23" viewBox="0 0 17 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+	<svg width="22" height="23" viewBox="0 0 17 17" fill="none" xmlns="http://www.w3.org/2000/svg">
 		<path
-			fill-rule="evenodd"
-			clip-rule="evenodd"
-			d="M4.57143 4C3.97969 4 3.5 4.47969 3.5 5.07143V6.05357H8.5H13.5V5.07143C13.5 4.47969 13.0203 4 12.4286 4H4.57143ZM3.5 9.98206V6.94643H8.05357V9.98206H3.5ZM3.5 10.8749V12.9286C3.5 13.5203 3.97969 14 4.57143 14H8.05357V10.8749H3.5ZM8.94643 10.8749V14H12.4286C13.0203 14 13.5 13.5203 13.5 12.9286V10.8749H8.94643ZM13.5 9.98206V6.94643H8.94643V9.98206H13.5Z"
-			fill="#667085"
+			d="M12.3077 4H4.69231C4.30996 4 4 4.30996 4 4.69231V12.3077C4 12.6901 4.30996 13 4.69231 13H12.3077C12.6901 13 13 12.6901 13 12.3077V4.69231C13 4.30996 12.6901 4 12.3077 4Z"
+			stroke="#98A2B3"
+			stroke-linecap="round"
+			stroke-linejoin="round"
 		/>
+		<path d="M4 6.07715H13" stroke="#98A2B3" stroke-linecap="round" stroke-linejoin="round" />
+		<path
+			d="M8.5 6.07715V13.0002"
+			stroke="#98A2B3"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+		/>
+		<path d="M4 9.53809H13" stroke="#98A2B3" stroke-linecap="round" stroke-linejoin="round" />
 	</svg>
 
 	<MultiturnChatIcon class="h-6 text-[#98A2B3]" />
@@ -61,8 +69,9 @@
 			? 'translate-x-1'
 			: 'translate-x-[36px] sm:translate-x-[40px]'}"
 	>
-		<div class="relative">
+		<div class="relative text-[#667085]">
 			<MultiturnChatIcon
+				filled
 				class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-6 transition-opacity {checked
 					? 'opacity-0'
 					: 'opacity-100'}"
@@ -82,7 +91,7 @@
 					fill-rule="evenodd"
 					clip-rule="evenodd"
 					d="M4.57143 4C3.97969 4 3.5 4.47969 3.5 5.07143V6.05357H8.5H13.5V5.07143C13.5 4.47969 13.0203 4 12.4286 4H4.57143ZM3.5 9.98206V6.94643H8.05357V9.98206H3.5ZM3.5 10.8749V12.9286C3.5 13.5203 3.97969 14 4.57143 14H8.05357V10.8749H3.5ZM8.94643 10.8749V14H12.4286C13.0203 14 13.5 13.5203 13.5 12.9286V10.8749H8.94643ZM13.5 9.98206V6.94643H8.94643V9.98206H13.5Z"
-					fill="black"
+					fill="currentColor"
 				/>
 			</svg>
 		</div>

@@ -1,3 +1,4 @@
+from functools import lru_cache
 from secrets import compare_digest
 from typing import Annotated, AsyncGenerator
 
@@ -15,7 +16,16 @@ from jamaibase.exceptions import (
     UnexpectedError,
     UpgradeTierError,
 )
-from jamaibase.protocol import OrganizationRead, PATRead, ProjectRead, UserRead
+from jamaibase.protocol import (
+    EmbeddingModelConfig,
+    LLMModelConfig,
+    ModelDeploymentConfig,
+    OrganizationRead,
+    PATRead,
+    ProjectRead,
+    RerankingModelConfig,
+    UserRead,
+)
 from owl.billing import BillingManager
 from owl.configs.manager import CONFIG, ENV_CONFIG
 from owl.protocol import ExternalKeys, ModelListConfig
@@ -236,6 +246,77 @@ async def auth_user_cloud(
 auth_user = auth_user_oss if ENV_CONFIG.is_oss else auth_user_cloud
 
 
+def _get_valid_deployments(
+    model: LLMModelConfig | EmbeddingModelConfig | RerankingModelConfig,
+    valid_providers: list[str],
+) -> list[ModelDeploymentConfig]:
+    valid_deployments = []
+    for deployment in model.deployments:
+        if deployment.provider in valid_providers:
+            valid_deployments.append(deployment)
+    return valid_deployments
+
+
+@lru_cache(maxsize=64)
+def _get_valid_modellistconfig(all_models: str, external_keys: str) -> ModelListConfig:
+    all_models = ModelListConfig.model_validate_json(all_models)
+    external_keys = ExternalKeys.model_validate_json(external_keys)
+    # define all possible api providers
+    available_providers = [
+        "openai",
+        "anthropic",
+        "together_ai",
+        "cohere",
+        "sambanova",
+        "cerebras",
+        "hyperbolic",
+    ]
+    # remove providers without credentials
+    available_providers = [
+        provider for provider in available_providers if getattr(external_keys, provider) != ""
+    ]
+    # add custom and ellm providers as allow no credentials
+    available_providers.extend(
+        [
+            "custom",
+            "ellm",
+        ]
+    )
+
+    # Initialize lists to hold valid models
+    valid_llm_models = []
+    valid_embed_models = []
+    valid_rerank_models = []
+
+    # Iterate over the llm, embed, rerank list
+    for m in all_models.llm_models:
+        valid_deployments = _get_valid_deployments(m, available_providers)
+        if len(valid_deployments) > 0:
+            m.deployments = valid_deployments
+            valid_llm_models.append(m)
+
+    for m in all_models.embed_models:
+        valid_deployments = _get_valid_deployments(m, available_providers)
+        if len(valid_deployments) > 0:
+            m.deployments = valid_deployments
+            valid_embed_models.append(m)
+
+    for m in all_models.rerank_models:
+        valid_deployments = _get_valid_deployments(m, available_providers)
+        if len(valid_deployments) > 0:
+            m.deployments = valid_deployments
+            valid_rerank_models.append(m)
+
+    # Create a new ModelListConfig with the valid models
+    valid_model_list_config = ModelListConfig(
+        llm_models=valid_llm_models,
+        embed_models=valid_embed_models,
+        rerank_models=valid_rerank_models,
+    )
+
+    return valid_model_list_config
+
+
 async def auth_user_project_oss(
     request: Request,
     project_id: Annotated[
@@ -255,7 +336,10 @@ async def auth_user_project_oss(
     request.state.project_id = project.id
     request.state.external_keys = _get_external_keys(organization)
     request.state.org_models = ModelListConfig.model_validate(organization.models)
-    request.state.all_models = request.state.org_models + CONFIG.get_model_config()
+    all_models = request.state.org_models + CONFIG.get_model_config()
+    request.state.all_models = _get_valid_modellistconfig(
+        all_models.model_dump_json(), request.state.external_keys.model_dump_json()
+    )
     request.state.billing = BillingManager(request=request)
 
     yield project
@@ -293,8 +377,10 @@ async def auth_user_project_cloud(
     request.state.project_id = project.id
     request.state.external_keys = _get_external_keys(organization)
     request.state.org_models = ModelListConfig.model_validate(organization.models)
-    request.state.all_models = request.state.org_models + CONFIG.get_model_config()
-
+    all_models = request.state.org_models + CONFIG.get_model_config()
+    request.state.all_models = _get_valid_modellistconfig(
+        all_models.model_dump_json(), request.state.external_keys.model_dump_json()
+    )
     # Check if token is provided
     bearer_token = bearer_token.split("Bearer ")
     if len(bearer_token) < 2 or bearer_token[1].strip() == "":

@@ -1719,46 +1719,27 @@ class ActionTableSchemaCreate(TableSchemaCreate):
 
 
 class AddActionColumnSchema(ActionTableSchemaCreate):
+    # TODO: Deprecate this
     pass
 
 
 class KnowledgeTableSchemaCreate(TableSchemaCreate):
+    # TODO: Maybe deprecate this and use EmbedGenConfig instead ?
     embedding_model: str
-
-    @model_validator(mode="after")
-    def check_cols(self) -> Self:
-        super().check_cols()
-        num_text_cols = sum(c.id.lower() in ("text", "title", "file id") for c in self.cols)
-        if num_text_cols != 0:
-            raise ValueError("Schema cannot contain column names: 'Text', 'Title', 'File ID'.")
-        return self
 
 
 class AddKnowledgeColumnSchema(TableSchemaCreate):
-    @model_validator(mode="after")
-    def check_cols(self) -> Self:
-        super().check_cols()
-        num_text_cols = sum(c.id.lower() in ("text", "title", "file id") for c in self.cols)
-        if num_text_cols != 0:
-            raise ValueError("Schema cannot contain column names: 'Text', 'Title', 'File ID'.")
-        return self
+    # TODO: Deprecate this
+    pass
 
 
 class ChatTableSchemaCreate(TableSchemaCreate):
-    @model_validator(mode="after")
-    def check_cols(self) -> Self:
-        super().check_cols()
-        num_text_cols = sum(c.id.lower() in ("user", "ai") for c in self.cols)
-        if num_text_cols != 2:
-            raise ValueError("Schema must contain column names: 'User' and 'AI'.")
-        return self
+    pass
 
 
 class AddChatColumnSchema(TableSchemaCreate):
-    @model_validator(mode="after")
-    def check_cols(self) -> Self:
-        super().check_cols()
-        return self
+    # TODO: Deprecate this
+    pass
 
 
 class TableMeta(TableBase):

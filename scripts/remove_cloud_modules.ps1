@@ -19,3 +19,4 @@ function quiet_rm($item)
 quiet_rm "services/app/ecosystem.config.cjs"
 quiet_rm "services/appecosystem.json"
 quiet_rm ".github/workflows/trigger-push-gh-image.yml"
+quiet_rm ".github/workflows/ci.cloud.yml"
