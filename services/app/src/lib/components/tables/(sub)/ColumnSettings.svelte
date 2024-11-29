@@ -277,6 +277,13 @@
 							>
 								{isColumnSettingsOpen.column?.dtype}
 							</span>
+
+							{#if isColumnSettingsOpen.column.gen_config?.object === 'gen_config.llm' && isColumnSettingsOpen.column.gen_config.multi_turn}
+								<hr class="ml-1 h-3 border-l border-[#FD853A]" />
+								<div class="relative h-4 w-[18px]">
+									<MultiturnChatIcon class="absolute h-[18px] -translate-y-px" />
+								</div>
+							{/if}
 						</span>
 
 						<span class="line-clamp-2">

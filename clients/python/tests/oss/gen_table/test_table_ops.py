@@ -21,6 +21,7 @@ SAMPLE_DATA = {
     "str": '"Arrival" is a 2016 science fiction film. "Arrival" è un film di fantascienza del 2016. 「Arrival」は2016年のSF映画です。',
 }
 KT_FIXED_COLUMN_IDS = ["Title", "Title Embed", "Text", "Text Embed", "File ID"]
+CT_FIXED_COLUMN_IDS = ["User"]
 
 TABLE_ID_A = "table_a"
 TABLE_ID_B = "table_b"
@@ -1432,6 +1433,21 @@ def test_kt_drop_invalid_columns(client_cls: Type[JamAI]):
 
 @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
+def test_ct_drop_invalid_columns(client_cls: Type[JamAI]):
+    table_type = "chat"
+    jamai = client_cls()
+    with _create_table(jamai, table_type) as table:
+        assert isinstance(table, p.TableMetaResponse)
+        for col in CT_FIXED_COLUMN_IDS:
+            with pytest.raises(RuntimeError):
+                jamai.table.drop_columns(
+                    table_type,
+                    p.ColumnDropRequest(table_id=table.id, column_names=[col]),
+                )
+
+
+@flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_rename_columns(
     client_cls: Type[JamAI],
@@ -1450,7 +1466,7 @@ def test_rename_columns(
         assert isinstance(table, p.TableMetaResponse)
         assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
         # Test rename on empty table
-        table = jamai.rename_columns(
+        table = jamai.table.rename_columns(
             table_type,
             p.ColumnRenameRequest(table_id=table.id, column_map=dict(y="z")),
         )
@@ -1475,7 +1491,7 @@ def test_rename_columns(
         _add_row(jamai, table_type, False, data=dict(x="True", z="<dummy>"))
         # Test rename table with data
         # Test also auto gen config reference update
-        table = jamai.rename_columns(
+        table = jamai.table.rename_columns(
             table_type,
             p.ColumnRenameRequest(table_id=table.id, column_map=dict(x="a")),
         )
@@ -1503,14 +1519,14 @@ def test_rename_columns(
 
         # Repeated new column names
         with pytest.raises(RuntimeError):
-            jamai.rename_columns(
+            jamai.table.rename_columns(
                 table_type,
                 p.ColumnRenameRequest(table_id=table.id, column_map=dict(a="b", z="b")),
             )
 
         # Overlapping new and old column names
         with pytest.raises(RuntimeError):
-            jamai.rename_columns(
+            jamai.table.rename_columns(
                 table_type,
                 p.ColumnRenameRequest(table_id=table.id, column_map=dict(a="b", z="a")),
             )
@@ -1525,7 +1541,22 @@ def test_kt_rename_invalid_columns(client_cls: Type[JamAI]):
         assert isinstance(table, p.TableMetaResponse)
         for col in KT_FIXED_COLUMN_IDS:
             with pytest.raises(RuntimeError):
-                jamai.rename_columns(
+                jamai.table.rename_columns(
+                    table_type,
+                    p.ColumnRenameRequest(table_id=table.id, column_map={col: col}),
+                )
+
+
+@flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+def test_ct_rename_invalid_columns(client_cls: Type[JamAI]):
+    table_type = "chat"
+    jamai = client_cls()
+    with _create_table(jamai, table_type) as table:
+        assert isinstance(table, p.TableMetaResponse)
+        for col in CT_FIXED_COLUMN_IDS:
+            with pytest.raises(RuntimeError):
+                jamai.table.rename_columns(
                     table_type,
                     p.ColumnRenameRequest(table_id=table.id, column_map={col: col}),
                 )
@@ -1582,7 +1613,7 @@ def test_reorder_columns(
         cols = [c.id for c in table.cols]
         assert cols == expected_order, cols
         # Test reorder empty table
-        table = jamai.reorder_columns(
+        table = jamai.table.reorder_columns(
             table_type,
             p.ColumnReorderRequest(table_id=TABLE_ID_A, column_names=column_names),
         )
@@ -1692,7 +1723,7 @@ def test_reorder_columns_invalid(
         else:
             raise ValueError(f"Invalid table type: {table_type}")
         with pytest.raises(RuntimeError, match="referenced an invalid source column"):
-            jamai.reorder_columns(
+            jamai.table.reorder_columns(
                 table_type,
                 p.ColumnReorderRequest(table_id=TABLE_ID_A, column_names=column_names),
             )

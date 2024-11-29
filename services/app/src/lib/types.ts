@@ -99,6 +99,10 @@ export type ChatRequest = {
 	user: string;
 };
 
+type ThreadObj = ChatRequest['messages'][number] & { column_id: string };
+type ThreadErr = { error?: number; message: any } & { column_id: string };
+export type Thread = ThreadObj | ThreadErr;
+
 export interface GenTableCol {
 	id: string;
 	dtype: (typeof genTableDTypes)[number];

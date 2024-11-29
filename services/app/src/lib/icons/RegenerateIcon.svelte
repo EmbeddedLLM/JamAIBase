@@ -1,15 +1,31 @@
 <script lang="ts">
-	let className: string | undefined | null = undefined
-	export { className as class }
+	let className: string | undefined | null = undefined;
+	export { className as class };
 </script>
 
-<svg viewBox="0 0 24 20" fill="none" xmlns="http://www.w3.org/2000/svg" class={className}>
+<svg viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" class={className}>
 	<path
-		d="M7 4L7.53033 3.46967L7 2.93934L6.46967 3.46967L7 4ZM10.75 16C11.1642 16 11.5 15.6642 11.5 15.25C11.5 14.8358 11.1642 14.5 10.75 14.5L10.75 16ZM10.5303 6.46967L7.53033 3.46967L6.46967 4.53033L9.46967 7.53033L10.5303 6.46967ZM6.46967 3.46967L3.46967 6.46967L4.53033 7.53033L7.53033 4.53033L6.46967 3.46967ZM6.25 4L6.25 11.5L7.75 11.5L7.75 4L6.25 4ZM6.25 11.5C6.25 13.9853 8.26472 16 10.75 16L10.75 14.5C9.09315 14.5 7.75 13.1569 7.75 11.5L6.25 11.5Z"
-		fill="currentColor"
+		d="M10.7308 10.125L9 11.8125L10.7308 13.5"
+		stroke="currentColor"
+		stroke-linecap="round"
+		stroke-linejoin="round"
 	/>
 	<path
-		d="M16.5 15.25L15.9697 15.7803L16.5 16.3107L17.0303 15.7803L16.5 15.25ZM12.75 3.25C12.3358 3.25 12 3.58579 12 4C12 4.41421 12.3358 4.75 12.75 4.75L12.75 3.25ZM12.9697 12.7803L15.9697 15.7803L17.0303 14.7197L14.0303 11.7197L12.9697 12.7803ZM17.0303 15.7803L20.0303 12.7803L18.9697 11.7197L15.9697 14.7197L17.0303 15.7803ZM17.25 15.25L17.25 7.75L15.75 7.75L15.75 15.25L17.25 15.25ZM17.25 7.75C17.25 5.26472 15.2353 3.25 12.75 3.25L12.75 4.75C14.4069 4.75 15.75 6.09315 15.75 7.75L17.25 7.75Z"
-		fill="currentColor"
+		d="M7.26953 7.875L9.0003 6.18751L7.26953 4.50001"
+		stroke="currentColor"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+	/>
+	<path
+		d="M9 11.8125H12.4615C13.3112 11.8125 14 11.1409 14 10.3125V7.6875C14 6.85907 13.3112 6.1875 12.4615 6.1875H11.3077"
+		stroke="currentColor"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+	/>
+	<path
+		d="M9 6.1875H5.53846C4.68879 6.1875 4 6.85907 4 7.6875V10.3125C4 11.1409 4.68879 11.8125 5.53846 11.8125H6.69231"
+		stroke="currentColor"
+		stroke-linecap="round"
+		stroke-linejoin="round"
 	/>
 </svg>

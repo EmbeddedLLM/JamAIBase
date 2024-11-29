@@ -205,10 +205,12 @@ export class TablePage extends LayoutPage {
 
 		await newColDialog.getByLabel('Column ID').fill(`transient-${type}-column`);
 		await newColDialog.getByTestId('datatype-select-btn').click();
-		await newColDialog
-			.getByTestId('datatype-select-btn')
-			.locator('div[role="option"]', { hasText: datatype })
-			.click();
+		if (type === 'input') {
+			await newColDialog
+				.getByTestId('datatype-select-btn')
+				.locator('div[role="option"]', { hasText: datatype })
+				.click();
+		}
 		if (type === 'output') {
 			await newColDialog.getByLabel('Customize prompt').fill('Hello, what is your favorite food?');
 		}

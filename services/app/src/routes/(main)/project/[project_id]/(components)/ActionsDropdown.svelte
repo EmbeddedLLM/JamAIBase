@@ -254,7 +254,7 @@
 			builders={[builder]}
 			variant="ghost"
 			title="Table actions"
-			class="p-0 h-8 sm:h-9 w-auto aspect-square"
+			class="p-0 h-8 sm:h-9 w-auto aspect-square bg-[#F2F4F7] hover:bg-[#E4E7EC]"
 		>
 			<HamburgerIcon class="h-6 text-[#667085]" />
 		</Button>
@@ -268,12 +268,12 @@
 		<DropdownMenu.Group class="flex flex-col gap-2 py-1 text-sm">
 			<span class="ml-1 text-[#98A2B3]">
 				Order by
-				<span class="font-medium text-[#667085]">Last modified</span>
+				<span class="font-medium text-[#667085]">Created</span>
 			</span>
 
 			<div
 				style="grid-template-columns: repeat(2, minmax(5rem, 1fr));"
-				class="relative grid place-items-center w-full bg-[#E4E7EC] data-dark:bg-gray-700 rounded-[3px] p-0.5 after:content-[''] after:absolute after:left-0.5 after:top-1/2 after:-translate-y-1/2 after:z-0 after:h-[calc(100%_-_4px)] after:w-1/2 after:pointer-events-none after:bg-white after:rounded-[3px] after:transition-transform after:duration-200 {$page.url.searchParams.get(
+				class="relative grid place-items-center w-full bg-[#E4E7EC] data-dark:bg-gray-700 rounded-full p-0.5 after:content-[''] after:absolute after:left-0.5 after:top-1/2 after:-translate-y-1/2 after:z-0 after:h-[calc(100%_-_4px)] after:w-1/2 after:pointer-events-none after:bg-white after:rounded-full after:transition-transform after:duration-200 {$page.url.searchParams.get(
 					'asc'
 				) === '1'
 					? 'after:translate-x-0'
@@ -285,7 +285,7 @@
 						query.set('asc', '1');
 						goto(`?${query.toString()}`, { replaceState: true });
 					}}
-					class="z-10 transition-colors ease-in-out rounded-[3px] px-4 py-1 w-full text-center {$page.url.searchParams.get(
+					class="z-10 transition-colors ease-in-out rounded-full px-4 py-1 w-full text-center {$page.url.searchParams.get(
 						'asc'
 					) === '1'
 						? 'text-[#667085]'
@@ -300,7 +300,7 @@
 						query.delete('asc');
 						goto(`?${query.toString()}`, { replaceState: true });
 					}}
-					class="z-10 transition-colors ease-in-out rounded-[3px] px-4 py-1 w-full text-center {$page.url.searchParams.get(
+					class="z-10 transition-colors ease-in-out rounded-full px-4 py-1 w-full text-center {$page.url.searchParams.get(
 						'asc'
 					) !== '1'
 						? 'text-[#667085]'

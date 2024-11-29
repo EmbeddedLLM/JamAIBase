@@ -108,9 +108,6 @@
 			//? Revert back to original value
 			genTableRows.revert(originalValues);
 		} else {
-			//Delete all data except for inputs
-			genTableRows.clearOutputs(tableData, toRegenRowIds);
-
 			const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
 
 			let isStreaming = true;
@@ -233,7 +230,7 @@
 	title="Generate"
 	on:click={handleRegenRow}
 	class={cn(
-		`relative pl-0 sm:pl-2.5 pr-0 sm:pr-3.5 py-0 h-8 sm:h-9 w-min aspect-square sm:aspect-auto font-normal overflow-hidden transition-colors group`,
+		`relative pl-0 sm:pl-2.5 pr-0 sm:pr-3.5 py-0 h-8 sm:h-9 w-min aspect-square sm:aspect-auto font-normal overflow-hidden transition-colors group/gen-btn`,
 		className
 	)}
 >
@@ -282,17 +279,17 @@
 
 	<div
 		style={Object.keys(streamingRows).length !== 0 ? 'opacity: 0%;' : ''}
-		class="absolute top-0 left-0 h-full w-full z-[9] bg-[#BF416E] opacity-100 group-hover:opacity-0 group-hover:motion-reduce:opacity-100 group-hover:motion-reduce:bg-[#950048] group-focus:opacity-0 transition-opacity duration-300"
+		class="absolute top-0 left-0 h-full w-full z-[9] bg-[#BF416E] opacity-100 group-hover/gen-btn:opacity-0 group-hover/gen-btn:motion-reduce:opacity-100 group-hover/gen-btn:motion-reduce:bg-[#950048] group-focus/gen-btn:opacity-0 transition-opacity duration-300"
 	/>
 
 	<div class="flex items-center gap-1.5 z-10">
 		<div class="stars relative text-[#FCFCFD]">
 			<StarIcon class="h-4 w-4 rotate-180 transition-[color,transform] duration-300" />
 			<StarIcon
-				class="stars absolute -bottom-1 -left-1 h-1.5 w-1.5 opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition-opacity duration-300"
+				class="stars absolute -bottom-1 -left-1 h-1.5 w-1.5 opacity-0 group-hover/gen-btn:opacity-100 group-focus/gen-btn:opacity-100 transition-opacity duration-300"
 			/>
 			<StarIcon
-				class="stars absolute -top-1 -right-1 h-[7px] w-[7px] opacity-0 group-hover:opacity-100 group-focus:opacity-100 transition-opacity duration-300"
+				class="stars absolute -top-1 -right-1 h-[7px] w-[7px] opacity-0 group-hover/gen-btn:opacity-100 group-focus/gen-btn:opacity-100 transition-opacity duration-300"
 			/>
 		</div>
 		<span class="hidden sm:block"> Generate </span>
@@ -300,8 +297,8 @@
 </Button>
 
 <style>
-	:global(.group:focus) .stars > :global(*:nth-child(1)),
-	:global(.group:hover) .stars > :global(*:nth-child(1)) {
+	:global(.group\/gen-btn:focus) .stars > :global(*:nth-child(1)),
+	:global(.group\/gen-btn:hover) .stars > :global(*:nth-child(1)) {
 		transform: rotate(0deg);
 		animation: 3s ease-in-out 600ms infinite rotate-bottom-left;
 	}

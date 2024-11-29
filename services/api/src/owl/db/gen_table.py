@@ -205,6 +205,9 @@ class GenerativeTable:
     ) -> tuple[LanceTable, TableMeta]:
         if not isinstance(schema, TableSchema):
             raise TypeError("`schema` must be an instance of `TableSchema`.")
+        fixed_cols = set(c.lower() for c in self.FIXED_COLUMN_IDS)
+        if len(fixed_cols.intersection(set(c.id.lower() for c in schema.cols))) != len(fixed_cols):
+            raise BadInputError(f"Schema must contain fixed columns: {self.FIXED_COLUMN_IDS}")
         return self._create_table(
             session=session,
             schema=schema,
@@ -573,15 +576,12 @@ class GenerativeTable:
         if not isinstance(column_names, list):
             raise TypeError("`column_names` must be a list.")
         if self.has_state_col_names(column_names):
-            raise make_validation_error(
-                ValueError("Cannot drop state columns."),
-                loc=("body", "column_names"),
-            )
+            raise BadInputError("Cannot drop state columns.")
         if self.has_info_col_names(column_names):
-            raise make_validation_error(
-                ValueError('Cannot drop "ID" or "Updated at".'),
-                loc=("body", "column_names"),
-            )
+            raise BadInputError('Cannot drop "ID" or "Updated at".')
+        fixed_cols = set(c.lower() for c in self.FIXED_COLUMN_IDS)
+        if len(fixed_cols.intersection(set(c.lower() for c in column_names))) > 0:
+            raise BadInputError(f"Cannot drop fixed columns: {self.FIXED_COLUMN_IDS}")
 
         with self.lock(table_id):
             # Get table metadata
@@ -619,37 +619,25 @@ class GenerativeTable:
     ) -> TableMeta:
         new_col_names = set(column_map.values())
         if self.has_state_col_names(column_map.keys()):
-            raise make_validation_error(
-                ValueError("Cannot rename state columns."),
-                loc=("body", "column_map"),
-            )
+            raise BadInputError("Cannot rename state columns.")
         if self.has_info_col_names(column_map.keys()):
-            raise make_validation_error(
-                ValueError('Cannot rename "ID" or "Updated at".'),
-                loc=("body", "column_map"),
-            )
+            raise BadInputError('Cannot rename "ID" or "Updated at".')
+        fixed_cols = set(c.lower() for c in self.FIXED_COLUMN_IDS)
+        if len(fixed_cols.intersection(set(c.lower() for c in column_map))) > 0:
+            raise BadInputError(f"Cannot rename fixed columns: {self.FIXED_COLUMN_IDS}")
         if len(new_col_names) != len(column_map):
-            raise make_validation_error(
-                ValueError("`column_map` contains repeated new column names."),
-                loc=("body", "column_map"),
-            )
+            raise BadInputError("`column_map` contains repeated new column names.")
         if not all(re.match(COL_NAME_PATTERN, v) for v in column_map.values()):
-            raise make_validation_error(
-                ValueError("`column_map` contains invalid new column names."),
-                loc=("body", "column_map"),
-            )
+            raise BadInputError("`column_map` contains invalid new column names.")
         meta = self.open_meta(session, table_id)
         col_names = set(c.id for c in meta.cols_schema)
         overlap_col_names = col_names.intersection(new_col_names)
         if len(overlap_col_names) > 0:
-            raise make_validation_error(
-                ValueError(
-                    (
-                        "`column_map` contains new column names that "
-                        f"overlap with existing column names: {overlap_col_names}"
-                    )
-                ),
-                loc=("body", "column_map"),
+            raise BadInputError(
+                (
+                    "`column_map` contains new column names that "
+                    f"overlap with existing column names: {overlap_col_names}"
+                )
             )
         not_found = set(column_map.keys()) - col_names
         if len(not_found) > 0:
@@ -1892,69 +1880,9 @@ class KnowledgeTable(GenerativeTable):
         #     raise TableSchemaFixedError("Knowledge Table contains data, cannot add columns.")
         return super().add_columns(session, schema)
 
-    @override
-    def drop_columns(
-        self,
-        session: Session,
-        table_id: TableName,
-        col_names: list[ColName],
-    ) -> tuple[LanceTable, TableMeta]:
-        """
-        Drops one or more input or output column.
-
-        Args:
-            session (Session): SQLAlchemy session.
-            table_id (str): The ID of the table.
-            col_names (list[str]): List of column ID to drop.
-
-        Raises:
-            TypeError: If `col_names` is not a list.
-            ResourceNotFoundError: If the table is not found.
-            ResourceNotFoundError: If any of the columns is not found.
-
-        Returns:
-            table (LanceTable): Lance table.
-            meta (TableMeta): Table metadata.
-        """
-        fixed_col_ids = [i.lower() for i in self.FIXED_COLUMN_IDS]
-        if sum(n.lower() in fixed_col_ids for n in col_names) > 0:
-            cols = ", ".join(f'"{c}"' for c in self.FIXED_COLUMN_IDS)
-            raise TableSchemaFixedError(f"Cannot drop {cols}.")
-        return super().drop_columns(session, table_id, col_names)
-
-    @override
-    def rename_columns(
-        self,
-        session: Session,
-        table_id: TableName,
-        column_map: dict[ColName, ColName],
-    ) -> TableMeta:
-        fixed_col_ids = [i.lower() for i in self.FIXED_COLUMN_IDS]
-        if sum(n.lower() in fixed_col_ids for n in column_map) > 0:
-            cols = ", ".join(f'"{c}"' for c in self.FIXED_COLUMN_IDS)
-            raise TableSchemaFixedError(f"Cannot rename {cols}.")
-        return super().rename_columns(session, table_id, column_map)
-
-    @override
-    def update_rows(
-        self,
-        session: Session,
-        table_id: TableName,
-        where: str | None = None,
-        *,
-        values: dict | None = None,
-    ) -> Self:
-        # Validate data
-        return super().update_rows(
-            session=session,
-            table_id=table_id,
-            where=where,
-            values=values,
-        )
-
 
 class ChatTable(GenerativeTable):
-    FIXED_COLUMN_IDS = ["User", "AI"]
+    FIXED_COLUMN_IDS = ["User"]
 
     @override
     def create_table(
@@ -1966,11 +1894,16 @@ class ChatTable(GenerativeTable):
     ) -> tuple[LanceTable, TableMeta]:
         if not isinstance(schema, ChatTableSchemaCreate):
             raise TypeError("`schema` must be an instance of `ChatTableSchemaCreate`.")
+        num_chat_cols = len([c for c in schema.cols if c.gen_config and c.gen_config.multi_turn])
+        if num_chat_cols == 0:
+            raise BadInputError("The table must have at least one multi-turn column.")
         return super().create_table(session, schema, remove_state_cols, add_info_state_cols)
 
     @override
     def add_columns(
-        self, session: Session, schema: AddChatColumnSchema
+        self,
+        session: Session,
+        schema: AddChatColumnSchema,
     ) -> tuple[LanceTable, TableMeta]:
         """
         Adds one or more input or output column.
@@ -2000,7 +1933,7 @@ class ChatTable(GenerativeTable):
         self,
         session: Session,
         table_id: TableName,
-        col_names: list[ColName],
+        column_names: list[ColName],
     ) -> tuple[LanceTable, TableMeta]:
         """
         Drops one or more input or output column.
@@ -2008,10 +1941,10 @@ class ChatTable(GenerativeTable):
         Args:
             session (Session): SQLAlchemy session.
             table_id (str): The ID of the table.
-            col_names (list[str]): List of column ID to drop.
+            column_names (list[str]): List of column ID to drop.
 
         Raises:
-            TypeError: If `col_names` is not a list.
+            TypeError: If `column_names` is not a list.
             ResourceNotFoundError: If the table is not found.
             ResourceNotFoundError: If any of the columns is not found.
 
@@ -2019,23 +1952,28 @@ class ChatTable(GenerativeTable):
             table (LanceTable): Lance table.
             meta (TableMeta): Table metadata.
         """
-        if sum(n.lower() in ("user", "ai") for n in col_names) > 0:
-            raise make_validation_error(
-                ValueError('Cannot drop "User" or "AI".'),
-                loc=("body", "column_names"),
-            )
         with self.create_session() as session:
             meta = self.open_meta(session, table_id)
         if meta.parent_id is not None:
             raise TableSchemaFixedError("Unable to drop columns from a conversation table.")
-        return super().drop_columns(session, table_id, col_names)
+        num_chat_cols = len(
+            [
+                c
+                for c in meta.cols_schema
+                if c.id not in column_names and c.gen_config and c.gen_config.multi_turn
+            ]
+        )
+        if num_chat_cols == 0:
+            raise BadInputError("The table must have at least one multi-turn column.")
+        return super().drop_columns(session, table_id, column_names)
 
     @override
     def rename_columns(
-        self, session: Session, table_id: TableName, column_map: dict[ColName, ColName]
+        self,
+        session: Session,
+        table_id: TableName,
+        column_map: dict[ColName, ColName],
     ) -> TableMeta:
-        if sum(n.lower() in ("user", "ai") for n in column_map) > 0:
-            raise TableSchemaFixedError('Cannot rename "User" or "AI".')
         with self.create_session() as session:
             meta = self.open_meta(session, table_id)
         if meta.parent_id is not None:

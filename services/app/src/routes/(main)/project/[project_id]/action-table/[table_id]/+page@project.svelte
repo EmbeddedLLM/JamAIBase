@@ -53,7 +53,6 @@
 		type: 'input',
 		showDialog: false
 	};
-	let isAddingRow = false;
 	let isDeletingColumn: string | null = null;
 	let isDeletingRow: string[] | null = null;
 	let isColumnSettingsOpen: { column: GenTableCol | null; showMenu: boolean } = {
@@ -230,9 +229,9 @@
 
 				<ActionsDropdown tableType="action" bind:isAddingColumn {tableData} {refetchTable} />
 			{:else}
-				<Skeleton class="h-[32px] sm:h-[38px] w-[102px] rounded-full place-self-start" />
-				<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[100px] rounded-md" />
-				<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[38px] rounded-md" />
+				<Skeleton class="h-[32px] sm:h-[36px] w-[32px] sm:w-[36px] rounded-full place-self-start" />
+				<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[100px] rounded-full" />
+				<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[38px] rounded-full" />
 			{/if}
 		</div>
 	</div>
@@ -244,8 +243,9 @@
 		bind:selectedRows
 		bind:isColumnSettingsOpen
 		bind:isDeletingColumn
-		{streamingRows}
+		bind:streamingRows
 		{table}
+		{refetchTable}
 	/>
 
 	{#if !tableError}

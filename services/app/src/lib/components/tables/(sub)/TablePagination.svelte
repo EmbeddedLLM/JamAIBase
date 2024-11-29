@@ -2,7 +2,7 @@
 	import { page } from '$app/stores';
 	import { genTableRows } from '$lib/components/tables/tablesStore';
 	import * as constants from '$lib/constants';
-	import type { GenTable, GenTableCol, GenTableRow } from '$lib/types';
+	import type { GenTable, GenTableCol } from '$lib/types';
 
 	import { Skeleton } from '$lib/components/ui/skeleton';
 	import * as Pagination from '$lib/components/ui/pagination';
@@ -78,7 +78,7 @@
 								<a
 									on:click={paginationLinkNavigate}
 									href={modifySearchParam('page', (currentPage - 1).toString())}
-									class="inline-flex items-center justify-center rounded-sm text-sm font-medium whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-6 w-6"
+									class="inline-flex items-center justify-center rounded-full text-sm font-medium whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 hover:bg-[#F2F4F7] h-6 w-6"
 								>
 									<ArrowLeftIcon class="h-4 w-4" />
 								</a>
@@ -104,7 +104,7 @@
 											style={currentPage === page.value
 												? 'background: #E4E7EC; pointer-events: none;'
 												: ''}
-											class="inline-flex items-center justify-center rounded-sm {pageFontSize} font-medium whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-6 w-6"
+											class="inline-flex items-center justify-center {pageFontSize} text-[#475467] font-medium whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded-full disabled:pointer-events-none disabled:opacity-50 hover:bg-[#F2F4F7] h-6 w-6"
 										>
 											{page.value}
 										</a>
@@ -117,7 +117,7 @@
 								<a
 									on:click={paginationLinkNavigate}
 									href={modifySearchParam('page', (currentPage + 1).toString())}
-									class="inline-flex items-center justify-center rounded-sm text-sm font-medium whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-6 w-6"
+									class="inline-flex items-center justify-center rounded-full text-sm font-medium whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 hover:bg-[#F2F4F7] h-6 w-6"
 								>
 									<ArrowRightIcon class="h-4 w-4" />
 								</a>

@@ -366,12 +366,12 @@
 						Chunk Editor
 					</Button> -->
 			{:else}
-				<Skeleton class="h-[32px] sm:h-[38px] w-[102px] rounded-full place-self-start" />
+				<Skeleton class="h-[32px] sm:h-[36px] w-[32px] sm:w-[36px] rounded-full place-self-start" />
 				<div class="flex gap-1">
-					<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[38px] lg:w-[100px] rounded-md" />
-					<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[38px] lg:w-[100px] rounded-md" />
+					<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[38px] lg:w-[100px] rounded-full" />
+					<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[38px] lg:w-[100px] rounded-full" />
 				</div>
-				<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[38px] rounded-md" />
+				<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[38px] rounded-full" />
 			{/if}
 		</div>
 	</div>
@@ -383,8 +383,9 @@
 		bind:selectedRows
 		bind:isColumnSettingsOpen
 		bind:isDeletingColumn
-		{streamingRows}
+		bind:streamingRows
 		{table}
+		{refetchTable}
 	/>
 
 	{#if !tableError}

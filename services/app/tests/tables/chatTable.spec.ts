@@ -97,16 +97,6 @@ test.describe('Chat Table Page Basic', () => {
 			await expect(chatMessages.last()).toHaveAttribute('data-streaming', 'true');
 			await expect(chatMessages.last()).not.toHaveAttribute('data-streaming');
 		});
-
-		test('can regenerate message', async ({ page }) => {
-			const chatMessages = page.getByTestId('chat-message');
-			// const originalText = await chatMessages.last().innerText();
-			await page.getByTestId('stop-regen-btn').click();
-
-			await expect(chatMessages.last()).toHaveAttribute('data-streaming', 'true');
-			await expect(chatMessages.last()).not.toHaveAttribute('data-streaming');
-			// await expect(chatMessages.last()).not.toHaveText(originalText ?? '');
-		});
 	});
 
 	test('can update column config, and persist', async ({ tablePage }) => {

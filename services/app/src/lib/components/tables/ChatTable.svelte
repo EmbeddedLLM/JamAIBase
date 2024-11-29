@@ -2,7 +2,6 @@
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { onDestroy } from 'svelte';
 	import { page } from '$app/stores';
-	import { invalidate } from '$app/navigation';
 	import GripVertical from 'lucide-svelte/icons/grip-vertical';
 	import { genTableRows } from '$lib/components/tables/tablesStore';
 	import { isValidUri } from '$lib/utils';
@@ -48,17 +47,11 @@
 	export let isColumnSettingsOpen: { column: any; showMenu: boolean };
 	export let isDeletingColumn: string | null;
 	export let readonly = false;
+	export let refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
 
 	let rowThumbs: { [rowID: string]: { [colID: string]: { value: string; url: string } } } = {};
 	let isDeletingFile: { rowID: string; columnID: string; fileUri?: string } | null = null;
 	let uploadController: AbortController | undefined = undefined;
-
-	async function refetchTable() {
-		//? Don't refetch while streaming
-		if (Object.keys(streamingRows).length === 0) {
-			await invalidate('chat-table:slug');
-		}
-	}
 
 	//? Expanding ID and Updated at columns
 	let focusedCol: string | null = null;
@@ -109,7 +102,7 @@
 		});
 
 		if (response.ok) {
-			invalidate('chat-table:slug');
+			refetchTable();
 			tableData = {
 				...tableData,
 				cols: tableData.cols.map((col) =>

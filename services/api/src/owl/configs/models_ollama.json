@@ -43,15 +43,15 @@
       ]
     },
     {
-      "id": "ellm/microsoft/Phi3.5-mini-instruct",
-      "name": "ELLM Phi3.5 mini instruct (3.8B)",
-      "context_length": 131072,
+      "id": "ellm/Qwen/Qwen2.5-3B-Instruct",
+      "name": "ELLM Qwen2.5 (3B)",
+      "context_length": 32000,
       "languages": ["en"],
       "capabilities": ["chat"],
       "deployments": [
         {
-          "litellm_id": "ollama_chat/microsoft/Phi3.5-mini-instruct",
-          "api_base": "http://ollama:11434",
+          "litellm_id": "openai/Qwen/Qwen2.5-3B-Instruct",
+          "api_base": "http://ollama:11434/v1",
           "provider": "ellm"
         }
       ]
@@ -62,7 +62,7 @@
       "id": "ellm/BAAI/bge-small-en-v1.5",
       "name": "ELLM BAAI BGE Small EN v1.5",
       "context_length": 512,
-      "embedding_size": 1024,
+      "embedding_size": 384,
       "languages": ["mul"],
       "capabilities": ["embed"],
       "deployments": [
