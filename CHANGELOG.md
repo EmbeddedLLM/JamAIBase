@@ -20,6 +20,7 @@ Backend - owl (API server)
 
 - Fix bge-small embedding size (1024 -> 384)
 - Correctly filter models at auth level
+- Fix ollama model deployment config
 
 Frontend
 
@@ -29,6 +30,8 @@ Frontend
 Docker
 
 - Added Mac Apple Silicon `compose.mac.yml`
+- Update `ollama.yml` to use Qwen2.5 3B
+- Fix ollama default config
 
 ## [v0.3.1] (2024-11-26)
 
