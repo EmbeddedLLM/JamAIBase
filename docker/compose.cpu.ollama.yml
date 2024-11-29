@@ -29,12 +29,12 @@ services:
         echo 'ollama serve did not start in time'; \
         exit 1; \
         fi; \
-        ollama pull phi3.5 && ollama cp phi3.5 microsoft/Phi3.5-mini-instruct; \
+        ollama pull qwen2.5:3b && ollama cp qwen2.5:3b Qwen/Qwen2.5-3B-Instruct; \
         tail -f /dev/null",
       ]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "sh", "-c", "ollama show microsoft/Phi3.5-mini-instruct || exit 1"]
+      test: ["CMD", "sh", "-c", "ollama show Qwen/Qwen2.5-3B-Instruct || exit 1"]
       interval: 20s
       timeout: 2s
       retries: 20
