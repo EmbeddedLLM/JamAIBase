@@ -1,15 +1,13 @@
 <script lang="ts">
-	import { PUBLIC_IS_LOCAL, PUBLIC_JAMAI_URL } from '$env/static/public';
 	import Trash_2 from 'lucide-svelte/icons/trash-2';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { activeProject, loadingProjectData, showLoadingOverlay } from '$globalStore';
-	import { textToFileDownload } from '$lib/utils';
-	import logger from '$lib/logger';
+	import { activeProject, loadingProjectData } from '$globalStore';
 	import type { Project } from '$lib/types';
 
 	import ProjectDialogs from '../ProjectDialogs.svelte';
-	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
+	import ExportProjectButton from '../ExportProjectButton.svelte';
+	import { toast } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import ArrowBackIcon from '$lib/icons/ArrowBackIcon.svelte';
@@ -19,47 +17,6 @@
 
 	let isEditingProjectName: Project | null = null;
 	let isDeletingProject: string | null = null;
-
-	async function handleExportProject() {
-		if (PUBLIC_IS_LOCAL === 'false') {
-			window
-				.open(
-					`${PUBLIC_JAMAI_URL}/api/admin/org/v1/projects/${$page.params.project_id}/export`,
-					'_blank'
-				)
-				?.focus();
-		} else {
-			$showLoadingOverlay = true;
-
-			const response = await fetch(
-				`${PUBLIC_JAMAI_URL}/api/admin/org/v1/projects/${$page.params.project_id}/export`
-			);
-
-			if (response.ok) {
-				const contentDisposition = response.headers.get('content-disposition');
-				const responseBody = await response.blob();
-				textToFileDownload(
-					/filename="(?<filename>.*)"/.exec(contentDisposition ?? '')?.groups?.filename ||
-						`${$activeProject?.id}.arrow`,
-					responseBody
-				);
-			} else {
-				const responseBody = await response.json();
-				logger.error(`PROJECT_EXPORT_PROJECT`, responseBody);
-				console.error(responseBody);
-				toast.error('Failed to export project', {
-					id: responseBody.message || JSON.stringify(responseBody),
-					description: CustomToastDesc,
-					componentProps: {
-						description: responseBody.message || JSON.stringify(responseBody),
-						requestID: responseBody.request_id
-					}
-				});
-			}
-
-			$showLoadingOverlay = false;
-		}
-	}
 
 	let tabHighlightPos = '';
 	$: if ($page.route.id?.endsWith('/project/[project_id]/action-table')) {
@@ -110,7 +67,7 @@
 							class="text-[#344054] data-[highlighted]:text-[#344054]"
 						>
 							<EditIcon class="h-3.5 w-3.5 mr-2" />
-							<span>Rename</span>
+							<span>Rename project</span>
 						</DropdownMenu.Item>
 						<DropdownMenu.Item
 							on:click={() => {
@@ -154,15 +111,17 @@
 				</DropdownMenu.Content>
 			</DropdownMenu.Root>
 
-			<Button
-				title="Export project"
-				on:click={handleExportProject}
-				class="flex items-center gap-2 ml-auto p-0 md:px-3.5 h-8 text-[#475467] bg-[#F2F4F7] hover:bg-[#E4E7EC] active:bg-[#E4E7EC]  aspect-square md:aspect-auto"
-			>
-				<ExportIcon class="h-3.5" />
+			<ExportProjectButton let:handleExportProject>
+				<Button
+					title="Export project"
+					on:click={() => handleExportProject()}
+					class="flex items-center gap-2 ml-auto p-0 md:px-3.5 h-8 text-[#475467] bg-[#F2F4F7] hover:bg-[#E4E7EC] focus-visible:bg-[#E4E7EC] active:bg-[#E4E7EC] aspect-square md:aspect-auto"
+				>
+					<ExportIcon class="h-3.5" />
 
-				<span class="hidden md:block">Export</span>
-			</Button>
+					<span class="hidden md:block">Export</span>
+				</Button>
+			</ExportProjectButton>
 		</div>
 
 		<div
@@ -198,7 +157,7 @@
 
 			<div
 				class="absolute bottom-0 {tabHighlightPos} h-[3px] w-1/3 bg-secondary transition-[left]"
-			/>
+			></div>
 		</div>
 
 		<hr

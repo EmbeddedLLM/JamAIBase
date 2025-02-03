@@ -2,14 +2,13 @@
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import debounce from 'lodash/debounce';
 	import { page } from '$app/stores';
-	import { genTableRows } from '../tablesStore';
+	import { genTableRows, tableState } from '../tablesStore';
 	import type { GenTable, GenTableCol } from '$lib/types';
 
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import { isValidUri } from '$lib/utils';
 
 	export let tableData: GenTable | undefined;
-	export let streamingRows: Record<string, string[]>;
 	export let rowThumbs: { [rowID: string]: { [colID: string]: { value: string; url: string } } };
 
 	$: tableData, $genTableRows, debouncedFetchThumbs();
@@ -23,7 +22,9 @@
 			}
 		});
 
-		const fileColumns = tableData.cols.filter((col) => col.dtype === 'file');
+		const fileColumns = tableData.cols.filter(
+			(col) => col.dtype === 'file' || col.dtype === 'audio'
+		);
 		if (fileColumns.length === 0) return;
 
 		const rowThumbsArr: string[] = [];
@@ -34,7 +35,7 @@
 					row[col.id]?.value &&
 					(rowThumbs[row.ID]?.[col.id] === undefined ||
 						row[col.id].value !== rowThumbs[row.ID]?.[col.id]?.value) &&
-					!streamingRows[row.ID]
+					!$tableState.streamingRows[row.ID]
 				) {
 					if (isValidUri(row[col.id].value)) {
 						rowThumbsArr.push(row[col.id].value);

@@ -1,20 +1,22 @@
 <script lang="ts">
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
+	import axios from 'axios';
 	import debounce from 'lodash/debounce';
+	import toUpper from 'lodash/toUpper';
+	import { page } from '$app/stores';
 	import { fileColumnFiletypes } from '$lib/constants';
+	import logger from '$lib/logger';
+	import type { GenTableCol } from '$lib/types';
 
 	import { Button } from '$lib/components/ui/button';
 	import AddIcon from '$lib/icons/AddIcon.svelte';
 	import CloseIcon from '$lib/icons/CloseIcon.svelte';
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
-	import axios from 'axios';
-	import { PUBLIC_JAMAI_URL } from '$env/static/public';
-	import { page } from '$app/stores';
-	import toUpper from 'lodash/toUpper';
-	import logger from '$lib/logger';
 
 	export let tableType: 'action' | 'knowledge' | 'chat';
 	export let controller: (string | AbortController) | (AbortController | undefined);
 	export let selectCb: (files: File[]) => void = handleSaveEditFile;
+	export let column: GenTableCol;
 	/** Edit cell function for tables */
 	export let saveEditCell:
 		| ((cellToUpdate: { rowID: string; columnID: string }, editedValue: string) => Promise<void>)
@@ -37,9 +39,21 @@
 		}
 
 		if (
-			files.some((file) => !fileColumnFiletypes.includes('.' + (file.name.split('.').pop() ?? '')))
+			files.some(
+				(file) =>
+					!fileColumnFiletypes
+						.filter(({ type }) => column.dtype === type)
+						.map(({ ext }) => ext)
+						.includes('.' + (file.name.split('.').pop() ?? '').toLowerCase())
+			)
 		) {
-			alert(`Files must be of type: ${fileColumnFiletypes.join(', ').replaceAll('.', '')}`);
+			alert(
+				`Files must be of type: ${fileColumnFiletypes
+					.filter(({ type }) => column.dtype === type)
+					.map(({ ext }) => ext)
+					.join(', ')
+					.replaceAll('.', '')}`
+			);
 			return;
 		}
 
@@ -62,7 +76,7 @@
 		formData.append('file', files[0]);
 
 		try {
-			const uploadRes = await axios.post(`${PUBLIC_JAMAI_URL}/api/v1/files/upload/`, formData, {
+			const uploadRes = await axios.post(`${PUBLIC_JAMAI_URL}/api/v1/files/upload`, formData, {
 				headers: {
 					'Content-Type': 'multipart/form-data',
 					'x-project-id': $page.params.project_id
@@ -178,12 +192,20 @@
 
 		<input
 			type="file"
-			accept={fileColumnFiletypes.join(',')}
+			accept={fileColumnFiletypes
+				.filter(({ type }) => column.dtype === type)
+				.map(({ ext }) => ext)
+				.join(',')}
 			on:change|preventDefault={(e) => handleSelectFiles([...(e.currentTarget.files ?? [])])}
 			multiple={false}
 			class="fixed max-h-[0] max-w-0 !p-0 !border-none overflow-hidden"
 		/>
 	</Button>
 
-	<span class="text-[#98A2B3]">Supports: {fileColumnFiletypes.join(', ')}</span>
+	<span class="text-[#98A2B3]">
+		Supports: {fileColumnFiletypes
+			.filter(({ type }) => column.dtype === type)
+			.map(({ ext }) => ext)
+			.join(', ')}
+	</span>
 </div>

@@ -75,5 +75,6 @@ export const load = async ({ depends, fetch, params, parent, url }) => {
 	return {
 		table: getTable(),
 		tableRows: getRows()
+		// rightDock: ConvList
 	};
 };

@@ -17,9 +17,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  check_changes:
+    name: Check for changes
+    runs-on: ubuntu-latest
+    outputs:
+      has-changes: ${{ steps.check.outputs.has-changes }}
+    steps:
+      - name: Check
+        id: check
+        uses: jiahuei/check-changes-action@v0
+        with:
+          watch-dirs: "clients/python/ services/api/ services/docio/ docker/ .github/"
+
   pyinstaller_electron_app:
     name: PyInstaller JamAIBase Electron App Compilation
     runs-on: windows-11-desktop
+    needs: check_changes
+    if: needs.check_changes.outputs.has-changes == 'true' || github.event_name == 'push'
     timeout-minutes: 60
 
     steps:
@@ -98,6 +112,8 @@ jobs:
   pyinstaller_api:
     name: PyInstaller API Service Compilation
     runs-on: windows-11-desktop
+    needs: check_changes
+    if: needs.check_changes.outputs.has-changes == 'true' || github.event_name == 'push'
     timeout-minutes: 60
 
     steps:
@@ -179,6 +195,8 @@ jobs:
   pyinstaller_docio:
     name: PyInstaller DocIO Service Compilation
     runs-on: windows-11-desktop
+    needs: check_changes
+    if: needs.check_changes.outputs.has-changes == 'true' || github.event_name == 'push'
     timeout-minutes: 60
 
     steps:

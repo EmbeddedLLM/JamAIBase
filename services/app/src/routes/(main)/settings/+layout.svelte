@@ -66,7 +66,7 @@
 			<div
 				style={tabHighlightPos}
 				class="absolute bottom-0 h-[3px] w-1/5 bg-secondary transition-[top,left]"
-			/>
+			></div>
 		</div>
 	</div>
 

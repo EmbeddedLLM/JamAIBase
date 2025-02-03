@@ -1,17 +1,22 @@
 import asyncio
+import io
 import time
 from contextlib import asynccontextmanager
 
+import httpx
 import pytest
 from flaky import flaky
+from PIL import Image
 
 from jamaibase import JamAI, JamAIAsync
 from jamaibase.exceptions import ResourceNotFoundError
 from jamaibase.protocol import (
+    CodeGenConfig,
     ColumnSchemaCreate,
     GenConfigUpdateRequest,
     GenTableRowsChatCompletionChunks,
     GenTableStreamChatCompletionChunk,
+    GetURLResponse,
     RegenStrategy,
     RowAddRequest,
     RowRegenRequest,
@@ -537,6 +542,179 @@ async def test_multicols_regen_invalid_column_id(
                     concurrent=True,
                 ),
             )
+
+
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
+async def test_code_str(client_cls: JamAI | JamAIAsync, stream: bool):
+    jamai = client_cls()
+    cols = [
+        ColumnSchemaCreate(id="code_column", dtype="str"),
+        ColumnSchemaCreate(
+            id="result_column", dtype="str", gen_config=CodeGenConfig(source_column="code_column")
+        ),
+    ]
+
+    async with _create_table(jamai, TableType.action, cols) as table_id:
+        test_cases = [
+            {"code": "print('Hello, World!')", "expected": "Hello, World!"},
+            {"code": "result = 2 + 2\nprint(result)", "expected": "4"},
+            {"code": "import math\nprint(math.pi)", "expected": "3.141592653589793"},
+            {"code": "result = 5 * 5", "expected": "25"},
+            {"code": "result = 'Python' + ' ' + 'Programming'", "expected": "Python Programming"},
+            {"code": "result = [1, 2, 3, 4, 5]\nresult = sum(result)", "expected": "15"},
+            # Define factorial function as globals namespace to be able to executed recursive calls.
+            # exec() creates a new local scope for the code it's executing, and the recursive calls can't access the function name in this temporary scope.
+            {
+                "code": "def factorial(n):\n    return 1 if n == 0 else n * factorial(n-1)\nglobals()['factorial'] = factorial\nresult = factorial(5)",
+                "expected": "120",
+            },
+            {
+                "code": "result = {x: x**2 for x in range(1, 6)}",
+                "expected": "{1: 1, 2: 4, 3: 9, 4: 16, 5: 25}",
+            },
+        ]
+
+        for case in test_cases:
+            row_input_data = {"code_column": case["code"]}
+            chunks = await run(
+                jamai.table.add_table_rows,
+                TableType.action,
+                RowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
+            )
+
+            if stream:
+                print(chunks[0])
+                assert isinstance(chunks[0], GenTableStreamChatCompletionChunk)
+            else:
+                print(chunks)
+                assert isinstance(chunks, GenTableRowsChatCompletionChunks)
+
+            # Get rows
+            rows = await run(jamai.table.list_table_rows, TableType.action, table_id)
+            row_id = rows.items[0]["ID"]
+            row = await run(jamai.table.get_table_row, TableType.action, table_id, row_id)
+            assert row["result_column"]["value"].strip() == case["expected"]
+
+        # Test error handling
+        error_code = "print(undefined_variable)"
+        row_input_data = {"code_column": error_code}
+        chunks = await run(
+            jamai.table.add_table_rows,
+            TableType.action,
+            RowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
+        )
+        rows = await run(jamai.table.list_table_rows, TableType.action, table_id)
+        row_id = rows.items[0]["ID"]
+        row = await run(jamai.table.get_table_row, TableType.action, table_id, row_id)
+        assert "name 'undefined_variable' is not defined" in row["result_column"]["value"]
+
+
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
+async def test_code_image(client_cls: JamAI | JamAIAsync, stream: bool):
+    jamai = client_cls()
+    cols = [
+        ColumnSchemaCreate(id="code_column", dtype="str"),
+        ColumnSchemaCreate(
+            id="result_column",
+            dtype="image",
+            gen_config=CodeGenConfig(source_column="code_column"),
+        ),
+    ]
+
+    async with _create_table(jamai, TableType.action, cols) as table_id:
+        test_cases = [
+            {
+                "code": """
+import matplotlib.pyplot as plt
+import io
+
+plt.figure(figsize=(10, 5))
+plt.plot([1, 2, 3, 4], [1, 4, 2, 3])
+plt.title('Simple Line Plot')
+buf = io.BytesIO()
+plt.savefig(buf, format='png')
+buf.seek(0)
+result = buf.getvalue()
+""",
+                "expected_format": "PNG",
+            },
+            {
+                "code": """
+from PIL import Image, ImageDraw
+import io
+
+img = Image.new('RGB', (200, 200), color='red')
+draw = ImageDraw.Draw(img)
+draw.ellipse((50, 50, 150, 150), fill='blue')
+buf = io.BytesIO()
+img.save(buf, format='JPEG')
+buf.seek(0)
+result = buf.getvalue()
+""",
+                "expected_format": "JPEG",
+            },
+            {
+                "code": """
+result = b'This is not a valid image file'
+""",
+                "expected_format": None,
+            },
+        ]
+
+        for case in test_cases:
+            row_input_data = {"code_column": case["code"]}
+            chunks = await run(
+                jamai.table.add_table_rows,
+                TableType.action,
+                RowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
+            )
+
+            if stream:
+                print(chunks[0])
+                assert isinstance(chunks[0], GenTableStreamChatCompletionChunk)
+            else:
+                print(chunks)
+                assert isinstance(chunks, GenTableRowsChatCompletionChunks)
+
+            # Get rows
+            rows = await run(jamai.table.list_table_rows, TableType.action, table_id)
+            row_id = rows.items[0]["ID"]
+            row = await run(jamai.table.get_table_row, TableType.action, table_id, row_id)
+            file_uri = row["result_column"]["value"]
+
+            if case["expected_format"] is None:
+                assert file_uri is None
+            else:
+                assert file_uri.startswith(("file://", "s3://"))
+
+                response = await run(jamai.file.get_raw_urls, [file_uri])
+                assert isinstance(response, GetURLResponse)
+                for url in response.urls:
+                    if url.startswith(("http://", "https://")):
+                        # Handle HTTP/HTTPS URLs
+                        HEADERS = {"X-PROJECT-ID": "default"}
+                        with httpx.Client() as client:
+                            downloaded_content = client.get(url, headers=HEADERS).content
+
+                        image = Image.open(io.BytesIO(downloaded_content))
+                        assert image.format == case["expected_format"]
+
+        # Test error handling
+        error_code = "result = 1 / 0"
+        row_input_data = {"code_column": error_code}
+        chunks = await run(
+            jamai.table.add_table_rows,
+            TableType.action,
+            RowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
+        )
+
+        rows = await run(jamai.table.list_table_rows, TableType.action, table_id)
+        row_id = rows.items[0]["ID"]
+        row = await run(jamai.table.get_table_row, TableType.action, table_id, row_id)
+
+        assert row["result_column"]["value"] is None
 
 
 if __name__ == "__main__":

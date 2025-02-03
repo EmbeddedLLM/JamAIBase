@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 import jwt
-from fastapi import Request
 from loguru import logger
 
 from jamaibase.exceptions import AuthorizationError
@@ -19,7 +18,7 @@ def decode_jwt(
     token: str,
     expired_token_message: str,
     invalid_token_message: str,
-    request: Request | None = None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     try:
         data = jwt.decode(
@@ -33,10 +32,10 @@ def decode_jwt(
     except jwt.exceptions.PyJWTError as e:
         raise AuthorizationError(invalid_token_message) from e
     except Exception as e:
-        if request is None:
+        if request_id is None:
             logger.exception(f'Failed to decode "{token}" due to {e.__class__.__name__}: {e}')
         else:
             logger.exception(
-                f'{request.state.id} - Failed to decode "{token}" due to {e.__class__.__name__}: {e}'
+                f'{request_id} - Failed to decode "{token}" due to {e.__class__.__name__}: {e}'
             )
         raise AuthorizationError(invalid_token_message) from e

@@ -20,7 +20,7 @@ SAMPLE_DATA = {
     "bool": True,
     "str": '"Arrival" is a 2016 science fiction film. "Arrival" è un film di fantascienza del 2016. 「Arrival」は2016年のSF映画です。',
 }
-KT_FIXED_COLUMN_IDS = ["Title", "Title Embed", "Text", "Text Embed", "File ID"]
+KT_FIXED_COLUMN_IDS = ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
 CT_FIXED_COLUMN_IDS = ["User"]
 
 TABLE_ID_A = "table_a"
@@ -103,7 +103,7 @@ def _create_table(
                 p.ColumnSchemaCreate(id="words", dtype="int"),
                 p.ColumnSchemaCreate(id="stars", dtype="float"),
                 p.ColumnSchemaCreate(id="inputs", dtype="str"),
-                p.ColumnSchemaCreate(id="photo", dtype="file"),
+                p.ColumnSchemaCreate(id="photo", dtype="image"),
                 p.ColumnSchemaCreate(
                     id="summary",
                     dtype="str",
@@ -232,7 +232,7 @@ def _create_table_v2(
                     id=table_id, cols=cols, embedding_model=embedding_model
                 )
             )
-            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID"}
+            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
         elif table_type == p.TableType.chat:
             table = jamai.table.create_chat_table(
                 p.ChatTableSchemaCreate(id=table_id, cols=chat_cols + cols)
@@ -782,7 +782,7 @@ def test_default_image_model(
     jamai = client_cls()
     available_image_models = _get_image_models(jamai)
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="file"),
+        p.ColumnSchemaCreate(id="input0", dtype="image"),
         p.ColumnSchemaCreate(
             id="output0",
             dtype="str",
@@ -833,7 +833,7 @@ def test_default_image_model(
                 dtype="str",
                 gen_config=p.LLMGenConfig(prompt="${input0}"),
             ),
-            p.ColumnSchemaCreate(id="file_input1", dtype="file"),
+            p.ColumnSchemaCreate(id="file_input1", dtype="image"),
             p.ColumnSchemaCreate(
                 id="output3",
                 dtype="str",
@@ -890,7 +890,7 @@ def test_invalid_image_model(
     jamai = client_cls()
     available_image_models = _get_image_models(jamai)
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="file"),
+        p.ColumnSchemaCreate(id="input0", dtype="image"),
         p.ColumnSchemaCreate(
             id="output0",
             dtype="str",
@@ -902,7 +902,7 @@ def test_invalid_image_model(
             pass
 
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="file"),
+        p.ColumnSchemaCreate(id="input0", dtype="image"),
         p.ColumnSchemaCreate(
             id="output0",
             dtype="str",
@@ -1066,7 +1066,7 @@ def test_default_prompts(
         if table_type == p.TableType.action:
             pass
         elif table_type == p.TableType.knowledge:
-            input_cols |= {"Title", "Text", "File ID"}
+            input_cols |= {"Title", "Text", "File ID", "Page"}
         else:
             input_cols |= {"User"}
         cols = {c.id: c for c in table.cols}
@@ -1116,7 +1116,7 @@ def test_default_prompts(
         if table_type == p.TableType.action:
             pass
         elif table_type == p.TableType.knowledge:
-            input_cols |= {"Title", "Text", "File ID"}
+            input_cols |= {"Title", "Text", "File ID", "Page"}
         else:
             input_cols |= {"User"}
         cols = {c.id: c for c in table.cols}
@@ -1132,7 +1132,7 @@ def test_default_prompts(
         if table_type == p.TableType.action:
             pass
         elif table_type == p.TableType.knowledge:
-            input_cols |= {"Title", "Text", "File ID"}
+            input_cols |= {"Title", "Text", "File ID", "Page"}
         else:
             input_cols |= {"User"}
         for col_id in ["output3"]:
@@ -1201,7 +1201,7 @@ def test_add_drop_columns(
             table = jamai.table.add_knowledge_columns(
                 p.AddKnowledgeColumnSchema(id=table.id, cols=cols)
             )
-            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID"}
+            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
         elif table_type == p.TableType.chat:
             expected_cols |= {"User", "AI"}
             table = jamai.table.add_chat_columns(p.AddChatColumnSchema(id=table.id, cols=cols))
@@ -1254,7 +1254,7 @@ def test_add_drop_columns(
         if table_type == p.TableType.action:
             pass
         elif table_type == p.TableType.knowledge:
-            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID"}
+            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
         elif table_type == p.TableType.chat:
             expected_cols |= {"User", "AI"}
         else:
@@ -1297,7 +1297,7 @@ def test_add_drop_file_column(
 
         # --- COLUMN ADD --- #
         cols = [
-            p.ColumnSchemaCreate(id="add_in_file", dtype="file"),
+            p.ColumnSchemaCreate(id="add_in_file", dtype="image"),
             p.ColumnSchemaCreate(
                 id="add_out_str",
                 dtype="str",
@@ -1318,7 +1318,7 @@ def test_add_drop_file_column(
             table = jamai.table.add_knowledge_columns(
                 p.AddKnowledgeColumnSchema(id=table.id, cols=cols)
             )
-            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID"}
+            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
         elif table_type == p.TableType.chat:
             expected_cols |= {"User", "AI"}
             table = jamai.table.add_chat_columns(p.AddChatColumnSchema(id=table.id, cols=cols))
@@ -1360,7 +1360,7 @@ def test_add_drop_file_column(
             cols = [
                 p.ColumnSchemaCreate(
                     id="add_out_file",
-                    dtype="file",
+                    dtype="image",
                     gen_config=p.LLMGenConfig(
                         model="",
                         system_prompt="",
@@ -1393,7 +1393,7 @@ def test_add_drop_file_column(
         if table_type == p.TableType.action:
             pass
         elif table_type == p.TableType.knowledge:
-            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID"}
+            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
         elif table_type == p.TableType.chat:
             expected_cols |= {"User", "AI"}
         else:
@@ -1475,7 +1475,7 @@ def test_rename_columns(
         if table_type == p.TableType.action:
             pass
         elif table_type == p.TableType.knowledge:
-            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID"}
+            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
         elif table_type == p.TableType.chat:
             expected_cols |= {"User", "AI"}
         else:
@@ -1500,7 +1500,7 @@ def test_rename_columns(
         if table_type == p.TableType.action:
             pass
         elif table_type == p.TableType.knowledge:
-            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID"}
+            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
         elif table_type == p.TableType.chat:
             expected_cols |= {"User", "AI"}
         else:
@@ -1599,10 +1599,10 @@ def test_reorder_columns(
         if table_type == p.TableType.action:
             pass
         elif table_type == p.TableType.knowledge:
-            column_names += ["Title", "Title Embed", "Text", "Text Embed", "File ID"]
+            column_names += ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
             expected_order = (
                 expected_order[:2]
-                + ["Title", "Title Embed", "Text", "Text Embed", "File ID"]
+                + ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
                 + expected_order[2:]
             )
         elif table_type == p.TableType.chat:
@@ -1631,7 +1631,7 @@ def test_reorder_columns(
         if table_type == p.TableType.action:
             pass
         elif table_type == p.TableType.knowledge:
-            expected_order += ["Title", "Title Embed", "Text", "Text Embed", "File ID"]
+            expected_order += ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
         elif table_type == p.TableType.chat:
             expected_order += ["User", "AI"]
         else:
@@ -1690,10 +1690,10 @@ def test_reorder_columns_invalid(
         if table_type == p.TableType.action:
             pass
         elif table_type == p.TableType.knowledge:
-            column_names += ["Title", "Title Embed", "Text", "Text Embed", "File ID"]
+            column_names += ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
             expected_order = (
                 expected_order[:2]
-                + ["Title", "Title Embed", "Text", "Text Embed", "File ID"]
+                + ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
                 + expected_order[2:]
             )
         elif table_type == p.TableType.chat:
@@ -1717,7 +1717,7 @@ def test_reorder_columns_invalid(
         if table_type == p.TableType.action:
             pass
         elif table_type == p.TableType.knowledge:
-            column_names += ["Title", "Title Embed", "Text", "Text Embed", "File ID"]
+            column_names += ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
         elif table_type == p.TableType.chat:
             column_names += ["User", "AI"]
         else:

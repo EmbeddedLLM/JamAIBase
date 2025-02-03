@@ -27,9 +27,7 @@ test.describe('Action Table', () => {
 		await modal.locator('button:has-text("Create"):visible').click();
 		await modal.waitFor({ state: 'hidden' });
 
-		await expect(
-			page.locator('a', { has: page.getByText('transient-test-action-table', { exact: true }) })
-		).toBeVisible();
+		await page.waitForURL(/.*\/project\/[^/]+\/action-table\/transient-test-action-table/);
 	});
 
 	test('can export action table', async ({ page }) => {
@@ -82,9 +80,7 @@ test.describe('Knowledge Table', () => {
 		await modal.locator('button:has-text("Create"):visible').click();
 		await modal.waitFor({ state: 'hidden' });
 
-		await expect(
-			page.locator('a', { has: page.getByText('transient-test-knowledge-table', { exact: true }) })
-		).toBeVisible();
+		await page.waitForURL(/.*\/project\/[^/]+\/knowledge-table\/transient-test-knowledge-table/);
 	});
 
 	test('can export knowledge table', async ({ page }) => {
@@ -184,18 +180,7 @@ test.describe('Chat Table', () => {
 		await modal.locator('button:has-text("Add"):visible').click();
 		await modal.waitFor({ state: 'hidden' });
 
-		const noOfConvs = await page.getByTestId('conv-list').locator('a').count();
-		await page
-			.getByTestId('agents-list')
-			.locator('button', { has: page.getByText('transient-test-agent', { exact: true }) })
-			.click();
-		await expect(page.getByTestId('loading-spinner')).toHaveCount(0);
-
-		const convList = page.getByTestId('conv-list');
-		expect(await convList.locator('a').count()).toBeLessThanOrEqual(noOfConvs);
-		await expect(
-			convList.locator('a', { has: page.getByText('transient-test-chat-conv', { exact: true }) })
-		).toBeVisible();
+		await page.waitForURL(/.*\/project\/[^/]+\/chat-table\/transient-test-chat-conv/);
 	});
 
 	test('can export chat table', async ({ page }) => {

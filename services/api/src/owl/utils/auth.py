@@ -2,7 +2,7 @@ from functools import lru_cache
 from secrets import compare_digest
 from typing import Annotated, AsyncGenerator
 
-from fastapi import Header, Request, Response
+from fastapi import BackgroundTasks, Header, Request, Response
 from httpx import RequestError
 from loguru import logger
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
@@ -169,6 +169,7 @@ def _get_external_keys(organization: OrganizationRead) -> ExternalKeys:
         hyperbolic=get_non_empty(ext_keys, "hyperbolic", ENV_CONFIG.hyperbolic_api_key_plain),
         cerebras=get_non_empty(ext_keys, "cerebras", ENV_CONFIG.cerebras_api_key_plain),
         sambanova=get_non_empty(ext_keys, "sambanova", ENV_CONFIG.sambanova_api_key_plain),
+        deepseek=get_non_empty(ext_keys, "deepseek", ENV_CONFIG.deepseek_api_key_plain),
     )
 
 
@@ -270,6 +271,7 @@ def _get_valid_modellistconfig(all_models: str, external_keys: str) -> ModelList
         "sambanova",
         "cerebras",
         "hyperbolic",
+        "deepseek",
     ]
     # remove providers without credentials
     available_providers = [
@@ -346,6 +348,7 @@ async def auth_user_project_oss(
 
 
 async def auth_user_project_cloud(
+    bg_tasks: BackgroundTasks,
     request: Request,
     response: Response,
     project_id: Annotated[
@@ -361,7 +364,6 @@ async def auth_user_project_cloud(
     user_id: Annotated[str, Header(alias="X-USER-ID", description="User ID.")] = "",
 ) -> AsyncGenerator[ProjectRead, None]:
     route = request.url.path
-    user_id = ""
     project_id = project_id.strip()
     bearer_token = bearer_token.strip()
     user_id = user_id.strip()
@@ -450,21 +452,20 @@ async def auth_user_project_cloud(
 
     yield project
 
-    # Add egress events
-    request.state.billing.create_egress_events(
-        float(response.headers.get("content-length", 0)) / (1024**3)
-    )
-    # Process all billing events
-    await request.state.billing.process_all()
+    # NOTE that billing processing is done in middleware where response headers are available
 
     # Set project updated at datetime
-    if "gen_tables" in route and request.method in WRITE_METHODS:
-        try:
-            await CLIENT.admin.organization.set_project_updated_at(project_id)
-        except Exception as e:
-            logger.warning(
-                f'{request.state.id} - Error setting project "{project_id}" last updated time: {e}'
-            )
+    async def _set_project_updated_at() -> None:
+        if "gen_tables" in route and request.method in WRITE_METHODS:
+            try:
+                await CLIENT.admin.organization.set_project_updated_at(project_id)
+            except Exception as e:
+                logger.warning(
+                    f'{request.state.id} - Error setting project "{project_id}" last updated time: {e}'
+                )
+
+    # This will run AFTER streaming responses are sent
+    bg_tasks.add_task(_set_project_updated_at)
 
 
 auth_user_project = auth_user_project_oss if ENV_CONFIG.is_oss else auth_user_project_cloud

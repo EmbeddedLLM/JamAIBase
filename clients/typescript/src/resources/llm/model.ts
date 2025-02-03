@@ -3,7 +3,7 @@ import { z } from "zod";
 export const ModelInfoRequestSchema = z.object({
     model: z.string().optional(),
     capabilities: z
-        .array(z.enum(["completion", "chat", "image", "embed", "rerank"]))
+        .array(z.enum(["completion", "chat", "image", "audio", "tool", "embed", "rerank"]))
         .nullable()
         .optional()
 });
@@ -14,7 +14,7 @@ export const ModelInfoSchema = z.object({
     name: z.string(),
     context_length: z.number().default(16384),
     languages: z.array(z.string()),
-    capabilities: z.array(z.enum(["completion", "chat", "image", "embed", "rerank"])).default(["chat"]),
+    capabilities: z.array(z.enum(["completion", "chat", "image", "audio", "tool", "embed", "rerank"])).default(["chat"]),
     owned_by: z.string()
 });
 
@@ -26,7 +26,7 @@ export const ModelInfoResponseSchema = z.object({
 export const ModelNamesRequestSchema = z.object({
     prefer: z.string().optional(),
     capabilities: z
-        .array(z.enum(["completion", "chat", "image", "embed", "rerank"]))
+        .array(z.enum(["completion", "chat", "image", "audio", "tool", "embed", "rerank"]))
         .nullable()
         .optional()
 });

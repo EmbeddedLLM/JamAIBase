@@ -2,13 +2,15 @@
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import debounce from 'lodash/debounce';
 	import Trash_2 from 'lucide-svelte/icons/trash-2';
+	import { browser } from '$app/environment';
 	import { invalidate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { uploadQueue } from '$globalStore';
-	import { genTableRows } from '$lib/components/tables/tablesStore';
+	import { genTableRows, tableState } from '$lib/components/tables/tablesStore';
+	import { db } from '$lib/db';
 	import logger from '$lib/logger';
 	import { knowledgeTableEmbedCols, knowledgeTableFiletypes } from '$lib/constants';
-	import type { GenTable, GenTableCol } from '$lib/types';
+	import type { GenTable } from '$lib/types';
 
 	import KnowledgeTable from '$lib/components/tables/KnowledgeTable.svelte';
 	import { ColumnSettings, TablePagination } from '$lib/components/tables/(sub)';
@@ -31,11 +33,21 @@
 
 	$: table, resetTable();
 	const resetTable = () => {
+		if (!('then' in table)) return;
 		Promise.all([
-			table.then((tableRes) => {
+			table.then(async (tableRes) => {
 				tableData = structuredClone(tableRes.data); // Client reorder column
 				if (tableRes.error) {
-					tableError = tableRes;
+					tableError = { error: tableRes.error, message: tableRes.message };
+				}
+
+				if (tableData) tableState.setTemplateCols(tableData.cols);
+				if (browser && tableData) {
+					const savedColSizes = await db.knowledge_table.get($page.params.table_id);
+					if (savedColSizes) {
+						$tableState.colSizes = savedColSizes.columns;
+					}
+					tableState.setTemplateCols(tableData.cols);
 				}
 			}),
 			tableRows.then((tableRowsRes) => {
@@ -45,12 +57,9 @@
 		]).then(() => (tableLoaded = true));
 	};
 
-	let streamingRows: Record<string, string[]> = {};
-
 	let isUploadingFile = false;
 	let filesDragover = false;
 
-	let selectedRows: string[] = [];
 	let searchQuery = '';
 	let searchController: AbortController | null = null;
 	let isLoadingSearch = false;
@@ -59,17 +68,11 @@
 		type: 'input',
 		showDialog: false
 	};
-	let isAddingRow = false;
-	let isDeletingColumn: string | null = null;
 	let isDeletingRow: string[] | null = null;
-	let isColumnSettingsOpen: { column: GenTableCol | null; showMenu: boolean } = {
-		column: null,
-		showMenu: false
-	};
 
 	async function refetchTable(hideColumnSettings = true) {
 		//? Don't refetch while streaming
-		if (Object.keys(streamingRows).length === 0) {
+		if (Object.keys($tableState.streamingRows).length === 0) {
 			if (searchQuery) {
 				await handleSearchRows(searchQuery);
 			} else {
@@ -78,8 +81,9 @@
 				isLoadingSearch = false;
 			}
 
-			selectedRows = [];
-			if (hideColumnSettings) isColumnSettingsOpen = { ...isColumnSettingsOpen, showMenu: false };
+			tableState.setSelectedRows([]);
+			if (hideColumnSettings)
+				tableState.setColumnSettings({ ...$tableState.columnSettings, isOpen: false });
 		}
 	}
 
@@ -145,7 +149,7 @@
 		if (files.length === 0) return;
 		if (
 			files.some(
-				(file) => !knowledgeTableFiletypes.includes('.' + (file.name.split('.').pop() ?? ''))
+				(file) => !knowledgeTableFiletypes.includes('.' + (file.name.split('.').pop() ?? '').toLowerCase())
 			)
 		) {
 			alert(`Files must be of type: ${knowledgeTableFiletypes.join(', ').replaceAll('.', '')}`);
@@ -253,7 +257,7 @@
 
 	<div
 		data-testid="table-title-row"
-		inert={isColumnSettingsOpen.showMenu}
+		inert={$tableState.columnSettings.isOpen}
 		class="grid grid-cols-[minmax(0,max-content)_minmax(min-content,auto)] items-center pl-4 pr-2 sm:pr-4 pt-[1.5px] sm:pt-3 pb-1.5 sm:pb-3 gap-2"
 	>
 		<div class="flex items-center gap-2 text-sm sm:text-base">
@@ -301,27 +305,29 @@
 
 				<div class="relative h-full w-full sm:translate-y-px">
 					<div class="absolute top-1/2 -translate-y-1/2 right-0 flex items-center gap-1">
-						<div title={selectedRows.length === 0 ? 'Select row to generate output' : undefined}>
+						<div
+							title={$tableState.selectedRows.length === 0
+								? 'Select row to generate output'
+								: undefined}
+						>
 							<GenerateButton
-								inert={selectedRows.length === 0 ? true : undefined}
+								inert={$tableState.selectedRows.length === 0 ? true : undefined}
 								tableType="knowledge"
-								bind:selectedRows
-								bind:streamingRows
 								{tableData}
 								{refetchTable}
-								class="sm:pl-0 lg:pl-2.5 sm:pr-0 lg:pr-3.5 sm:aspect-square lg:aspect-auto [&_span]:sm:hidden [&_span]:lg:block {selectedRows.length !==
-									0 || Object.keys(streamingRows).length !== 0
+								class="sm:pl-0 lg:pl-2.5 sm:pr-0 lg:pr-3.5 sm:aspect-square lg:aspect-auto [&_span]:sm:hidden [&_span]:lg:block {$tableState
+									.selectedRows.length !== 0 || Object.keys($tableState.streamingRows).length !== 0
 									? 'opacity-100'
 									: 'opacity-80 [&_*]:!text-[#98A2B3] bg-[#E4E7EC] [&>div]:bg-[#E4E7EC]'} transition-opacity"
 							/>
 						</div>
 
-						{#if selectedRows.length === 0}
+						{#if $tableState.selectedRows.length === 0}
 							<Button
 								variant="ghost"
 								title="Upload"
 								on:click={handleUploadClick}
-								class="flex items-center gap-2 p-0 lg:px-3 h-8 sm:h-9 text-[#475467] bg-[#F2F4F7] hover:bg-[#E4E7EC] aspect-square lg:aspect-auto"
+								class="flex items-center gap-2 p-0 lg:px-3 h-8 sm:h-9 !text-[#475467] bg-[#F2F4F7] hover:bg-[#E4E7EC] aspect-square lg:aspect-auto"
 							>
 								<svg
 									viewBox="0 0 18 18"
@@ -344,7 +350,7 @@
 						{:else}
 							<Button
 								title="Delete row(s)"
-								on:click={() => (isDeletingRow = selectedRows)}
+								on:click={() => (isDeletingRow = $tableState.selectedRows)}
 								class="flex items-center gap-2 p-0 lg:px-3 h-8 sm:h-9 text-[#F04438] bg-[#F2F4F7] hover:bg-[#E4E7EC] focus-visible:bg-[#E4E7EC] active:bg-[#E4E7EC]  aspect-square lg:aspect-auto"
 							>
 								<Trash_2 class="h-4 w-4" />
@@ -376,38 +382,20 @@
 		</div>
 	</div>
 
-	<KnowledgeTable
-		bind:userData
-		bind:tableData
-		bind:tableError
-		bind:selectedRows
-		bind:isColumnSettingsOpen
-		bind:isDeletingColumn
-		bind:streamingRows
-		{table}
-		{refetchTable}
-	/>
+	<KnowledgeTable bind:userData bind:tableData bind:tableError {refetchTable} />
 
 	{#if !tableError}
-		<TablePagination
-			tableType="knowledge"
-			bind:tableData
-			{tableRowsCount}
-			{selectedRows}
-			{searchQuery}
-			{isColumnSettingsOpen}
-		/>
+		<TablePagination tableType="knowledge" bind:tableData {tableRowsCount} {searchQuery} />
 	{/if}
 
 	<ColumnSettings
-		bind:isColumnSettingsOpen
 		{tableData}
 		{refetchTable}
-		showPromptTab={!knowledgeTableEmbedCols.includes(isColumnSettingsOpen.column?.id ?? '')}
+		showPromptTab={!knowledgeTableEmbedCols.includes($tableState.columnSettings.column?.id ?? '')}
 		tableType="knowledge"
 	/>
 </section>
 
 <AddColumnDialog bind:isAddingColumn {tableData} {refetchTable} tableType="knowledge" />
-<DeleteDialogs bind:isDeletingColumn bind:isDeletingRow {refetchTable} tableType="knowledge" />
+<DeleteDialogs bind:isDeletingRow {refetchTable} tableType="knowledge" />
 <UploadingFileDialog {isUploadingFile} />

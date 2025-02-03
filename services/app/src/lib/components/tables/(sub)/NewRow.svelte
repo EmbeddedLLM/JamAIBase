@@ -5,7 +5,8 @@
 	import toUpper from 'lodash/toUpper';
 	import { v4 as uuidv4 } from 'uuid';
 	import { page } from '$app/stores';
-	import { genTableRows } from '$lib/components/tables/tablesStore';
+	import { genTableRows, tableState } from '$lib/components/tables/tablesStore';
+	import { cn } from '$lib/utils';
 	import logger from '$lib/logger';
 	import type { GenTable, GenTableRow, GenTableStreamEvent } from '$lib/types';
 
@@ -19,8 +20,9 @@
 	export let tableType: 'action' | 'knowledge' | 'chat';
 	export let tableData: GenTable;
 	export let focusedCol: string | null;
-	export let streamingRows: Record<string, string[]>;
 	export let refetchTable: () => Promise<void>;
+	let className: string | undefined | null = undefined;
+	export { className as class };
 
 	let newRowForm: HTMLFormElement;
 	let maxInputHeight = 36;
@@ -34,7 +36,7 @@
 	async function resetMaxInputHeight() {
 		if (Object.entries(uploadColumns).some((val) => typeof val[1] === 'string')) {
 			maxInputHeight = 150;
-		} else if (tableData.cols.find((col) => col.dtype === 'file')) {
+		} else if (tableData.cols.find((col) => col.dtype === 'file' || col.dtype === 'audio')) {
 			maxInputHeight = 72;
 		} else {
 			maxInputHeight = 32;
@@ -88,12 +90,16 @@
 			) as any)
 		});
 
-		streamingRows = {
-			...streamingRows,
+		console.log({
 			[clientRowID]: tableData.cols
 				.filter((col) => col.gen_config && !Object.keys(data).includes(col.id))
 				.map((col) => col.id)
-		};
+		});
+		tableState.addStreamingRows({
+			[clientRowID]: tableData.cols
+				.filter((col) => col.gen_config && !Object.keys(data).includes(col.id))
+				.map((col) => col.id)
+		});
 
 		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/rows/add`, {
 			method: 'POST',
@@ -124,7 +130,7 @@
 			});
 
 			genTableRows.deleteRow(clientRowID);
-			delete streamingRows[clientRowID];
+			tableState.delStreamingRows([clientRowID]);
 		} else {
 			const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
 
@@ -172,12 +178,16 @@
 											break;
 										}
 										default: {
-											streamingRows = {
-												...streamingRows,
-												[parsedValue.row_id]: streamingRows[parsedValue.row_id].filter(
-													(col) => col !== parsedValue.output_column_name
-												)
-											};
+											const streamingCols = $tableState.streamingRows[parsedValue.row_id].filter(
+												(col) => col !== parsedValue.output_column_name
+											);
+											if (streamingCols.length === 0) {
+												tableState.delStreamingRows([parsedValue.row_id]);
+											} else {
+												tableState.addStreamingRows({
+													[parsedValue.row_id]: streamingCols
+												});
+											}
 											break;
 										}
 									}
@@ -192,13 +202,12 @@
 												value: parsedValue.choices[0].message.content ?? ''
 											}
 										} as GenTableRow);
-										delete streamingRows[clientRowID];
-										streamingRows = {
-											...streamingRows,
+										tableState.delStreamingRows([clientRowID]);
+										tableState.addStreamingRows({
 											[parsedValue.row_id]: tableData.cols
 												.filter((col) => col.gen_config && !Object.keys(data).includes(col.id))
 												.map((col) => col.id)
-										};
+										});
 										addedRow = true;
 									} else {
 										genTableRows.stream(
@@ -222,10 +231,7 @@
 				}
 			}
 
-			delete streamingRows[clientRowID];
-			delete streamingRows[rowId];
-			streamingRows = streamingRows;
-
+			tableState.delStreamingRows([clientRowID, rowId]);
 			refetchTable();
 		}
 	}
@@ -238,7 +244,7 @@
 		formData.append('file', files[0]);
 
 		try {
-			const uploadRes = await axios.post(`${PUBLIC_JAMAI_URL}/api/v1/files/upload/`, formData, {
+			const uploadRes = await axios.post(`${PUBLIC_JAMAI_URL}/api/v1/files/upload`, formData, {
 				headers: {
 					'Content-Type': 'multipart/form-data',
 					'x-project-id': $page.params.project_id
@@ -345,10 +351,11 @@
 	style="grid-template-columns: 45px {focusedCol === 'ID' ? '320px' : '120px'} {focusedCol ===
 	'Updated at'
 		? '320px'
-		: '130px'} {tableData.cols.length - 2 !== 0
-		? `repeat(${tableData.cols.length - 2}, minmax(320px, 1fr))`
-		: ''};"
-	class="sticky top-[36px] z-20 grid place-items-start h-min max-h-[100px] sm:max-h-[150px] text-xs sm:text-sm text-[#667085] bg-[#FAFBFC] data-dark:bg-[#1E2024] transition-[border-color,grid-template-columns] duration-200 group border-l border-l-transparent data-dark:border-l-transparent border-r border-r-transparent data-dark:border-r-transparent border-b border-[#E4E7EC] data-dark:border-[#333]"
+		: '130px'} {$tableState.templateCols};"
+	class={cn(
+		'sticky top-[36px] z-20 grid place-items-start h-min max-h-[100px] sm:max-h-[150px] text-xs sm:text-sm text-[#667085] bg-[#FAFBFC] data-dark:bg-[#1E2024] group border-l border-l-transparent data-dark:border-l-transparent border-r-transparent data-dark:border-r-transparent border-b border-[#E4E7EC] data-dark:border-[#333]',
+		className
+	)}
 >
 	<div
 		role="gridcell"
@@ -358,8 +365,10 @@
 			class="absolute -z-10 top-0 -left-4 h-full w-[calc(100%_+_16px)] bg-[#FAFBFC] data-dark:bg-[#1E2024] {!isAddingRow
 				? 'group-hover:bg-[#EDEEEF] data-dark:group-hover:bg-white/5'
 				: ''}"
-		/>
-		<div class="absolute -z-10 top-0 -left-4 h-full w-[16px] bg-[#FAFBFC] data-dark:bg-[#1E2024]" />
+		></div>
+		<div
+			class="absolute -z-10 top-0 -left-4 h-full w-[16px] bg-[#FAFBFC] data-dark:bg-[#1E2024]"
+		></div>
 
 		{#if isAddingRow}
 			<Button
@@ -426,19 +435,21 @@
 			<!-- svelte-ignore a11y-interactive-supports-focus -->
 			<div
 				role="gridcell"
-				class="flex justify-start {column.dtype === 'file' && typeof columnFile === 'string'
+				class="flex justify-start {(column.dtype === 'file' || column.dtype === 'audio') &&
+				typeof columnFile === 'string'
 					? 'p-2'
 					: 'p-0'} h-full max-h-[149px] w-full text-black break-words {isAddingRow
 					? '[&:not(:last-child)]:border-r'
 					: 'border-0 group-hover:bg-[#EDEEEF] data-dark:group-hover:bg-white/5'} border-[#E4E7EC] data-dark:border-[#333]"
 			>
 				{#if isAddingRow}
-					{#if column.dtype === 'file'}
+					{#if column.dtype === 'file' || column.dtype === 'audio'}
 						{#if typeof columnFile !== 'string'}
 							<FileSelect
 								{tableType}
 								controller={columnFile}
 								selectCb={(files) => handleFilesUpload(files, column.id)}
+								{column}
 							/>
 						{:else}
 							<FileColumnView
@@ -462,7 +473,7 @@
 							on:input={resizeTextarea}
 							on:focus={resizeTextarea}
 							class="max-h-[100px] sm:max-h-[150px] h-[36px] w-full p-2 placeholder:italic bg-transparent focus-visible:outline-1 focus-visible:outline focus-visible:outline-secondary resize-none"
-						/>
+						></textarea>
 					{/if}
 				{/if}
 			</div>

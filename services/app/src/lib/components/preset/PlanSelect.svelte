@@ -28,7 +28,7 @@
 			variant="outline-neutral"
 			title="Select plan"
 			class={cn(
-				'flex items-center justify-between gap-8 pl-3 pr-2 mb-1 h-10 min-w-full bg-[#F2F4F7] data-dark:bg-[#42464e] hover:bg-[#e1e2e6] border-transparent',
+				'flex items-center justify-between gap-8 pl-3 pr-2 mb-1 h-10 min-w-full bg-[#F2F4F7] data-dark:bg-[#42464e] hover:bg-[#e1e2e6] border-transparent rounded-md',
 				className
 			)}
 		>

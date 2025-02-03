@@ -75,7 +75,8 @@ _py_type_default = {
     "float16": 0.0,
     "bool": False,
     "str": "''",
-    "file": "''",
+    "image": "''",
+    "audio": "''",
 }
 
 
@@ -1101,8 +1102,10 @@ class GenerativeTable:
         def replace_match(match):
             col_id = match.group(1)
             try:
-                if column_dtypes[col_id] == "file":
-                    return "<file>"
+                if column_dtypes[col_id] == "image":
+                    return "<image_file>"
+                elif column_dtypes[col_id] == "audio":
+                    return "<audio_file>"
                 return str(column_contents[col_id])
             except KeyError as e:
                 raise KeyError(f'Referenced column "{col_id}" is not found.') from e
@@ -1222,7 +1225,7 @@ class GenerativeTable:
             # Convert into Arrow Table
             pa_table = table._dataset.to_table(offset=None, limit=None)
             # Add file data into Arrow Table
-            file_col_ids = [col.id for col in meta.cols_schema if col.dtype == "file"]
+            file_col_ids = [col.id for col in meta.cols_schema if col.dtype in ["image", "audio"]]
             for col_id in file_col_ids:
                 file_bytes = []
                 for uri in pa_table.column(col_id).to_pylist():
@@ -1277,7 +1280,7 @@ class GenerativeTable:
             if session.get(TableMeta, table_id_dst) is not None:
                 raise ResourceExistsError(f'Table "{table_id_dst}" already exists.')
             # Upload files
-            file_col_ids = [col.id for col in meta.cols_schema if col.dtype == "file"]
+            file_col_ids = [col.id for col in meta.cols_schema if col.dtype in ["image", "audio"]]
             for col_id in file_col_ids:
                 new_uris = []
                 for old_uri, content in zip(
@@ -1789,7 +1792,7 @@ class ActionTable(GenerativeTable):
 
 
 class KnowledgeTable(GenerativeTable):
-    FIXED_COLUMN_IDS = ["Title", "Title Embed", "Text", "Text Embed", "File ID"]
+    FIXED_COLUMN_IDS = ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
 
     @override
     def create_table(
@@ -1831,6 +1834,7 @@ class KnowledgeTable(GenerativeTable):
                     ),
                 ),
                 ColumnSchema(id="File ID", dtype=ColumnDtype.STR),
+                ColumnSchema(id="Page", dtype=ColumnDtype.INT),
             ]
             + schema.cols,
         )

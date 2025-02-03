@@ -2,50 +2,29 @@
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { onDestroy } from 'svelte';
 	import { page } from '$app/stores';
-	import GripVertical from 'lucide-svelte/icons/grip-vertical';
-	import { genTableRows } from '$lib/components/tables/tablesStore';
-	import { isValidUri } from '$lib/utils';
-	import { knowledgeTableStaticCols } from '$lib/constants';
+	import { genTableRows, tableState } from '$lib/components/tables/tablesStore';
+	import { cn, isValidUri } from '$lib/utils';
 	import logger from '$lib/logger';
-	import type { GenTable, GenTableCol, GenTableRow, UserRead } from '$lib/types';
+	import type { GenTable, GenTableRow, UserRead } from '$lib/types';
 
 	import {
-		ColumnDropdown,
+		ColumnHeader,
 		DeleteFileDialog,
 		FileColumnView,
 		FileSelect,
 		FileThumbsFetch
 	} from '$lib/components/tables/(sub)';
 	import Checkbox from '$lib/components/Checkbox.svelte';
-	import Portal from '$lib/components/Portal.svelte';
 	import FoundProjectOrgSwitcher from '$lib/components/preset/FoundProjectOrgSwitcher.svelte';
 	import RowStreamIndicator from '$lib/components/preset/RowStreamIndicator.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
 	import NoRowsGraphic from './(svg)/NoRowsGraphic.svelte';
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
-	import MoreVertIcon from '$lib/icons/MoreVertIcon.svelte';
-	import MultiturnChatIcon from '$lib/icons/MultiturnChatIcon.svelte';
 
 	export let userData: UserRead | undefined;
-	export let table: Promise<
-		| {
-				error: number;
-				message: any;
-				data?: undefined;
-		  }
-		| {
-				data: GenTable;
-				error?: undefined;
-				message?: undefined;
-		  }
-	>;
 	export let tableData: GenTable | undefined;
-	export let tableError: { error: number; message: Awaited<typeof table>['message'] } | undefined;
-	export let selectedRows: string[];
-	export let streamingRows: Record<string, string[]>;
-	export let isColumnSettingsOpen: { column: any; showMenu: boolean };
-	export let isDeletingColumn: string | null;
+	export let tableError: { error: number; message?: any } | undefined;
 	export let readonly = false;
 	export let refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
 
@@ -56,152 +35,16 @@
 	//? Expanding ID and Updated at columns
 	let focusedCol: string | null = null;
 
-	//? Column header click handler
-	let isRenamingColumn: string | null = null;
-	let dblClickTimer: NodeJS.Timeout | null = null;
-	function handleColumnHeaderClick(column: GenTableCol) {
-		if (!tableData) return;
-		if (isRenamingColumn) return;
-
-		if (dblClickTimer) {
-			clearTimeout(dblClickTimer);
-			dblClickTimer = null;
-			if (!readonly && !knowledgeTableStaticCols.includes(column.id)) {
-				isRenamingColumn = column.id;
-			}
-		} else {
-			dblClickTimer = setTimeout(() => {
-				if (column.id !== 'ID' && column.id !== 'Updated at' && column.gen_config) {
-					isColumnSettingsOpen = { column, showMenu: true };
-				}
-				dblClickTimer = null;
-			}, 200);
-		}
-	}
-
-	async function handleSaveColumnTitle(
-		e: KeyboardEvent & {
-			currentTarget: EventTarget & HTMLInputElement;
-		}
-	) {
-		if (!tableData || !$genTableRows) return;
-		if (!isRenamingColumn) return;
-		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/knowledge/columns/rename`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'x-project-id': $page.params.project_id
-			},
-			body: JSON.stringify({
-				table_id: $page.params.table_id,
-				column_map: {
-					[isRenamingColumn]: e.currentTarget.value
-				}
-			})
-		});
-
-		if (response.ok) {
-			refetchTable();
-			tableData = {
-				...tableData,
-				cols: tableData.cols.map((col) =>
-					col.id === isRenamingColumn ? { ...col, id: e.currentTarget.value } : col
-				)
-			};
-			isRenamingColumn = null;
-		} else {
-			const responseBody = await response.json();
-			logger.error('KNOWTBL_COLUMN_RENAME', responseBody);
-			toast.error('Failed to rename column', {
-				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
-				componentProps: {
-					description: responseBody.message || JSON.stringify(responseBody),
-					requestID: responseBody.request_id
-				}
-			});
-		}
-	}
-
-	//? Reorder columns
-	let isReorderLoading = false;
-	let dragMouseCoords: {
-		x: number;
-		y: number;
-		startX: number;
-		startY: number;
-		width: number;
-	} | null = null;
-	let draggingColumn: GenTable['cols'][number] | null = null;
-	let draggingColumnIndex: number | null = null;
-	let hoveredColumnIndex: number | null = null;
-
-	$: if (
-		tableData &&
-		draggingColumnIndex != null &&
-		hoveredColumnIndex != null &&
-		draggingColumnIndex != hoveredColumnIndex
-	) {
-		[tableData.cols[draggingColumnIndex], tableData.cols[hoveredColumnIndex]] = [
-			tableData.cols[hoveredColumnIndex],
-			tableData.cols[draggingColumnIndex]
-		];
-
-		draggingColumnIndex = hoveredColumnIndex;
-	}
-
-	async function handleSaveOrder() {
-		if (!tableData || !$genTableRows) return;
-		if (isReorderLoading) return;
-		isReorderLoading = true;
-
-		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/knowledge/columns/reorder`,
-			{
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					'x-project-id': $page.params.project_id
-				},
-				body: JSON.stringify({
-					table_id: tableData.id,
-					column_names: tableData.cols.flatMap(({ id }) =>
-						id === 'ID' || id === 'Updated at' ? [] : id
-					)
-				})
-			}
-		);
-
-		if (!response.ok) {
-			const responseBody = await response.json();
-			logger.error('KNOWTBL_TBL_REORDER', responseBody);
-			toast.error('Failed to reorder columns', {
-				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
-				componentProps: {
-					description: responseBody.message || JSON.stringify(responseBody),
-					requestID: responseBody.request_id
-				}
-			});
-			tableData = (await table)?.data;
-		} else {
-			refetchTable();
-		}
-
-		isReorderLoading = false;
-	}
-
-	let isEditingCell: { rowID: string; columnID: string } | null = null;
 	async function handleSaveEdit(
 		e: KeyboardEvent & {
 			currentTarget: EventTarget & HTMLTextAreaElement;
 		}
 	) {
 		if (!tableData || !$genTableRows) return;
-		if (!isEditingCell) return;
+		if (!$tableState.editingCell) return;
 
 		const editedValue = e.currentTarget.value;
-		const cellToUpdate = isEditingCell;
+		const cellToUpdate = $tableState.editingCell;
 
 		await saveEditCell(cellToUpdate, editedValue);
 	}
@@ -248,7 +91,7 @@
 			//? Revert back to original value
 			genTableRows.setCell(cellToUpdate, originalValue);
 		} else {
-			isEditingCell = null;
+			tableState.setEditingCell(null);
 			refetchTable();
 		}
 	}
@@ -262,31 +105,23 @@
 		if (!tableData || !$genTableRows) return;
 		//? Select multiple rows with shift key
 		const rowIndex = $genTableRows.findIndex(({ ID }) => ID === row.ID);
-		if (e.detail.event.shiftKey && selectedRows.length && shiftOrigin != null) {
+		if (e.detail.event.shiftKey && $tableState.selectedRows.length && shiftOrigin != null) {
 			if (shiftOrigin < rowIndex) {
-				selectedRows = [
-					...selectedRows.filter((i) => !$genTableRows?.some(({ ID }) => ID === i)),
+				tableState.setSelectedRows([
+					...$tableState.selectedRows.filter((i) => !$genTableRows?.some(({ ID }) => ID === i)),
 					...$genTableRows.slice(shiftOrigin, rowIndex + 1).map(({ ID }) => ID)
-				];
+				]);
 			} else if (shiftOrigin > rowIndex) {
-				selectedRows = [
-					...selectedRows.filter((i) => !$genTableRows?.some(({ ID }) => ID === i)),
+				tableState.setSelectedRows([
+					...$tableState.selectedRows.filter((i) => !$genTableRows?.some(({ ID }) => ID === i)),
 					...$genTableRows.slice(rowIndex, shiftOrigin + 1).map(({ ID }) => ID)
-				];
+				]);
 			} else {
-				selectOne();
+				tableState.toggleRowSelection(row.ID);
 			}
 		} else {
-			selectOne();
+			tableState.toggleRowSelection(row.ID);
 			shiftOrigin = rowIndex;
-		}
-
-		function selectOne() {
-			if (selectedRows.find((i) => i === row.ID)) {
-				selectedRows = selectedRows.filter((i) => i !== row.ID);
-			} else {
-				selectedRows = [...selectedRows, row.ID];
-			}
 		}
 	}
 
@@ -298,16 +133,16 @@
 		if (isCtrl && e.key === 'a' && !isInputActive) {
 			e.preventDefault();
 
-			if (Object.keys(streamingRows).length !== 0) return;
+			if (Object.keys($tableState.streamingRows).length !== 0) return;
 
-			selectedRows = [
-				...selectedRows.filter((i) => !$genTableRows?.some(({ ID }) => ID === i)),
+			tableState.setSelectedRows([
+				...$tableState.selectedRows.filter((i) => !$genTableRows?.some(({ ID }) => ID === i)),
 				...$genTableRows.map(({ ID }) => ID)
-			];
+			]);
 		}
 
 		if (e.key === 'Escape') {
-			isEditingCell = null;
+			tableState.setEditingCell(null);
 		}
 	}
 
@@ -317,6 +152,7 @@
 
 	onDestroy(() => {
 		$genTableRows = undefined;
+		tableState.reset();
 	});
 </script>
 
@@ -325,7 +161,7 @@
 		const editingCell = document.querySelector('[data-editing="true"]');
 		//@ts-ignore
 		if (e.target && editingCell && !editingCell.contains(e.target)) {
-			isEditingCell = null;
+			tableState.setEditingCell(null);
 		}
 	}}
 	on:keydown={keyboardNavigate}
@@ -334,7 +170,7 @@
 {#if tableData}
 	<div
 		data-testid="table-area"
-		inert={isColumnSettingsOpen.showMenu}
+		inert={$tableState.columnSettings.isOpen}
 		class="grow flex flex-col w-full min-h-0"
 	>
 		<div
@@ -347,9 +183,11 @@
 				}
 			}}
 			role="grid"
-			style="grid-template-rows: 36px  {$genTableRows
-				? `repeat(${$genTableRows.length}, min-content)`
-				: 'minmax(0, 1fr)'};"
+			style={$genTableRows?.length !== 0
+				? `grid-template-rows: 36px ${
+						$genTableRows ? `repeat(${$genTableRows.length}, min-content)` : 'minmax(0, 1fr)'
+					};`
+				: undefined}
 			class="grow relative grid px-2 overflow-auto"
 		>
 			<div
@@ -357,10 +195,12 @@
 				style="grid-template-columns: 45px {focusedCol === 'ID' ? '320px' : '120px'} {focusedCol ===
 				'Updated at'
 					? '320px'
-					: '130px'} {tableData.cols.length - 2 !== 0
-					? `repeat(${tableData.cols.length - 2}, minmax(320px, 1fr))`
-					: ''};"
-				class="sticky top-0 z-20 h-[36px] grid text-xs sm:text-sm border border-[#E4E7EC] data-dark:border-[#333] rounded-lg bg-white data-dark:bg-[#42464E] transition-[grid-template-columns] duration-200"
+					: '130px'} {$tableState.templateCols};"
+				class={cn(
+					'sticky top-0 z-20 grid h-[36px] text-xs sm:text-sm border border-[#E4E7EC] data-dark:border-[#333] rounded-lg bg-white data-dark:bg-[#42464E]',
+					Object.keys($tableState.colSizes).length !== 0 && 'w-min',
+					!$tableState.resizingCol && 'transition-[grid-template-columns] duration-200'
+				)}
 			>
 				<!-- Obscure padding between header and side nav bar -->
 				<div
@@ -369,7 +209,7 @@
 
 				<div
 					role="columnheader"
-					class="sticky left-0 z-0 flex items-center justify-center px-2 bg-white data-dark:bg-[#42464E] border-r border-[#E4E7EC] data-dark:border-[#333] rounded-l-lg"
+					class="sticky left-0 z-[5] flex items-center justify-center px-2 bg-white data-dark:bg-[#42464E] border-r border-[#E4E7EC] data-dark:border-[#333] rounded-l-lg"
 				>
 					<div
 						id="checkbox-bg-obscure"
@@ -380,208 +220,70 @@
 						<Checkbox
 							on:checkedChange={() => {
 								if ($genTableRows) {
-									return $genTableRows.every((row) => selectedRows.includes(row.ID))
-										? (selectedRows = selectedRows.filter(
-												(i) => !$genTableRows?.some(({ ID }) => ID === i)
-											))
-										: (selectedRows = [
-												...selectedRows.filter((i) => !$genTableRows?.some(({ ID }) => ID === i)),
-												...$genTableRows.map(({ ID }) => ID)
-											]);
+									return tableState.selectAllRows($genTableRows);
 								} else return false;
 							}}
-							checked={($genTableRows ?? []).every((row) => selectedRows.includes(row.ID))}
+							checked={($genTableRows ?? []).every((row) =>
+								$tableState.selectedRows.includes(row.ID)
+							)}
 							class="h-4 sm:h-[18px] w-4 sm:w-[18px] [&>svg]:h-3 sm:[&>svg]:h-3.5 [&>svg]:w-3 sm:[&>svg]:w-3.5 [&>svg]:translate-x-[1px]"
 						/>
 					{/if}
 				</div>
 
-				{#each tableData.cols as column, index (column.id)}
-					{@const colType = !column.gen_config ? 'input' : 'output'}
-					{@const isCustomCol = column.id !== 'ID' && column.id !== 'Updated at'}
-					<!-- svelte-ignore a11y-interactive-supports-focus -->
-					<!-- svelte-ignore a11y-click-events-have-key-events -->
-					<div
-						role="columnheader"
-						title={column.id}
-						on:click={() => handleColumnHeaderClick(column)}
-						on:dragover={(e) => {
-							if (isCustomCol) {
-								e.preventDefault();
-								hoveredColumnIndex = index;
-							}
-						}}
-						class="flex items-center gap-1 {isCustomCol && !readonly
-							? 'px-1'
-							: 'pl-2 pr-1'} cursor-default [&:not(:last-child)]:border-r border-[#E4E7EC] data-dark:border-[#333] {isColumnSettingsOpen
-							.column?.id == column.id && isColumnSettingsOpen.showMenu
-							? 'bg-[#30A8FF33]'
-							: ''} {draggingColumn?.id == column.id ? 'opacity-0' : ''}"
-					>
-						{#if isCustomCol}
-							{#if !readonly}
-								<button
-									title="Drag to reorder columns"
-									disabled={isReorderLoading}
-									on:click|stopPropagation
-									on:dragstart={(e) => {
-										//@ts-ignore
-										let rect = e.target.getBoundingClientRect();
-										dragMouseCoords = {
-											x: e.clientX,
-											y: e.clientY,
-											startX: e.clientX - rect.left,
-											startY: e.clientY - rect.top,
-											//@ts-ignore
-											width: e.target.parentElement.offsetWidth
-										};
-										draggingColumn = column;
-										draggingColumnIndex = index;
-									}}
-									on:drag={(e) => {
-										if (e.clientX === 0 && e.clientY === 0) return;
-										//@ts-ignore
-										dragMouseCoords = { ...dragMouseCoords, x: e.clientX, y: e.clientY };
-									}}
-									on:dragend={() => {
-										dragMouseCoords = null;
-										draggingColumn = null;
-										draggingColumnIndex = null;
-										hoveredColumnIndex = null;
-										handleSaveOrder();
-									}}
-									draggable={true}
-									class="cursor-grab disabled:cursor-not-allowed"
-								>
-									<GripVertical size={18} />
-								</button>
-							{/if}
-
-							<span
-								style="background-color: {colType === 'input'
-									? '#E9EDFA'
-									: '#FFEAD5'}; color: {colType === 'input' ? '#6686E7' : '#FD853A'};"
-								class="w-min mr-1 px-0.5 py-1 text-xxs sm:text-xs whitespace-nowrap rounded-[0.1875rem] select-none flex items-center"
-							>
-								<span class="capitalize font-medium px-1">
-									{colType}
-								</span>
-								<span
-									class="bg-white w-min px-1 font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
-								>
-									{column.dtype}
-								</span>
-
-								{#if column.gen_config?.object === 'gen_config.llm' && column.gen_config.multi_turn}
-									<hr class="ml-1 h-3 border-l border-[#FD853A]" />
-									<div class="relative h-4 w-[18px]">
-										<MultiturnChatIcon class="absolute h-[18px] -translate-y-px" />
-									</div>
-								{/if}
-							</span>
-						{/if}
-
-						{#if isRenamingColumn === column.id}
-							<!-- svelte-ignore a11y-autofocus -->
-							<input
-								type="text"
-								id="column-id-edit"
-								autofocus
-								value={column.id}
-								on:keydown={(e) => {
-									if (e.key === 'Enter') {
-										e.preventDefault();
-
-										handleSaveColumnTitle(e);
-									} else if (e.key === 'Escape') {
-										isRenamingColumn = null;
-									}
-								}}
-								on:blur={() => setTimeout(() => (isRenamingColumn = null), 100)}
-								class="w-full bg-transparent border-0 outline outline-1 outline-[#4169e1] data-dark:outline-[#5b7ee5] rounded-[2px]"
-							/>
-						{:else}
-							<span
-								class="w-full font-medium {column.id === 'ID' || column.id === 'Updated at'
-									? 'text-[#98A2B3]'
-									: 'text-[#666] data-dark:text-white'} line-clamp-1 break-all"
-							>
-								{column.id}
-							</span>
-						{/if}
-
-						{#if (!knowledgeTableStaticCols.includes(column.id) || colType === 'output') && !readonly}
-							<ColumnDropdown
-								tableType="knowledge"
-								bind:isColumnSettingsOpen
-								bind:isRenamingColumn
-								bind:isDeletingColumn
-								bind:selectedRows
-								bind:streamingRows
-								{column}
-								{tableData}
-								{refetchTable}
-								{readonly}
-							/>
-						{/if}
-					</div>
-				{/each}
+				<ColumnHeader tableType="knowledge" {tableData} {refetchTable} {readonly} />
 			</div>
 
 			{#if $genTableRows}
-				<!-- Bandaid fix for no scrolling when no rows -->
-				<div
-					style="grid-template-columns: 45px 120px 130px repeat({tableData.cols.length -
-						2}, minmax(320px, 1fr));"
-					class="z-0 grid place-items-start h-0 pointer-events-none invisible"
-				/>
-
 				{#if $genTableRows.length > 0}
 					{#each $genTableRows as row}
 						<div
-							data-streaming={!!streamingRows[row.ID] || undefined}
+							data-streaming={!!$tableState.streamingRows[row.ID] || undefined}
 							role="row"
 							style="grid-template-columns: 45px {focusedCol === 'ID'
 								? '320px'
-								: '120px'} {focusedCol === 'Updated at' ? '320px' : '130px'} {tableData.cols
-								.length -
-								2 !==
-							0
-								? `repeat(${tableData.cols.length - 2}, minmax(320px, 1fr))`
-								: ''};"
-							class="relative z-0 grid place-items-start h-min max-h-[100px] sm:max-h-[150px] text-xs sm:text-sm transition-[border-color,grid-template-columns] duration-200 border-l border-l-transparent data-dark:border-l-transparent border-r border-r-transparent data-dark:border-r-transparent border-b border-[#E4E7EC] data-dark:border-[#333] group"
+								: '120px'} {focusedCol === 'Updated at'
+								? '320px'
+								: '130px'} {$tableState.templateCols};"
+							class={cn(
+								'relative z-0 grid place-items-start h-min max-h-[100px] sm:max-h-[150px] text-xs sm:text-sm border-l border-l-transparent data-dark:border-l-transparent border-r border-r-transparent data-dark:border-r-transparent border-b border-b-[#E4E7EC] data-dark:border-b-[#333] group',
+								Object.keys($tableState.colSizes).length !== 0 && 'w-min',
+								!$tableState.resizingCol &&
+									'transition-[border-color,grid-template-columns] duration-200'
+							)}
 						>
 							<div
 								role="gridcell"
 								class="sticky z-[1] left-0 flex justify-center px-2 py-1.5 sm:py-2 h-full w-full border-r border-[#E4E7EC] data-dark:border-[#333]"
 							>
 								<!-- Streaming row colored part -->
-								{#if streamingRows[row.ID]}
+								{#if $tableState.streamingRows[row.ID]}
 									<div
 										class="absolute -z-[1] -top-[1px] -left-[9px] h-[calc(100%_+_2px)] w-1.5 bg-[#F2839F]"
 									/>
 								{/if}
 
 								<div
-									class="absolute -z-10 top-0 -left-4 h-full w-[calc(100%_+_16px)] {streamingRows[
-										row.ID
-									]
-										? 'bg-[#FDEFF4]'
-										: 'bg-[#FAFBFC] data-dark:bg-[#1E2024] group-hover:bg-[#ECEDEE]'}"
+									class={cn(
+										'absolute -z-10 top-0 -left-4 h-full w-[calc(100%_+_16px)]',
+										$tableState.streamingRows[row.ID]
+											? 'bg-[#FDEFF4]'
+											: 'bg-[#FAFBFC] data-dark:bg-[#1E2024] group-hover:bg-[#ECEDEE]'
+									)}
 								/>
 								{#if !readonly}
 									<Checkbox
 										on:checkedChange={(e) => handleSelectRow(e, row)}
-										checked={!!selectedRows.find((i) => i === row.ID)}
+										checked={!!$tableState.selectedRows.find((i) => i === row.ID)}
 										class="mt-[1px] h-4 sm:h-[18px] w-4 sm:w-[18px] [&>svg]:h-3 sm:[&>svg]:h-3.5 [&>svg]:w-3 sm:[&>svg]:w-3.5 [&>svg]:translate-x-[1px]"
 									/>
 								{/if}
 							</div>
 							{#each tableData.cols as column}
 								{@const editMode =
-									isEditingCell &&
-									isEditingCell.rowID === row.ID &&
-									isEditingCell.columnID === column.id}
+									$tableState.editingCell &&
+									$tableState.editingCell.rowID === row.ID &&
+									$tableState.editingCell.columnID === column.id}
 								{@const isValidFileUri = isValidUri(row[column.id]?.value)}
 								<!-- svelte-ignore a11y-interactive-supports-focus -->
 								<div
@@ -593,9 +295,14 @@
 									on:mousedown={(e) => {
 										if (column.id === 'ID' || column.id === 'Updated at') return;
 
-										if (column.dtype === 'file' && row[column.id]?.value && isValidFileUri) return;
+										if (
+											(column.dtype === 'file' || column.dtype === 'audio') &&
+											row[column.id]?.value &&
+											isValidFileUri
+										)
+											return;
 										if (uploadController) return;
-										if (streamingRows[row.ID] || isEditingCell) return;
+										if ($tableState.streamingRows[row.ID] || $tableState.editingCell) return;
 
 										if (e.detail > 1) {
 											e.preventDefault();
@@ -605,46 +312,59 @@
 										if (readonly) return;
 										if (column.id === 'ID' || column.id === 'Updated at') return;
 
-										if (column.dtype === 'file' && row[column.id]?.value && isValidFileUri) return;
+										if (
+											(column.dtype === 'file' || column.dtype === 'audio') &&
+											row[column.id]?.value &&
+											isValidFileUri
+										)
+											return;
 										if (uploadController) return;
 
-										if (!streamingRows[row.ID]) {
-											isEditingCell = { rowID: row.ID, columnID: column.id };
+										if (!$tableState.streamingRows[row.ID]) {
+											tableState.setEditingCell({ rowID: row.ID, columnID: column.id });
 										}
 									}}
 									on:keydown={(e) => {
 										if (readonly) return;
 										if (column.id === 'ID' || column.id === 'Updated at') return;
 
-										if (column.dtype === 'file' && row[column.id]?.value && isValidFileUri) return;
+										if (
+											(column.dtype === 'file' || column.dtype === 'audio') &&
+											row[column.id]?.value &&
+											isValidFileUri
+										)
+											return;
 										if (uploadController) return;
 
-										if (!editMode && e.key == 'Enter' && !streamingRows[row.ID]) {
-											isEditingCell = { rowID: row.ID, columnID: column.id };
+										if (!editMode && e.key == 'Enter' && !$tableState.streamingRows[row.ID]) {
+											tableState.setEditingCell({ rowID: row.ID, columnID: column.id });
 										}
 									}}
-									style={isColumnSettingsOpen.column?.id == column.id &&
-									isColumnSettingsOpen.showMenu
+									style={$tableState.columnSettings.column?.id == column.id &&
+									$tableState.columnSettings.isOpen
 										? 'background-color: #30A8FF17;'
 										: ''}
-									class="flex flex-col justify-start gap-1 {editMode
-										? 'p-0 bg-black/5 data-dark:bg-white/5'
-										: 'p-2 overflow-auto whitespace-pre-line'} h-full max-h-[99px] sm:max-h-[149px] w-full break-words {streamingRows[
-										row.ID
-									]
-										? 'bg-[#FDEFF4]'
-										: 'group-hover:bg-[#ECEDEE] data-dark:group-hover:bg-white/5'} [&:not(:last-child)]:border-r border-[#E4E7EC] data-dark:border-[#333]"
+									class={cn(
+										'flex flex-col justify-start gap-1 h-full max-h-[99px] sm:max-h-[149px] w-full break-words [&:not(:last-child)]:border-r border-[#E4E7EC] data-dark:border-[#333]',
+										editMode
+											? 'p-0 bg-black/5 data-dark:bg-white/5'
+											: 'p-2 overflow-auto whitespace-pre-line',
+										$tableState.streamingRows[row.ID]
+											? 'bg-[#FDEFF4]'
+											: 'group-hover:bg-[#ECEDEE] data-dark:group-hover:bg-white/5'
+									)}
 								>
-									{#if streamingRows[row.ID]?.includes(column.id) && !editMode && column.id !== 'ID' && column.id !== 'Updated at' && column.gen_config}
+									{#if $tableState.streamingRows[row.ID]?.includes(column.id) && !editMode && column.id !== 'ID' && column.id !== 'Updated at' && column.gen_config}
 										<RowStreamIndicator />
 									{/if}
 
 									{#if editMode}
-										{#if column.dtype === 'file'}
+										{#if column.dtype === 'file' || column.dtype === 'audio'}
 											<FileSelect
 												tableType="knowledge"
 												controller={uploadController}
 												cellToUpdate={{ rowID: row.ID, columnID: column.id }}
+												{column}
 												{saveEditCell}
 											/>
 										{:else}
@@ -662,7 +382,7 @@
 												class="min-h-[100px] sm:min-h-[150px] h-full w-full p-2 bg-transparent outline outline-secondary resize-none"
 											/>
 										{/if}
-									{:else if column.dtype === 'file'}
+									{:else if column.dtype === 'file' || column.dtype === 'audio'}
 										<FileColumnView
 											tableType="knowledge"
 											rowID={row.ID}
@@ -682,7 +402,7 @@
 											{:else if column.id === 'Updated at'}
 												{new Date(row[column.id]).toISOString()}
 											{:else}
-												{row[column.id]?.value === undefined ? null : row[column.id]?.value}
+												{row[column.id]?.value === undefined ? '' : row[column.id]?.value}
 											{/if}
 										</span>
 									{/if}
@@ -693,18 +413,16 @@
 				{:else if $genTableRows.length === 0}
 					<div
 						role="row"
-						style="grid-template-columns: 600px {focusedCol === 'ID'
+						style="grid-template-columns: 60px {focusedCol === 'ID'
 							? '320px'
-							: '120px'} {focusedCol === 'Updated at' ? '320px' : '130px'} {tableData.cols.length -
-							2 !==
-						0
-							? `repeat(${tableData.cols.length - 2}, minmax(320px, 1fr))`
-							: ''};"
+							: '120px'} {focusedCol === 'Updated at'
+							? '320px'
+							: '130px'} {$tableState.templateCols};"
 						class="sticky top-[40px] z-0 grid place-items-start h-min"
 					>
 						<div
 							role="gridcell"
-							class="sticky left-1/2 -translate-x-1/2 translate-y-24 pb-28 flex flex-col items-center justify-center p-1 h-full w-full"
+							class="sticky left-1/2 -translate-x-1/2 flex flex-col items-center justify-center p-1 h-full w-max"
 						>
 							<NoRowsGraphic class="h-[16rem]" />
 							<span class="mt-4 text-base sm:text-lg">Upload Document</span>
@@ -746,56 +464,7 @@
 	</div>
 {/if}
 
-{#if dragMouseCoords && draggingColumn}
-	{@const colType = !draggingColumn.gen_config /* || Object.keys(column.gen_config).length === 0 */
-		? 'input'
-		: 'output'}
-	<Portal>
-		<div
-			data-testid="dragged-column"
-			inert
-			style="top: {dragMouseCoords.y - dragMouseCoords.startY - 15}px; left: {dragMouseCoords.x -
-				dragMouseCoords.startX -
-				15}px; width: {dragMouseCoords.width}px;"
-			class="fixed z-[9999] flex items-center gap-1 px-1 h-[36px] bg-white data-dark:bg-[#42464E] border border-[#E4E7EC] data-dark:border-[#333] pointer-events-none"
-		>
-			<button>
-				<GripVertical size={18} />
-			</button>
-
-			<span
-				style="background-color: {colType === 'input' ? '#E9EDFA' : '#FFEAD5'}; color: {colType ===
-				'input'
-					? '#6686E7'
-					: '#FD853A'};"
-				class="w-min mr-1 px-0.5 py-1 text-xxs sm:text-xs whitespace-nowrap rounded-[0.1875rem] select-none flex items-center"
-			>
-				<span class="capitalize font-medium px-1">
-					{colType}
-				</span>
-				<span
-					class="bg-white w-min px-1 font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
-				>
-					{draggingColumn.dtype}
-				</span>
-			</span>
-
-			<span class="font-medium text-xs sm:text-sm text-[#666] data-dark:text-white line-clamp-1">
-				{draggingColumn.id}
-			</span>
-
-			<Button
-				variant="ghost"
-				title="Column settings"
-				class="ml-auto p-0 h-7 w-7 aspect-square rounded"
-			>
-				<MoreVertIcon class="h-[18px] w-[18px]" />
-			</Button>
-		</div>
-	</Portal>
-{/if}
-
-<FileThumbsFetch {tableData} {streamingRows} bind:rowThumbs />
+<FileThumbsFetch {tableData} bind:rowThumbs />
 <DeleteFileDialog
 	bind:isDeletingFile
 	deleteCb={() => {

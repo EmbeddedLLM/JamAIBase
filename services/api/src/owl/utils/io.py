@@ -15,7 +15,7 @@ from botocore.exceptions import ClientError
 from loguru import logger
 
 from jamaibase.exceptions import BadInputError, ResourceNotFoundError
-from jamaibase.utils.io import generate_thumbnail
+from jamaibase.utils.io import generate_audio_thumbnail, generate_image_thumbnail
 from owl.configs.manager import ENV_CONFIG
 from owl.utils import uuid7_str
 
@@ -61,12 +61,22 @@ IMAGE_WHITE_LIST = {
     "image/gif": [".gif"],
     "image/webp": [".webp"],
 }
-UPLOAD_WHITE_LIST = {**EMBED_WHITE_LIST, **IMAGE_WHITE_LIST}
+AUDIO_WHITE_LIST = {
+    "audio/mpeg": [".mp3"],
+    "audio/vnd.wav": [".wav"],
+    "audio/x-wav": [".wav"],
+    "audio/x-pn-wav": [".wav"],
+    "audio/wave": [".wav"],
+    "audio/vnd.wave": [".wav"],
+}
+UPLOAD_WHITE_LIST = {**EMBED_WHITE_LIST, **IMAGE_WHITE_LIST, **AUDIO_WHITE_LIST}
 
 EMBED_WHITE_LIST_MIME = set(EMBED_WHITE_LIST.keys())
 EMBED_WHITE_LIST_EXT = set(ext for exts in EMBED_WHITE_LIST.values() for ext in exts)
 IMAGE_WHITE_LIST_MIME = set(IMAGE_WHITE_LIST.keys())
 IMAGE_WHITE_LIST_EXT = set(ext for exts in IMAGE_WHITE_LIST.values() for ext in exts)
+AUDIO_WHITE_LIST_MIME = set(AUDIO_WHITE_LIST.keys())
+AUDIO_WHITE_LIST_EXT = set(ext for exts in AUDIO_WHITE_LIST.values() for ext in exts)
 UPLOAD_WHITE_LIST_MIME = set(UPLOAD_WHITE_LIST.keys())
 UPLOAD_WHITE_LIST_EXT = set(ext for exts in UPLOAD_WHITE_LIST.values() for ext in exts)
 
@@ -253,19 +263,40 @@ async def upload_file_to_s3(
         raise BadInputError(
             f"Unsupported file extension: {file_extension}. Allowed types are: {', '.join(UPLOAD_WHITE_LIST_EXT)}"
         )
-
-    if len(content) > ENV_CONFIG.owl_file_upload_max_bytes:
-        raise BadInputError(
-            f"File size exceeds {ENV_CONFIG.owl_file_upload_max_bytes/1024**2} MB limit: {len(content)/1024**2} MB"
-        )
+    else:
+        if (
+            file_extension in EMBED_WHITE_LIST_EXT
+            and len(content) > ENV_CONFIG.owl_embed_file_upload_max_bytes
+        ):
+            raise BadInputError(
+                f"File size exceeds {ENV_CONFIG.owl_embed_file_upload_max_bytes / 1024**2} MB limit: {len(content) / 1024**2} MB"
+            )
+        elif (
+            file_extension in AUDIO_WHITE_LIST_EXT
+            and len(content) > ENV_CONFIG.owl_audio_file_upload_max_bytes
+        ):
+            raise BadInputError(
+                f"File size exceeds {ENV_CONFIG.owl_audio_file_upload_max_bytes / 1024**2} MB limit: {len(content) / 1024**2} MB"
+            )
+        elif (
+            file_extension in IMAGE_WHITE_LIST_EXT
+            and len(content) > ENV_CONFIG.owl_image_file_upload_max_bytes
+        ):
+            raise BadInputError(
+                f"File size exceeds {ENV_CONFIG.owl_image_file_upload_max_bytes / 1024**2} MB limit: {len(content) / 1024**2} MB"
+            )
 
     uuid = uuid7_str()
     raw_path = os.path.join("raw", organization_id, project_id, uuid, filename)
     raw_key = os_path_to_s3_key(raw_path)
-    thumb_filename = f"{os.path.splitext(filename)[0]}.webp"
+    thumb_ext = "mp3" if file_extension in AUDIO_WHITE_LIST_EXT else "webp"
+    thumb_filename = f"{os.path.splitext(filename)[0]}.{thumb_ext}"
     thumb_path = os.path.join("thumb", organization_id, project_id, uuid, thumb_filename)
     thumb_key = os_path_to_s3_key(thumb_path)
-    thumbnail_task = asyncio.create_task(asyncio.to_thread(generate_thumbnail, content))
+    if file_extension in AUDIO_WHITE_LIST_EXT:
+        thumbnail_task = asyncio.create_task(asyncio.to_thread(generate_audio_thumbnail, content))
+    else:
+        thumbnail_task = asyncio.create_task(asyncio.to_thread(generate_image_thumbnail, content))
     thumbnail = await thumbnail_task
 
     if S3_CLIENT:
@@ -282,7 +313,7 @@ async def upload_file_to_s3(
                     Body=thumbnail,
                     Bucket=S3_BUCKET_NAME,
                     Key=thumb_key,
-                    ContentType="image/webp",
+                    ContentType=f"{content_type.split('/')[0]}/{"mpeg" if thumb_ext == "mp3" else thumb_ext}",
                 )
         logger.info(
             f"File Uploaded: [{organization_id}/{project_id}] "

@@ -63,22 +63,27 @@ def sanitise_document_id_list(v: list[str]) -> list[str]:
 DocumentID = Annotated[str, AfterValidator(sanitise_document_id)]
 DocumentIDList = Annotated[list[str], AfterValidator(sanitise_document_id_list)]
 
-EXAMPLE_CHAT_MODEL = "openai/gpt-4o-mini"
-
+EXAMPLE_CHAT_MODEL_IDS = ["openai/gpt-4o-mini"]
 # for openai embedding models doc: https://platform.openai.com/docs/guides/embeddings
 # for cohere embedding models doc: https://docs.cohere.com/reference/embed
 # for jina embedding models doc: https://jina.ai/embeddings/
 # for voyage embedding models doc: https://docs.voyageai.com/docs/embeddings
 # for hf embedding models doc: check the respective hf model page, name should be ellm/{org}/{model}
-EXAMPLE_EMBEDDING_MODEL = "openai/text-embedding-3-small-512"
-
+EXAMPLE_EMBEDDING_MODEL_IDS = [
+    "openai/text-embedding-3-small-512",
+    "ellm/sentence-transformers/all-MiniLM-L6-v2",
+]
 # for cohere reranking models doc: https://docs.cohere.com/reference/rerank-1
 # for jina reranking models doc: https://jina.ai/reranker
 # for colbert reranking models doc: https://docs.voyageai.com/docs/reranker
 # for hf embedding models doc: check the respective hf model page, name should be ellm/{org}/{model}
-EXAMPLE_RERANKING_MODEL = "cohere/rerank-multilingual-v3.0"
+EXAMPLE_RERANKING_MODEL_IDS = [
+    "cohere/rerank-multilingual-v3.0",
+    "ellm/cross-encoder/ms-marco-TinyBERT-L-2",
+]
 
 IMAGE_FILE_EXTENSIONS = [".jpeg", ".jpg", ".png", ".gif", ".webp"]
+AUDIO_FILE_EXTENSIONS = [".mp3", ".wav"]
 DOCUMENT_FILE_EXTENSIONS = [
     ".pdf",
     ".txt",
@@ -240,6 +245,7 @@ class ExternalKeys(BaseModel):
     hyperbolic: str = ""
     cerebras: str = ""
     sambanova: str = ""
+    deepseek: str = ""
 
 
 class OkResponse(BaseModel):
@@ -298,6 +304,8 @@ class ModelCapability(str, Enum):
     COMPLETION = "completion"
     CHAT = "chat"
     IMAGE = "image"
+    AUDIO = "audio"
+    TOOL = "tool"
     EMBED = "embed"
     RERANK = "rerank"
 
@@ -311,7 +319,7 @@ class ModelInfo(BaseModel):
             'Unique identifier in the form of "{provider}/{model_id}". '
             "Users will specify this to select a model."
         ),
-        examples=[EXAMPLE_CHAT_MODEL],
+        examples=EXAMPLE_CHAT_MODEL_IDS,
     )
     object: str = Field(
         default="model",
@@ -366,7 +374,7 @@ class ModelDeploymentConfig(BaseModel):
             'For example, you can map "openai/gpt-4o" calls to "openai/gpt-4o-2024-08-06". '
             'For vLLM with OpenAI compatible server, use "openai/<vllm_model_id>".'
         ),
-        examples=[EXAMPLE_CHAT_MODEL],
+        examples=EXAMPLE_CHAT_MODEL_IDS,
     )
     api_base: str = Field(
         default="",
@@ -397,7 +405,7 @@ class ModelConfig(ModelInfo):
             'For example, you can map "openai/gpt-4o" calls to "openai/gpt-4o-2024-08-06". '
             'For vLLM with OpenAI compatible server, use "openai/<vllm_model_id>".'
         ),
-        examples=[EXAMPLE_CHAT_MODEL],
+        examples=EXAMPLE_CHAT_MODEL_IDS,
     )
     api_base: str = Field(
         default="",
@@ -451,7 +459,7 @@ class EmbeddingModelConfig(ModelConfig):
             'For self-hosted models with Infinity, use "ellm/{org}/{model}". '
             "Users will specify this to select a model."
         ),
-        examples=["ellm/sentence-transformers/all-MiniLM-L6-v2", EXAMPLE_EMBEDDING_MODEL],
+        examples=EXAMPLE_EMBEDDING_MODEL_IDS,
     )
     embedding_size: int = Field(
         description="Embedding size of the model",
@@ -491,7 +499,7 @@ class RerankingModelConfig(ModelConfig):
             'For self-hosted models with Infinity, use "ellm/{org}/{model}". '
             "Users will specify this to select a model."
         ),
-        examples=["ellm/cross-encoder/ms-marco-TinyBERT-L-2", EXAMPLE_RERANKING_MODEL],
+        examples=EXAMPLE_RERANKING_MODEL_IDS,
     )
     capabilities: list[ModelCapability] = Field(
         default=[ModelCapability.RERANK],
@@ -555,6 +563,9 @@ class ModelListConfig(BaseModel):
         if capabilities is not None:
             for capability in capabilities:
                 models = [m for m in models if capability in m.capabilities]
+            # if `capabilities`` is chat only, filter out audio model
+            if capabilities == ["chat"]:
+                models = [m for m in models if "audio" not in m.capabilities]
         if len(models) == 0:
             raise ResourceNotFoundError(f"No model found with capabilities: {capabilities}")
         model = natsorted(models, key=self._sort_key_with_priority)[0]
@@ -659,7 +670,7 @@ class RAGParams(BaseModel):
     reranking_model: str | None = Field(
         default=None,
         description="Reranking model to use for hybrid search.",
-        examples=[EXAMPLE_RERANKING_MODEL, None],
+        examples=[EXAMPLE_RERANKING_MODEL_IDS[0], None],
     )
     search_query: str = Field(
         default="",
@@ -758,6 +769,17 @@ def sanitise_name(v: str) -> str:
 MessageName = Annotated[str, AfterValidator(sanitise_name)]
 
 
+class MessageToolCallFunction(BaseModel):
+    arguments: str
+    name: str | None
+
+
+class MessageToolCall(BaseModel):
+    id: str | None
+    function: MessageToolCallFunction
+    type: str
+
+
 class ChatEntry(BaseModel):
     """Represents a message in the chat context."""
 
@@ -799,6 +821,11 @@ class ChatEntry(BaseModel):
         return str(value)
 
 
+class ChatCompletionChoiceOutput(ChatEntry):
+    tool_calls: list[MessageToolCall] | None = None
+    """List of tool calls if the message includes tool call responses."""
+
+
 class ChatThread(BaseModel):
     object: str = Field(
         default="chat.thread",
@@ -828,7 +855,9 @@ class CompletionUsage(BaseModel):
 
 
 class ChatCompletionChoice(BaseModel):
-    message: ChatEntry = Field(description="A chat completion message generated by the model.")
+    message: ChatEntry | ChatCompletionChoiceOutput = Field(
+        description="A chat completion message generated by the model."
+    )
     index: int = Field(description="The index of the choice in the list of choices.")
     finish_reason: str | None = Field(
         default=None,
@@ -848,7 +877,7 @@ class ChatCompletionChoice(BaseModel):
 class ChatCompletionChoiceDelta(ChatCompletionChoice):
     @computed_field
     @property
-    def delta(self) -> ChatEntry:
+    def delta(self) -> ChatEntry | ChatCompletionChoiceOutput:
         return self.message
 
 
@@ -928,7 +957,7 @@ class ChatCompletionChunk(BaseModel):
     )
 
     @property
-    def message(self) -> ChatEntry | None:
+    def message(self) -> ChatEntry | ChatCompletionChoiceOutput | None:
         return self.choices[0].message if len(self.choices) > 0 else None
 
     @property
@@ -985,6 +1014,49 @@ class GenTableStreamChatCompletionChunk(ChatCompletionChunk):
     )
     output_column_name: str
     row_id: str
+
+
+class FunctionParameter(BaseModel):
+    type: str = Field(
+        default="", description="The type of the parameter, e.g., 'string', 'number'."
+    )
+    description: str = Field(default="", description="A description of the parameter.")
+    enum: list[str] = Field(
+        default=[], description="An optional list of allowed values for the parameter."
+    )
+
+
+class FunctionParameters(BaseModel):
+    type: str = Field(
+        default="object", description="The type of the parameters object, usually 'object'."
+    )
+    properties: dict[str, FunctionParameter] = Field(
+        description="The properties of the parameters object."
+    )
+    required: list[str] = Field(description="A list of required parameter names.")
+    additionalProperties: bool = Field(
+        default=False, description="Whether additional properties are allowed."
+    )
+
+
+class Function(BaseModel):
+    name: str = Field(default="", description="The name of the function.")
+    description: str = Field(default="", description="A description of what the function does.")
+    parameters: FunctionParameters = Field(description="The parameters for the function.")
+
+
+class Tool(BaseModel):
+    type: str = Field(default="function", description="The type of the tool, e.g., 'function'.")
+    function: Function = Field(description="The function details of the tool.")
+
+
+class ToolChoiceFunction(BaseModel):
+    name: str = Field(default="", description="The name of the function.")
+
+
+class ToolChoice(BaseModel):
+    type: str = Field(default="function", description="The type of the tool, e.g., 'function'.")
+    function: ToolChoiceFunction = Field(description="Select a tool for the chat model to use.")
 
 
 class ChatRequest(BaseModel):
@@ -1094,6 +1166,48 @@ values like -100 or 100 should result in a ban or exclusive selection of the rel
         return v
 
 
+class ChatRequestWithTools(ChatRequest):
+    tools: list[Tool] = Field(
+        description="A list of tools available for the chat model to use.",
+        min_length=1,
+        examples=[
+            # --- [Tool Function] ---
+            # def get_delivery_date(order_id: str) -> datetime:
+            #     # Connect to the database
+            #     conn = sqlite3.connect('ecommerce.db')
+            #     cursor = conn.cursor()
+            #     # ...
+            [
+                Tool(
+                    type="function",
+                    function=Function(
+                        name="get_delivery_date",
+                        description="Get the delivery date for a customer's order.",
+                        parameters=FunctionParameters(
+                            type="object",
+                            properties={
+                                "order_id": FunctionParameter(
+                                    type="string", description="The customer's order ID."
+                                )
+                            },
+                            required=["order_id"],
+                            additionalProperties=False,
+                        ),
+                    ),
+                )
+            ],
+        ],
+    )
+    tool_choice: str | ToolChoice = Field(
+        default="auto",
+        description="Set `auto` to let chat model pick a tool or select a tool for the chat model to use.",
+        examples=[
+            "auto",
+            ToolChoice(type="function", function=ToolChoiceFunction(name="get_delivery_date")),
+        ],
+    )
+
+
 class EmbeddingRequest(BaseModel):
     input: str | list[str] = Field(
         description=(
@@ -1108,7 +1222,7 @@ class EmbeddingRequest(BaseModel):
             "The ID of the model to use. "
             "You can use the List models API to see all of your available models."
         ),
-        examples=[EXAMPLE_EMBEDDING_MODEL],
+        examples=EXAMPLE_EMBEDDING_MODEL_IDS,
     )
     type: Literal["query", "document"] = Field(
         default="document",
@@ -1248,7 +1362,8 @@ _str_to_arrow = {
     "bool": pa.bool_(),
     "str": pa.utf8(),  # Alias for `pa.string()`
     "chat": pa.utf8(),
-    "file": pa.utf8(),
+    "image": pa.utf8(),
+    "audio": pa.utf8(),
 }
 _str_to_py_type = {
     "int": int,
@@ -1261,7 +1376,8 @@ _str_to_py_type = {
     "str": str,
     "date-time": datetime,
     "chat": str,
-    "file": str,
+    "image": str,
+    "audio": str,
 }
 
 
@@ -1299,7 +1415,8 @@ class ColumnDtype(str, Enum, metaclass=MetaEnum):
     BOOL = "bool"
     STR = "str"
     DATE_TIME = "date-time"
-    FILE = "file"
+    IMAGE = "image"
+    AUDIO = "audio"
 
     def __str__(self) -> str:
         return self.value
@@ -1310,7 +1427,8 @@ class ColumnDtypeCreate(str, Enum, metaclass=MetaEnum):
     FLOAT = "float"
     BOOL = "bool"
     STR = "str"
-    FILE = "file"
+    IMAGE = "image"
+    AUDIO = "audio"
 
     def __str__(self) -> str:
         return self.value
@@ -1463,12 +1581,16 @@ class EmbedGenConfig(BaseModel):
     )
     embedding_model: str = Field(
         description="The embedding model to use.",
-        examples=[EXAMPLE_EMBEDDING_MODEL],
+        examples=EXAMPLE_EMBEDDING_MODEL_IDS,
     )
     source_column: str = Field(
         description="The source column for embedding.",
         examples=["text_column"],
     )
+
+
+class CodeGenConfig(p.CodeGenConfig):
+    pass
 
 
 def _gen_config_discriminator(x: Any) -> str | None:
@@ -1487,9 +1609,10 @@ def _gen_config_discriminator(x: Any) -> str | None:
     return None
 
 
-GenConfig = LLMGenConfig | EmbedGenConfig
+GenConfig = LLMGenConfig | EmbedGenConfig | CodeGenConfig
 DiscriminatedGenConfig = Annotated[
     Union[
+        Annotated[CodeGenConfig, Tag("gen_config.code")],
         Annotated[LLMGenConfig, Tag("gen_config.llm")],
         Annotated[LLMGenConfig, Tag("gen_config.chat")],
         Annotated[EmbedGenConfig, Tag("gen_config.embed")],
@@ -1502,7 +1625,7 @@ class ColumnSchema(BaseModel):
     id: str = Field(description="Column name.")
     dtype: ColumnDtype = Field(
         default=ColumnDtype.STR,
-        description='Column data type, one of ["int", "int8", "float", "float32", "float16", "bool", "str", "date-time", "file"]',
+        description='Column data type, one of ["int", "int8", "float", "float32", "float16", "bool", "str", "date-time", "image"]',
     )
     vlen: PositiveInt = Field(  # type: ignore
         default=0,
@@ -1537,13 +1660,25 @@ class ColumnSchemaCreate(ColumnSchema):
     id: ColName = Field(description="Column name.")
     dtype: ColumnDtypeCreate = Field(
         default=ColumnDtypeCreate.STR,
-        description='Column data type, one of ["int", "float", "bool", "str", "file"]',
+        description='Column data type, one of ["int", "float", "bool", "str", "image", "audio"]',
     )
+
+    @model_validator(mode="before")
+    def match_column_dtype_file_to_image(self) -> Self:
+        if self.get("dtype", "") == "file":
+            self["dtype"] = ColumnDtype.IMAGE
+        return self
 
     @model_validator(mode="after")
     def check_output_column_dtype(self) -> Self:
-        if self.gen_config is not None and self.vlen == 0 and self.dtype != ColumnDtype.STR:
-            raise ValueError("Output column must be string column.")
+        if self.gen_config is not None and self.vlen == 0:
+            if isinstance(self.gen_config, CodeGenConfig):
+                if self.dtype not in (ColumnDtype.STR, ColumnDtype.IMAGE):
+                    raise ValueError(
+                        "Output column must be either string or image column when gen_config is CodeGenConfig."
+                    )
+            elif self.dtype != ColumnDtype.STR:
+                raise ValueError("Output column must be string column.")
         return self
 
 
@@ -1675,6 +1810,29 @@ class TableSchema(TableBase):
                             f"Available columns: {col_ids}."
                         )
                     )
+            elif isinstance(gen_config, CodeGenConfig):
+                source_col = next(
+                    (c for c in available_cols if c.id == gen_config.source_column), None
+                )
+                if source_col is None:
+                    raise ValueError(
+                        (
+                            f"Table '{self.id}': "
+                            f"Code Execution config of column '{col.id}' referenced "
+                            f"an invalid source column '{gen_config.source_column}'. "
+                            "Make sure you only reference columns on its left. "
+                            f"Available columns: {col_ids}."
+                        )
+                    )
+                if source_col.dtype != ColumnDtype.STR:
+                    raise ValueError(
+                        (
+                            f"Table '{self.id}': "
+                            f"Code Execution config of column '{col.id}' referenced "
+                            f"a source column '{gen_config.source_column}' with an invalid datatype of '{source_col.dtype}'. "
+                            "Make sure the source column is Str typed."
+                        )
+                    )
             elif isinstance(gen_config, LLMGenConfig):
                 # Insert default prompts if needed
                 system_prompt, user_prompt = self.get_default_prompts(
@@ -1734,9 +1892,13 @@ class KnowledgeTableSchemaCreate(TableSchemaCreate):
     @model_validator(mode="after")
     def check_cols(self) -> Self:
         super().check_cols()
-        num_text_cols = sum(c.id.lower() in ("text", "title", "file id") for c in self.cols)
+        num_text_cols = sum(
+            c.id.lower() in ("text", "title", "file id", "page") for c in self.cols
+        )
         if num_text_cols != 0:
-            raise ValueError("Schema cannot contain column names: 'Text', 'Title', 'File ID'.")
+            raise ValueError(
+                "Schema cannot contain column names: 'Text', 'Title', 'File ID', 'Page'."
+            )
         return self
 
     @staticmethod
@@ -1749,9 +1911,13 @@ class AddKnowledgeColumnSchema(TableSchemaCreate):
     @model_validator(mode="after")
     def check_cols(self) -> Self:
         super().check_cols()
-        num_text_cols = sum(c.id.lower() in ("text", "title", "file id") for c in self.cols)
+        num_text_cols = sum(
+            c.id.lower() in ("text", "title", "file id", "page") for c in self.cols
+        )
         if num_text_cols != 0:
-            raise ValueError("Schema cannot contain column names: 'Text', 'Title', 'File ID'.")
+            raise ValueError(
+                "Schema cannot contain column names: 'Text', 'Title', 'File ID', 'Page'."
+            )
         return self
 
     @model_validator(mode="after")
@@ -1927,7 +2093,7 @@ class RowAddData(BaseModel):
                         d[k] = 0.0
                     elif col.dtype == ColumnDtype.BOOL:
                         d[k] = False
-                    elif col.dtype in (ColumnDtype.STR, ColumnDtype.FILE):
+                    elif col.dtype in (ColumnDtype.STR, ColumnDtype.IMAGE):
                         # Store null string as ""
                         # https://github.com/lancedb/lancedb/issues/1160
                         d[k] = ""
@@ -2114,11 +2280,12 @@ class RowAddRequest(BaseModel):
                     value.startswith("s3://") or value.startswith("file://")
                 ):
                     extension = splitext(value)[1].lower()
-                    if extension not in IMAGE_FILE_EXTENSIONS:
+                    if extension not in IMAGE_FILE_EXTENSIONS + AUDIO_FILE_EXTENSIONS:
                         raise ValueError(
                             "Unsupported file type. Make sure the file belongs to "
                             "one of the following formats: \n"
-                            f"[Image File Types]: \n{IMAGE_FILE_EXTENSIONS}"
+                            f"[Image File Types]: \n{IMAGE_FILE_EXTENSIONS} \n"
+                            f"[Audio File Types]: \n{AUDIO_FILE_EXTENSIONS}"
                         )
         return self
 
@@ -2160,11 +2327,12 @@ class RowUpdateRequest(BaseModel):
                 value.startswith("s3://") or value.startswith("file://")
             ):
                 extension = splitext(value)[1].lower()
-                if extension not in IMAGE_FILE_EXTENSIONS:
+                if extension not in IMAGE_FILE_EXTENSIONS + AUDIO_FILE_EXTENSIONS:
                     raise ValueError(
                         "Unsupported file type. Make sure the file belongs to "
                         "one of the following formats: \n"
-                        f"[Image File Types]: \n{IMAGE_FILE_EXTENSIONS}"
+                        f"[Image File Types]: \n{IMAGE_FILE_EXTENSIONS} \n"
+                        f"[Audio File Types]: \n{AUDIO_FILE_EXTENSIONS}"
                     )
         return self
 

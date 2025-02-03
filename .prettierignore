@@ -1,24 +1,28 @@
+# OS
+thumbs.db
+.DS_Store
+
+# Internal references, dependencies, temporary folders & files
+.env
+archive/
+**/__ref__/
+*.log
+*.lock
+*.db
+*.parquet
+
 # Python
 __pycache__/
-*.py[cod]
+*.py*
 *$py.class
 *.egg-info
 .pytest_cache
 .ipynb_checkpoints
 venv/
-
-# Frontend
-services/app
-clients/typescript
-
-# Test files
 clients/python/tests/**/*
 
-# Internal references, dependencies, temporary folders & files
-archive/
-/dependencies/
-logs/
-*.log
+# pip
+**/build/
 
 # pytest-cov
 **/.coverage*
@@ -26,14 +30,12 @@ logs/
 /htmlcov
 /coverage.xml
 
-# pip
-**/build/
+# jest-cov
+**/coverage/*
 
-# Docs
-/docs/source/generated/
-/docs/source/api/generated/
-/docs/source/specs/
+# JavaScript
+**/node_modules/
 
-# OS
-thumbs.db
-.DS_Store
+# Frontend
+services/app
+clients/typescript

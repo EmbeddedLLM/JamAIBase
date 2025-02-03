@@ -5,7 +5,7 @@ API server.
 import os
 from typing import Any
 
-from fastapi import FastAPI, Request, status
+from fastapi import BackgroundTasks, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
@@ -195,9 +195,18 @@ async def log_request(request: Request, call_next):
     ):
         return await call_next(request)
 
-    # --- Call request --- #
+    # Call request
     response = await call_next(request)
     logger.info(make_request_log_str(request, response.status_code))
+
+    # Add egress events
+    request.state.billing.create_egress_events(
+        float(response.headers.get("content-length", 0)) / (1024**3)
+    )
+    # Process billing (this will run AFTER streaming responses are sent)
+    tasks = BackgroundTasks()
+    tasks.add_task(request.state.billing.process_all)
+    response.background = tasks
     return response
 
 

@@ -79,6 +79,11 @@ def _get_chat_model(jamai: JamAI) -> str:
     return models[0]
 
 
+def _get_audio_model(jamai: JamAI) -> str:
+    models = jamai.model_names(prefer="ellm/Qwen/Qwen-2-Audio-7B", capabilities=["audio"])
+    return models[0]
+
+
 def _get_chat_only_model(jamai: JamAI) -> str:
     chat_models = jamai.model_names(
         prefer="ellm/meta-llama/Llama-3.1-8B-Instruct", capabilities=["chat"]
@@ -118,7 +123,8 @@ def _create_table(
                 p.ColumnSchemaCreate(id="words", dtype="int"),
                 p.ColumnSchemaCreate(id="stars", dtype="float"),
                 p.ColumnSchemaCreate(id="inputs", dtype="str"),
-                p.ColumnSchemaCreate(id="photo", dtype="file"),
+                p.ColumnSchemaCreate(id="photo", dtype="image"),
+                p.ColumnSchemaCreate(id="audio", dtype="audio"),
                 p.ColumnSchemaCreate(
                     id="summary",
                     dtype="str",
@@ -142,7 +148,18 @@ def _create_table(
                         prompt="${photo} \n\nWhat's in the image?",
                         temperature=0.001,
                         top_p=0.001,
-                        max_tokens=300,
+                        max_tokens=20,
+                    ),
+                ),
+                p.ColumnSchemaCreate(
+                    id="narration",
+                    dtype="str",
+                    gen_config=p.LLMGenConfig(
+                        model="",
+                        prompt="${audio} \n\nWhat happened?",
+                        temperature=0.001,
+                        top_p=0.001,
+                        max_tokens=10,
                     ),
                 ),
             ]
@@ -196,13 +213,19 @@ def _add_row(
     chat_data: dict | None = None,
 ):
     if data is None:
-        upload_response = jamai.file.upload_file("clients/python/tests/files/jpeg/rabbit.jpeg")
+        image_upload_response = jamai.file.upload_file(
+            "clients/python/tests/files/jpeg/rabbit.jpeg"
+        )
+        audio_upload_response = jamai.file.upload_file(
+            "clients/python/tests/files/mp3/turning-a4-size-magazine.mp3"
+        )
         data = dict(
             good=True,
             words=5,
             stars=7.9,
             inputs=TEXT,
-            photo=upload_response.uri,
+            photo=image_upload_response.uri,
+            audio=audio_upload_response.uri,
         )
 
     if knowledge_data is None:
@@ -490,7 +513,7 @@ def test_rag(
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 @pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
-def test_rag_with_file_input(
+def test_rag_with_image_input(
     client_cls: Type[JamAI],
     table_type: p.TableType,
     stream: bool,
@@ -524,7 +547,7 @@ def test_rag_with_file_input(
 
         # Create the other table
         cols = [
-            p.ColumnSchemaCreate(id="photo", dtype="file"),
+            p.ColumnSchemaCreate(id="photo", dtype="image"),
             p.ColumnSchemaCreate(id="question", dtype="str"),
             p.ColumnSchemaCreate(id="words", dtype="int"),
             p.ColumnSchemaCreate(
@@ -670,10 +693,14 @@ def test_add_row(
             assert all(r.object == "gen_table.completion.chunk" for r in responses)
             if table_type == p.TableType.chat:
                 assert all(
-                    r.output_column_name in ("summary", "captioning", "AI") for r in responses
+                    r.output_column_name in ("summary", "captioning", "narration", "AI")
+                    for r in responses
                 )
             else:
-                assert all(r.output_column_name in ("summary", "captioning") for r in responses)
+                assert all(
+                    r.output_column_name in ("summary", "captioning", "narration")
+                    for r in responses
+                )
             assert len("".join(r.text for r in responses)) > 0
             assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
             assert all(isinstance(r.usage, p.CompletionUsage) for r in responses)
@@ -682,7 +709,7 @@ def test_add_row(
         else:
             assert isinstance(response, p.GenTableChatCompletionChunks)
             assert response.object == "gen_table.completion.chunks"
-            for output_column_name in ("summary", "captioning"):
+            for output_column_name in ("summary", "captioning", "narration"):
                 assert len(response.columns[output_column_name].text) > 0
                 assert isinstance(response.columns[output_column_name].usage, p.CompletionUsage)
                 assert isinstance(response.columns[output_column_name].prompt_tokens, int)
@@ -695,9 +722,237 @@ def test_add_row(
         assert row["words"]["value"] == 5, row["words"]
         assert row["stars"]["value"] == 7.9, row["stars"]
         assert row["photo"]["value"].endswith("/rabbit.jpeg"), row["photo"]["value"]
+        assert row["audio"]["value"].endswith("/turning-a4-size-magazine.mp3"), row["audio"][
+            "value"
+        ]
         for animal in ["deer", "rabbit"]:
             if animal in row["photo"]["value"].split("_")[0]:
                 assert animal in row["captioning"]["value"]
+        assert "paper" in row["narration"]["value"] or "turn" in row["narration"]["value"]
+
+
+@flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("table_type", TABLE_TYPES)
+@pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
+def test_regen_with_reordered_columns(
+    client_cls: Type[JamAI],
+    table_type: p.TableType,
+    stream: bool,
+):
+    jamai = client_cls()
+    cols = [
+        p.ColumnSchemaCreate(id="number", dtype="int"),
+        p.ColumnSchemaCreate(
+            id="col1-english",
+            dtype="str",
+            gen_config=p.LLMGenConfig(
+                model="",
+                prompt=(
+                    "Number: ${number} \n\nTell the 'Number' in English, "
+                    "only output the answer in uppercase without explanation."
+                ),
+            ),
+        ),
+        p.ColumnSchemaCreate(
+            id="col2-malay",
+            dtype="str",
+            gen_config=p.LLMGenConfig(
+                model="",
+                prompt=(
+                    "Number: ${number} \n\nTell the 'Number' in Malay, "
+                    "only output the answer in uppercase without explanation."
+                ),
+            ),
+        ),
+        p.ColumnSchemaCreate(
+            id="col3-mandarin",
+            dtype="str",
+            gen_config=p.LLMGenConfig(
+                model="",
+                prompt=(
+                    "Number: ${number} \n\nTell the 'Number' in Mandarin (Chinese Character), "
+                    "only output the answer in uppercase without explanation."
+                ),
+            ),
+        ),
+        p.ColumnSchemaCreate(
+            id="col4-roman",
+            dtype="str",
+            gen_config=p.LLMGenConfig(
+                model="",
+                prompt=(
+                    "Number: ${number} \n\nTell the 'Number' in Roman Numerals, "
+                    "only output the answer in uppercase without explanation."
+                ),
+            ),
+        ),
+    ]
+
+    with _create_table(jamai, table_type, cols=cols) as table:
+        assert isinstance(table, p.TableMetaResponse)
+        row = _add_row(
+            jamai,
+            table_type,
+            False,
+            data=dict(number=1),
+        )
+        assert isinstance(row, p.GenTableChatCompletionChunks)
+        rows = jamai.table.list_table_rows(table_type, table.id)
+        assert isinstance(rows.items, list)
+        assert len(rows.items) == 1
+        row = rows.items[0]
+        _id = row["ID"]
+        assert row["number"]["value"] == 1, row["number"]
+        assert row["col1-english"]["value"] == "ONE", row["col1-english"]
+        assert row["col2-malay"]["value"] == "SATU", row["col2-malay"]
+        assert row["col3-mandarin"]["value"] == "一", row["col3-mandarin"]
+        assert row["col4-roman"]["value"] == "I", row["col4-roman"]
+
+        # Update Input + Regen
+        jamai.table.update_table_row(
+            table_type,
+            p.RowUpdateRequest(
+                table_id=TABLE_ID_A,
+                row_id=_id,
+                data=dict(number=2),
+            ),
+        )
+
+        response = jamai.table.regen_table_rows(
+            table_type,
+            p.RowRegenRequest(
+                table_id=table.id,
+                row_ids=[_id],
+                regen_strategy=p.RegenStrategy.RUN_ALL,
+                stream=stream,
+            ),
+        )
+        if stream:
+            _ = [r for r in response]
+
+        rows = jamai.table.list_table_rows(table_type, table.id)
+        assert isinstance(rows.items, list)
+        assert len(rows.items) == 1
+        row = rows.items[0]
+        assert row["number"]["value"] == 2, row["number"]
+        assert row["col1-english"]["value"] == "TWO", row["col1-english"]
+        assert row["col2-malay"]["value"] == "DUA", row["col2-malay"]
+        assert row["col3-mandarin"]["value"] == "二", row["col3-mandarin"]
+        assert row["col4-roman"]["value"] == "II", row["col4-roman"]
+
+        # Reorder + Update Input + Regen
+        # [1, 2, 3, 4] -> [3, 1, 4, 2]
+        new_cols = [
+            "number",
+            "col3-mandarin",
+            "col1-english",
+            "col4-roman",
+            "col2-malay",
+        ]
+        if table_type == p.TableType.knowledge:
+            new_cols += ["Title", "Text", "Title Embed", "Text Embed", "File ID", "Page"]
+        elif table_type == p.TableType.chat:
+            new_cols += ["User", "AI"]
+        jamai.table.reorder_columns(
+            table_type=table_type,
+            request=p.ColumnReorderRequest(
+                table_id=TABLE_ID_A,
+                column_names=new_cols,
+            ),
+        )
+        # RUN_SELECTED
+        jamai.table.update_table_row(
+            table_type,
+            p.RowUpdateRequest(
+                table_id=TABLE_ID_A,
+                row_id=_id,
+                data=dict(number=5),
+            ),
+        )
+        response = jamai.table.regen_table_rows(
+            table_type,
+            p.RowRegenRequest(
+                table_id=TABLE_ID_A,
+                row_ids=[_id],
+                regen_strategy=p.RegenStrategy.RUN_SELECTED,
+                output_column_id="col1-english",
+                stream=stream,
+            ),
+        )
+        if stream:
+            _ = [r for r in response]
+        rows = jamai.table.list_table_rows(table_type, TABLE_ID_A)
+        assert isinstance(rows.items, list)
+        assert len(rows.items) == 1
+        row = rows.items[0]
+        assert row["number"]["value"] == 5, row["number"]
+        assert row["col3-mandarin"]["value"] == "二", row["col3-mandarin"]
+        assert row["col1-english"]["value"] == "FIVE", row["col1-english"]
+        assert row["col4-roman"]["value"] == "II", row["col4-roman"]
+        assert row["col2-malay"]["value"] == "DUA", row["col2-malay"]
+
+        # RUN_BEFORE
+        jamai.table.update_table_row(
+            table_type,
+            p.RowUpdateRequest(
+                table_id=TABLE_ID_A,
+                row_id=_id,
+                data=dict(number=6),
+            ),
+        )
+        response = jamai.table.regen_table_rows(
+            table_type,
+            p.RowRegenRequest(
+                table_id=TABLE_ID_A,
+                row_ids=[_id],
+                regen_strategy=p.RegenStrategy.RUN_BEFORE,
+                output_column_id="col4-roman",
+                stream=stream,
+            ),
+        )
+        if stream:
+            _ = [r for r in response]
+        rows = jamai.table.list_table_rows(table_type, TABLE_ID_A)
+        assert isinstance(rows.items, list)
+        assert len(rows.items) == 1
+        row = rows.items[0]
+        assert row["number"]["value"] == 6, row["number"]
+        assert row["col3-mandarin"]["value"] == "六", row["col3-mandarin"]
+        assert row["col1-english"]["value"] == "SIX", row["col1-english"]
+        assert row["col4-roman"]["value"] == "VI", row["col4-roman"]
+        assert row["col2-malay"]["value"] == "DUA", row["col2-malay"]
+
+        # RUN_AFTER
+        jamai.table.update_table_row(
+            table_type,
+            p.RowUpdateRequest(
+                table_id=TABLE_ID_A,
+                row_id=_id,
+                data=dict(number=7),
+            ),
+        )
+        response = jamai.table.regen_table_rows(
+            table_type,
+            p.RowRegenRequest(
+                table_id=TABLE_ID_A,
+                row_ids=[_id],
+                regen_strategy=p.RegenStrategy.RUN_AFTER,
+                output_column_id="col4-roman",
+                stream=stream,
+            ),
+        )
+        if stream:
+            _ = [r for r in response]
+        rows = jamai.table.list_table_rows(table_type, TABLE_ID_A)
+        assert isinstance(rows.items, list)
+        assert len(rows.items) == 1
+        row = rows.items[0]
+        assert row["number"]["value"] == 7, row["number"]
+        assert row["col3-mandarin"]["value"] == "六", row["col3-mandarin"]
+        assert row["col1-english"]["value"] == "SIX", row["col1-english"]
+        assert row["col4-roman"]["value"] == "VII", row["col4-roman"]
+        assert row["col2-malay"]["value"] == "TUJUH", row["col2-malay"]
 
 
 @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
@@ -711,8 +966,8 @@ def test_add_row_sequential_image_model_completion(
 ):
     jamai = client_cls()
     cols = [
-        p.ColumnSchemaCreate(id="photo", dtype="file"),
-        p.ColumnSchemaCreate(id="photo2", dtype="file"),
+        p.ColumnSchemaCreate(id="photo", dtype="image"),
+        p.ColumnSchemaCreate(id="photo2", dtype="image"),
         p.ColumnSchemaCreate(
             id="caption",
             dtype="str",
@@ -774,6 +1029,84 @@ def test_add_row_sequential_image_model_completion(
                 assert "true" in row["question"]["value"].lower()
 
 
+@flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("table_type", TABLE_TYPES)
+@pytest.mark.parametrize("stream", [True, False])
+def test_add_row_map_dtype_file_to_image(
+    client_cls: Type[JamAI],
+    table_type: p.TableType,
+    stream: bool,
+):
+    jamai = client_cls()
+    cols = [
+        p.ColumnSchemaCreate(id="photo", dtype="file"),
+        p.ColumnSchemaCreate(id="photo2", dtype="image"),
+        p.ColumnSchemaCreate(
+            id="caption",
+            dtype="str",
+            gen_config=p.LLMGenConfig(model="", prompt="${photo} What's in the image?"),
+        ),
+        p.ColumnSchemaCreate(
+            id="question",
+            dtype="str",
+            gen_config=p.LLMGenConfig(
+                model="",
+                prompt="Caption: ${caption}\n\nImage: ${photo2}\n\nDoes the caption match? Reply True or False.",
+            ),
+        ),
+    ]
+    with _create_table(jamai, table_type, cols=cols) as table:
+        assert isinstance(table, p.TableMetaResponse)
+
+        upload_response = jamai.file.upload_file("clients/python/tests/files/jpeg/rabbit.jpeg")
+        response = _add_row(
+            jamai,
+            table_type,
+            stream,
+            TABLE_ID_A,
+            data=dict(photo=upload_response.uri, photo2=upload_response.uri),
+        )
+        if stream:
+            responses = [r for r in response]
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+            assert all(r.object == "gen_table.completion.chunk" for r in responses)
+            if table_type == p.TableType.chat:
+                assert all(
+                    r.output_column_name in ("caption", "question", "AI") for r in responses
+                )
+            else:
+                assert all(r.output_column_name in ("caption", "question") for r in responses)
+            assert len("".join(r.text for r in responses)) > 0
+            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+            assert all(isinstance(r.usage, p.CompletionUsage) for r in responses)
+            assert all(isinstance(r.prompt_tokens, int) for r in responses)
+            assert all(isinstance(r.completion_tokens, int) for r in responses)
+        else:
+            assert isinstance(response, p.GenTableChatCompletionChunks)
+            assert response.object == "gen_table.completion.chunks"
+            for output_column_name in ("caption", "question"):
+                assert len(response.columns[output_column_name].text) > 0
+                assert isinstance(response.columns[output_column_name].usage, p.CompletionUsage)
+                assert isinstance(response.columns[output_column_name].prompt_tokens, int)
+                assert isinstance(response.columns[output_column_name].completion_tokens, int)
+        rows = jamai.table.list_table_rows(table_type, TABLE_ID_A)
+        assert isinstance(rows.items, list)
+        assert len(rows.items) == 1
+        row = rows.items[0]
+        assert row["photo"]["value"] == upload_response.uri, row["photo"]["value"]
+        assert row["photo2"]["value"] == upload_response.uri, row["photo"]["value"]
+        for animal in ["deer", "rabbit"]:
+            if animal in row["photo"]["value"].split("_")[0]:
+                assert animal in row["caption"]["value"]
+            if animal in row["photo2"]["value"].split("_")[0]:
+                assert "true" in row["question"]["value"].lower()
+        meta = jamai.table.get_table(table_type, TABLE_ID_A)
+        for col in meta.cols:
+            if col.id == "photo":
+                assert col.dtype == "image"
+
+
 # @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
 # @pytest.mark.parametrize("client_cls", CLIENT_CLS)
 # @pytest.mark.parametrize("table_type", TABLE_TYPES)
@@ -785,7 +1118,7 @@ def test_add_row_sequential_image_model_completion(
 # ):
 #     jamai = client_cls()
 #     cols = [
-#         p.ColumnSchemaCreate(id="photo", dtype="file"),
+#         p.ColumnSchemaCreate(id="photo", dtype="image"),
 #         p.ColumnSchemaCreate(id="question", dtype="str"),
 #         p.ColumnSchemaCreate(
 #             id="captioning",
@@ -802,7 +1135,7 @@ def test_add_row_sequential_image_model_completion(
 #         ),
 #         p.ColumnSchemaCreate(
 #             id="compare",
-#             dtype="file",
+#             dtype="image",
 #             gen_config=p.LLMGenConfig(
 #                 model="",
 #                 prompt="Compare ${captioning} and ${answer}.",
@@ -820,7 +1153,7 @@ def test_add_row_output_column_referred_image_input_with_chat_model(
 ):
     jamai = client_cls()
     cols = [
-        p.ColumnSchemaCreate(id="photo", dtype="file"),
+        p.ColumnSchemaCreate(id="photo", dtype="image"),
         p.ColumnSchemaCreate(
             id="captioning",
             dtype="str",
@@ -959,10 +1292,14 @@ def test_add_row_image_file_type_with_generation(
             assert all(r.object == "gen_table.completion.chunk" for r in responses)
             if table_type == p.TableType.chat:
                 assert all(
-                    r.output_column_name in ("summary", "captioning", "AI") for r in responses
+                    r.output_column_name in ("summary", "captioning", "narration", "AI")
+                    for r in responses
                 )
             else:
-                assert all(r.output_column_name in ("summary", "captioning") for r in responses)
+                assert all(
+                    r.output_column_name in ("summary", "captioning", "narration")
+                    for r in responses
+                )
             assert len("".join(r.text for r in responses)) > 0
         else:
             assert isinstance(response, p.GenTableChatCompletionChunks)
@@ -1058,9 +1395,14 @@ def test_add_row_validate_one_image_per_completion(
         assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
         assert all(r.object == "gen_table.completion.chunk" for r in responses)
         if table_type == p.TableType.chat:
-            assert all(r.output_column_name in ("summary", "captioning", "AI") for r in responses)
+            assert all(
+                r.output_column_name in ("summary", "captioning", "narration", "AI")
+                for r in responses
+            )
         else:
-            assert all(r.output_column_name in ("summary", "captioning") for r in responses)
+            assert all(
+                r.output_column_name in ("summary", "captioning", "narration") for r in responses
+            )
         assert len("".join(r.text for r in responses)) > 0
 
         rows = jamai.table.list_table_rows(table_type, TABLE_ID_A)
@@ -1090,10 +1432,14 @@ def test_add_row_wrong_dtype(
             assert all(r.object == "gen_table.completion.chunk" for r in responses)
             if table_type == p.TableType.chat:
                 assert all(
-                    r.output_column_name in ("summary", "captioning", "AI") for r in responses
+                    r.output_column_name in ("summary", "captioning", "narration", "AI")
+                    for r in responses
                 )
             else:
-                assert all(r.output_column_name in ("summary", "captioning") for r in responses)
+                assert all(
+                    r.output_column_name in ("summary", "captioning", "narration")
+                    for r in responses
+                )
             assert len("".join(r.text for r in responses)) > 0
         else:
             assert isinstance(response, p.GenTableChatCompletionChunks)
@@ -1144,10 +1490,14 @@ def test_add_row_missing_columns(
             assert all(r.object == "gen_table.completion.chunk" for r in responses)
             if table_type == p.TableType.chat:
                 assert all(
-                    r.output_column_name in ("summary", "captioning", "AI") for r in responses
+                    r.output_column_name in ("summary", "captioning", "narration", "AI")
+                    for r in responses
                 )
             else:
-                assert all(r.output_column_name in ("summary", "captioning") for r in responses)
+                assert all(
+                    r.output_column_name in ("summary", "captioning", "narration")
+                    for r in responses
+                )
             assert len("".join(r.text for r in responses)) > 0
         else:
             assert isinstance(response, p.GenTableChatCompletionChunks)
@@ -1296,7 +1646,12 @@ def test_regen_rows(
         assert isinstance(table, p.TableMetaResponse)
         assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
 
-        upload_response = jamai.file.upload_file("clients/python/tests/files/jpeg/rabbit.jpeg")
+        image_upload_response = jamai.file.upload_file(
+            "clients/python/tests/files/jpeg/rabbit.jpeg"
+        )
+        audio_upload_response = jamai.file.upload_file(
+            "clients/python/tests/files/mp3/turning-a4-size-magazine.mp3"
+        )
         response = _add_row(
             jamai,
             table_type,
@@ -1306,7 +1661,8 @@ def test_regen_rows(
                 words=10,
                 stars=9.9,
                 inputs=TEXT,
-                photo=upload_response.uri,
+                photo=image_upload_response.uri,
+                audio=audio_upload_response.uri,
             ),
         )
         assert isinstance(response, p.GenTableChatCompletionChunks)
@@ -1337,10 +1693,14 @@ def test_regen_rows(
             assert all(r.object == "gen_table.completion.chunk" for r in responses)
             if table_type == p.TableType.chat:
                 assert all(
-                    r.output_column_name in ("summary", "captioning", "AI") for r in responses
+                    r.output_column_name in ("summary", "captioning", "narration", "AI")
+                    for r in responses
                 )
             else:
-                assert all(r.output_column_name in ("summary", "captioning") for r in responses)
+                assert all(
+                    r.output_column_name in ("summary", "captioning", "narration")
+                    for r in responses
+                )
             assert len("".join(r.text for r in responses)) > 0
         else:
             assert isinstance(response, p.GenTableRowsChatCompletionChunks)
@@ -1353,7 +1713,8 @@ def test_regen_rows(
         assert row["good"]["value"] is True
         assert row["words"]["value"] == 10
         assert row["stars"]["value"] == 9.9
-        assert row["photo"]["value"] == upload_response.uri
+        assert row["photo"]["value"] == image_upload_response.uri
+        assert row["audio"]["value"] == audio_upload_response.uri
         assert row["Updated at"] > original_ts
         assert "dune" in row["summary"]["value"].lower()
 
@@ -1508,13 +1869,15 @@ def test_get_and_list_rows(
             "stars",
             "inputs",
             "photo",
+            "audio",
             "summary",
             "captioning",
+            "narration",
         }
         if table_type == p.TableType.action:
             pass
         elif table_type == p.TableType.knowledge:
-            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID"}
+            expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
         elif table_type == p.TableType.chat:
             expected_cols |= {"User", "AI"}
         else:
@@ -2238,6 +2601,7 @@ def test_upload_file(
         assert all(len(r["Title"]["value"]) > 0 for r in rows.items)
         assert all(isinstance(r["Text"]["value"], str) for r in rows.items)
         assert all(len(r["Text"]["value"]) > 0 for r in rows.items)
+        assert all(r["Page"]["value"] > 0 for r in rows.items)
 
 
 @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
@@ -2356,6 +2720,7 @@ def test_upload_long_file(
             assert all(len(r["Title"]["value"]) > 0 for r in rows.items)
             assert all(isinstance(r["Text"]["value"], str) for r in rows.items)
             assert all(len(r["Text"]["value"]) > 0 for r in rows.items)
+            assert all(r["Page"]["value"] > 0 for r in rows.items)
 
 
 if __name__ == "__main__":

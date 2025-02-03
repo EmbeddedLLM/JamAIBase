@@ -10,7 +10,7 @@ const buttonVariants = tv({
 				'text-[#FCFCFD] bg-[#BF416E] hover:bg-[#950048] focus-visible:bg-[#950048] active:bg-[#7A003B]',
 			destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
 			outline:
-				'text-[#BF416E] bg-transparent hover:bg-[#BF416E]/[0.025] active:bg-[#BF416E]/5 border border-[#BF416E]',
+				'text-[#BF416E] bg-transparent hover:bg-[#BF416E]/[0.025] focus-visible:bg-[#BF416E]/[0.025] active:bg-[#BF416E]/5 border border-[#BF416E]',
 			'outline-neutral':
 				'text-text bg-transparent hover:bg-[#F9FAFB] data-dark:hover:bg-white/[0.1] active:bg-[#F2F4F7] data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1] border border-[#DDD] data-dark:border-[#42464E]',
 			action: 'bg-[#F2F4F7] hover:bg-[#E4E7EC] text-black rounded-md',

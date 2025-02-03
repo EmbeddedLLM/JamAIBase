@@ -101,6 +101,7 @@ dependencies = [
     "Pillow>=10.0.1",
     "pydantic-settings>=2.0.3",
     "pydantic>=2.4.2",
+    "pydub~=0.25.1",
     "srsly>=2.4.8",
     "toml>=0.10.2",
     "typing_extensions>=4.10.0",
@@ -112,6 +113,7 @@ lint = ["ruff~=0.5.7"]
 test = [
     "flaky~=3.8.1",
     "mypy~=1.11.1",
+    "pydub~=0.25.1",
     "pytest-asyncio>=0.23.8",
     "pytest-cov~=5.0.0",
     "pytest-timeout>=2.3.1",

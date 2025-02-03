@@ -10,18 +10,30 @@ export const timestampsDisplayName: { [key: string]: string } = {
 export const projectIDPattern = /^[a-zA-Z0-9][a-zA-Z0-9_ \-.]{0,98}[a-zA-Z0-9]$/;
 export const tableIDPattern = /^[A-Za-z0-9]([A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/;
 export const columnIDPattern = /^[A-Za-z0-9]([A-Za-z0-9 _-]{0,98}[A-Za-z0-9])?$/;
-export const genTableDTypes = ['int', 'float', 'bool', 'str', 'file'] as const;
-export const actionTableStaticCols = ['ID', 'Updated at'];
-export const knowledgeTableStaticCols = [
-	'ID',
-	'Updated at',
-	'Title',
-	'Title Embed',
-	'Text',
-	'Text Embed',
-	'File ID'
-];
-export const chatTableStaticCols = ['ID', 'Updated at', 'User'];
+export const genTableDTypes = {
+	int: 'Integer',
+	float: 'Float',
+	bool: 'Boolean',
+	str: 'Text',
+	file: 'File',
+	audio: 'Audio'
+	// str_code: 'Text (code)',
+	// file_code: 'File (code)'
+} as Record<string, string>;
+export const tableStaticCols = {
+	action: ['ID', 'Updated at'] as string[],
+	knowledge: [
+		'ID',
+		'Updated at',
+		'Title',
+		'Title Embed',
+		'Text',
+		'Text Embed',
+		'File ID',
+		'Page'
+	] as string[],
+	chat: ['ID', 'Updated at', 'User'] as string[]
+} as const;
 export const knowledgeTableEmbedCols = ['Title Embed', 'Text Embed'];
 export const knowledgeTableFiletypes = [
 	'.csv',
@@ -40,7 +52,15 @@ export const knowledgeTableFiletypes = [
 	'.json',
 	'.jsonl'
 ];
-export const fileColumnFiletypes = ['.jpeg', '.jpg', '.png', '.gif', '.webp'];
+export const fileColumnFiletypes = [
+	{ ext: '.jpeg', type: 'file' },
+	{ ext: '.jpg', type: 'file' },
+	{ ext: '.png', type: 'file' },
+	{ ext: '.gif', type: 'file' },
+	{ ext: '.webp', type: 'file' },
+	{ ext: '.wav', type: 'audio' },
+	{ ext: '.mp3', type: 'audio' }
+];
 export const agentColors: { bg: string; text: string }[] = [
 	{
 		bg: '#FFD9E4',

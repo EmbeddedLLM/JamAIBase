@@ -57,6 +57,7 @@ export class TableListPage extends LayoutPage {
 		await tablePage.actionsBtn.click();
 
 		const downloadPromise = this.page.waitForEvent('download');
+		this.page.on('dialog', (dialog) => dialog.accept());
 		await this.page
 			.getByTestId('table-actions-dropdown')
 			.locator('div[role="menuitem"]', {

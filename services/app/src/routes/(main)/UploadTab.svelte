@@ -136,7 +136,7 @@
 			value={totalProgress}
 			max="100"
 			class="total-progress relative h-[5px] w-full appearance-none overflow-hidden"
-		/>
+		></progress>
 
 		<div role="list" class="grow flex flex-col overflow-auto bg-[#FCFCFC] data-dark:bg-[#202226]">
 			{#each completedUploads as completedUpload}
@@ -179,7 +179,7 @@
 						<div
 							class="flex-[0_0_auto] radial-progress text-secondary [transform:_scale(-1,_1)]"
 							style="--value:{Math.floor($uploadQueue.progress)}; --size:20px; --thickness: 5px;"
-						/>
+						></div>
 					</div>
 					{#if $uploadQueue.progress === 100}
 						<p class="text-sm italic px-1 pl-8">{$uploadQueue.activeFile.completeText}</p>

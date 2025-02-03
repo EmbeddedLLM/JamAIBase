@@ -4,6 +4,7 @@
 	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { genTableDTypes, jamaiApiVersion, tableIDPattern } from '$lib/constants';
 	import logger from '$lib/logger';
 	import type { GenTableCol } from '$lib/types';
@@ -21,7 +22,20 @@
 	import HamburgerIcon from '$lib/icons/HamburgerIcon.svelte';
 
 	export let isAddingTable: boolean;
-	export let refetchTables: () => Promise<void>;
+
+	const LLM_GEN_CONFIG_DEFAULT = {
+		object: 'gen_config.llm',
+		model: '',
+		system_prompt: '',
+		prompt: '',
+		temperature: 1,
+		max_tokens: 1000,
+		top_p: 0.1
+	} as const;
+	const CODE_GEN_CONFIG_DEFAULT = {
+		object: 'gen_config.code',
+		source_column: ''
+	} as const;
 
 	let tableId = '';
 	let columns: (Omit<GenTableCol, 'vlen' | 'config'> & { drag_id: string })[] = []; //? Added drag_id to keep track of dragging
@@ -56,7 +70,11 @@
 			body: JSON.stringify({
 				id: tableId,
 				version: jamaiApiVersion,
-				cols: columns.map((col) => ({ ...col, drag_id: undefined }))
+				cols: columns.map((col) => ({
+					...col,
+					dtype: col.dtype.replace('_code', ''),
+					drag_id: undefined
+				}))
 			})
 		});
 
@@ -71,14 +89,11 @@
 					requestID: responseBody.request_id
 				}
 			});
-		} else {
-			refetchTables();
-			isAddingTable = false;
-			tableId = '';
-			columns = [];
-		}
 
-		isLoading = false;
+			isLoading = false;
+		} else {
+			goto(`/project/${$page.params.project_id}/action-table/${responseBody.id}`);
+		}
 	}
 </script>
 
@@ -166,30 +181,42 @@
 									</div>
 
 									<div class="flex flex-col gap-2 py-1 w-full text-center">
-										<Select.Root>
+										<Select.Root
+											selected={{ value: columns[index].dtype }}
+											onSelectedChange={(v) => {
+												if (v) {
+													columns[index].dtype = v.value;
+													if (columns[index].gen_config) {
+														columns[index].gen_config = v.value.endsWith('_code')
+															? CODE_GEN_CONFIG_DEFAULT
+															: LLM_GEN_CONFIG_DEFAULT;
+													}
+												}
+											}}
+										>
 											<Select.Trigger asChild let:builder>
 												<Button
-													disabled={!!column.gen_config}
 													builders={[builder]}
 													variant="outline-neutral"
 													class="flex items-center justify-between gap-2 sm:gap-8 pl-3 pr-2 h-[38px] min-w-full bg-white data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1] border-transparent rounded-md"
 												>
 													<span class="whitespace-nowrap line-clamp-1 font-normal text-left">
-														{column.dtype ? column.dtype : 'Select Data Type'}
+														{genTableDTypes[column.dtype]
+															? genTableDTypes[column.dtype]
+															: 'Select Data Type'}
 													</span>
 
 													<ChevronDown class="h-4 w-4" />
 												</Button>
 											</Select.Trigger>
 											<Select.Content side="left" class="max-h-64 overflow-y-auto">
-												{#each genTableDTypes as dType}
+												{#each Object.keys(genTableDTypes).filter((dtype) => (column.gen_config || !dtype.endsWith('_code')) && (!column.gen_config || dtype.startsWith('str') || dtype === 'file_code')) as dType}
 													<Select.Item
-														on:click={() => (columns[index].dtype = dType)}
 														value={dType}
-														label={dType}
+														label={genTableDTypes[dType]}
 														class="flex justify-between gap-10 cursor-pointer"
 													>
-														{dType}
+														{genTableDTypes[dType]}
 													</Select.Item>
 												{/each}
 											</Select.Content>
@@ -200,18 +227,19 @@
 										<Checkbox
 											on:checkedChange={(e) => {
 												if (e.detail.value) {
-													columns[index].gen_config = {
-														object: 'gen_config.llm',
-														model: '',
-														system_prompt: '',
-														prompt: '',
-														temperature: 1,
-														max_tokens: 1000,
-														top_p: 0.1
-													};
-													columns[index].dtype = 'str';
+													columns[index].gen_config = columns[index].dtype.endsWith('_code')
+														? CODE_GEN_CONFIG_DEFAULT
+														: LLM_GEN_CONFIG_DEFAULT;
+
+													if (!['str', 'file'].includes(columns[index].dtype)) {
+														columns[index].dtype = 'str';
+													}
 												} else {
 													columns[index].gen_config = null;
+
+													if (columns[index].dtype.endsWith('_code')) {
+														columns[index].dtype = 'str';
+													}
 												}
 											}}
 											checked={!!column.gen_config}

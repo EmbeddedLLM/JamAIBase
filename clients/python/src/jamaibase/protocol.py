@@ -52,22 +52,27 @@ def sanitise_document_id_list(v: list[str]) -> list[str]:
 DocumentID = Annotated[str, AfterValidator(sanitise_document_id)]
 DocumentIDList = Annotated[list[str], AfterValidator(sanitise_document_id_list)]
 
-EXAMPLE_CHAT_MODEL = "openai/gpt-4o-mini"
-
+EXAMPLE_CHAT_MODEL_IDS = ["openai/gpt-4o-mini"]
 # for openai embedding models doc: https://platform.openai.com/docs/guides/embeddings
 # for cohere embedding models doc: https://docs.cohere.com/reference/embed
 # for jina embedding models doc: https://jina.ai/embeddings/
 # for voyage embedding models doc: https://docs.voyageai.com/docs/embeddings
 # for hf embedding models doc: check the respective hf model page, name should be ellm/{org}/{model}
-EXAMPLE_EMBEDDING_MODEL = "openai/text-embedding-3-small-512"
-
+EXAMPLE_EMBEDDING_MODEL_IDS = [
+    "openai/text-embedding-3-small-512",
+    "ellm/sentence-transformers/all-MiniLM-L6-v2",
+]
 # for cohere reranking models doc: https://docs.cohere.com/reference/rerank-1
 # for jina reranking models doc: https://jina.ai/reranker
 # for colbert reranking models doc: https://docs.voyageai.com/docs/reranker
 # for hf embedding models doc: check the respective hf model page, name should be ellm/{org}/{model}
-EXAMPLE_RERANKING_MODEL = "cohere/rerank-multilingual-v3.0"
+EXAMPLE_RERANKING_MODEL_IDS = [
+    "cohere/rerank-multilingual-v3.0",
+    "ellm/cross-encoder/ms-marco-TinyBERT-L-2",
+]
 
 IMAGE_FILE_EXTENSIONS = [".jpeg", ".jpg", ".png", ".gif", ".webp"]
+AUDIO_FILE_EXTENSIONS = [".mp3", ".wav"]
 DOCUMENT_FILE_EXTENSIONS = [
     ".pdf",
     ".txt",
@@ -182,7 +187,11 @@ class _ModelPrice(BaseModel):
             'Unique identifier in the form of "{provider}/{model_id}". '
             "Users will specify this to select a model."
         ),
-        examples=[EXAMPLE_CHAT_MODEL, EXAMPLE_EMBEDDING_MODEL, EXAMPLE_RERANKING_MODEL],
+        examples=[
+            EXAMPLE_CHAT_MODEL_IDS[0],
+            EXAMPLE_EMBEDDING_MODEL_IDS[0],
+            EXAMPLE_RERANKING_MODEL_IDS[0],
+        ],
     )
     name: str = Field(
         description="Name of the model.",
@@ -192,10 +201,10 @@ class _ModelPrice(BaseModel):
 
 class LLMModelPrice(_ModelPrice):
     input_cost_per_mtoken: float = Field(
-        description="Cost in USD per million (mega) input / prompt token.",
+        description="Cost in USD per million input / prompt token.",
     )
     output_cost_per_mtoken: float = Field(
-        description="Cost in USD per million (mega) output / completion token.",
+        description="Cost in USD per million output / completion token.",
     )
 
 
@@ -206,7 +215,7 @@ class EmbeddingModelPrice(_ModelPrice):
 
 
 class RerankingModelPrice(_ModelPrice):
-    cost_per_ksearch: float = Field(description="Cost in USD for a thousand searches.")
+    cost_per_ksearch: float = Field(description="Cost in USD for a thousand (kilo) searches.")
 
 
 class ModelPrice(BaseModel):
@@ -674,7 +683,7 @@ class RAGParams(BaseModel):
     reranking_model: str | None = Field(
         default=None,
         description="Reranking model to use for hybrid search.",
-        examples=[EXAMPLE_RERANKING_MODEL, None],
+        examples=[EXAMPLE_RERANKING_MODEL_IDS[0], None],
     )
     search_query: str = Field(
         default="",
@@ -748,7 +757,7 @@ class ModelInfo(BaseModel):
             'Unique identifier in the form of "{provider}/{model_id}". '
             "Users will specify this to select a model."
         ),
-        examples=[EXAMPLE_CHAT_MODEL],
+        examples=EXAMPLE_CHAT_MODEL_IDS,
     )
     object: str = Field(
         default="model",
@@ -771,7 +780,9 @@ class ModelInfo(BaseModel):
         description="The organization that owns the model.",
         examples=["openai"],
     )
-    capabilities: list[Literal["completion", "chat", "image", "embed", "rerank"]] = Field(
+    capabilities: list[
+        Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]
+    ] = Field(
         description="List of capabilities of model.",
         examples=[["chat"]],
     )
@@ -785,7 +796,7 @@ class ModelDeploymentConfig(BaseModel):
             'For example, you can map "openai/gpt-4o" calls to "openai/gpt-4o-2024-08-06". '
             'For vLLM with OpenAI compatible server, use "openai/<vllm_model_id>".'
         ),
-        examples=[EXAMPLE_CHAT_MODEL],
+        examples=EXAMPLE_CHAT_MODEL_IDS,
     )
     api_base: str = Field(
         default="",
@@ -836,7 +847,7 @@ class EmbeddingModelConfig(ModelConfig):
             'For self-hosted models with Infinity, use "ellm/{org}/{model}". '
             "Users will specify this to select a model."
         ),
-        examples=["ellm/sentence-transformers/all-MiniLM-L6-v2", EXAMPLE_EMBEDDING_MODEL],
+        examples=EXAMPLE_EMBEDDING_MODEL_IDS,
     )
     embedding_size: int = Field(
         description="Embedding size of the model",
@@ -870,7 +881,7 @@ class RerankingModelConfig(ModelConfig):
             'For self-hosted models with Infinity, use "ellm/{org}/{model}". '
             "Users will specify this to select a model."
         ),
-        examples=["ellm/cross-encoder/ms-marco-TinyBERT-L-2", EXAMPLE_RERANKING_MODEL],
+        examples=EXAMPLE_RERANKING_MODEL_IDS,
     )
     capabilities: list[Literal["rerank"]] = Field(
         default=["rerank"],
@@ -959,6 +970,17 @@ def sanitise_name(v: str) -> str:
 MessageName = Annotated[str, AfterValidator(sanitise_name)]
 
 
+class MessageToolCallFunction(BaseModel):
+    arguments: str
+    name: str | None
+
+
+class MessageToolCall(BaseModel):
+    id: str | None
+    function: MessageToolCallFunction
+    type: str
+
+
 class ChatEntry(BaseModel):
     """Represents a message in the chat context."""
 
@@ -1000,6 +1022,11 @@ class ChatEntry(BaseModel):
         return str(value)
 
 
+class ChatCompletionChoiceOutput(ChatEntry):
+    tool_calls: list[MessageToolCall] | None = None
+    """List of tool calls if the message includes tool call responses."""
+
+
 class ChatThread(BaseModel):
     object: str = Field(
         default="chat.thread",
@@ -1029,7 +1056,9 @@ class CompletionUsage(BaseModel):
 
 
 class ChatCompletionChoice(BaseModel):
-    message: ChatEntry = Field(description="A chat completion message generated by the model.")
+    message: ChatEntry | ChatCompletionChoiceOutput = Field(
+        description="A chat completion message generated by the model."
+    )
     index: int = Field(description="The index of the choice in the list of choices.")
     finish_reason: str | None = Field(
         default=None,
@@ -1049,7 +1078,7 @@ class ChatCompletionChoice(BaseModel):
 class ChatCompletionChoiceDelta(ChatCompletionChoice):
     @computed_field
     @property
-    def delta(self) -> ChatEntry:
+    def delta(self) -> ChatEntry | ChatCompletionChoiceOutput:
         return self.message
 
 
@@ -1157,7 +1186,7 @@ class ChatCompletionChunk(BaseModel):
     )
 
     @property
-    def message(self) -> ChatEntry | None:
+    def message(self) -> ChatEntry | ChatCompletionChoiceOutput | None:
         return self.choices[0].message if len(self.choices) > 0 else None
 
     @property
@@ -1186,6 +1215,49 @@ class GenTableStreamChatCompletionChunk(ChatCompletionChunk):
     )
     output_column_name: str
     row_id: str
+
+
+class FunctionParameter(BaseModel):
+    type: str = Field(
+        default="", description="The type of the parameter, e.g., 'string', 'number'."
+    )
+    description: str = Field(default="", description="A description of the parameter.")
+    enum: list[str] = Field(
+        default=[], description="An optional list of allowed values for the parameter."
+    )
+
+
+class FunctionParameters(BaseModel):
+    type: str = Field(
+        default="object", description="The type of the parameters object, usually 'object'."
+    )
+    properties: dict[str, FunctionParameter] = Field(
+        description="The properties of the parameters object."
+    )
+    required: list[str] = Field(description="A list of required parameter names.")
+    additionalProperties: bool = Field(
+        default=False, description="Whether additional properties are allowed."
+    )
+
+
+class Function(BaseModel):
+    name: str = Field(default="", description="The name of the function.")
+    description: str = Field(default="", description="A description of what the function does.")
+    parameters: FunctionParameters = Field(description="The parameters for the function.")
+
+
+class Tool(BaseModel):
+    type: str = Field(default="function", description="The type of the tool, e.g., 'function'.")
+    function: Function = Field(description="The function details of the tool.")
+
+
+class ToolChoiceFunction(BaseModel):
+    name: str = Field(default="", description="The name of the function.")
+
+
+class ToolChoice(BaseModel):
+    type: str = Field(default="function", description="The type of the tool, e.g., 'function'.")
+    function: ToolChoiceFunction = Field(description="Select a tool for the chat model to use.")
 
 
 class ChatRequest(BaseModel):
@@ -1295,6 +1367,48 @@ values like -100 or 100 should result in a ban or exclusive selection of the rel
         return v
 
 
+class ChatRequestWithTools(ChatRequest):
+    tools: list[Tool] = Field(
+        description="A list of tools available for the chat model to use.",
+        min_length=1,
+        examples=[
+            # --- [Tool Function] ---
+            # def get_delivery_date(order_id: str) -> datetime:
+            #     # Connect to the database
+            #     conn = sqlite3.connect('ecommerce.db')
+            #     cursor = conn.cursor()
+            #     # ...
+            [
+                Tool(
+                    type="function",
+                    function=Function(
+                        name="get_delivery_date",
+                        description="Get the delivery date for a customer's order.",
+                        parameters=FunctionParameters(
+                            type="object",
+                            properties={
+                                "order_id": FunctionParameter(
+                                    type="string", description="The customer's order ID."
+                                )
+                            },
+                            required=["order_id"],
+                            additionalProperties=False,
+                        ),
+                    ),
+                )
+            ],
+        ],
+    )
+    tool_choice: str | ToolChoice = Field(
+        default="auto",
+        description="Set `auto` to let chat model pick a tool or select a tool for the chat model to use.",
+        examples=[
+            "auto",
+            ToolChoice(type="function", function=ToolChoiceFunction(name="get_delivery_date")),
+        ],
+    )
+
+
 class EmbeddingRequest(BaseModel):
     input: str | list[str] = Field(
         description=(
@@ -1309,7 +1423,7 @@ class EmbeddingRequest(BaseModel):
             "The ID of the model to use. "
             "You can use the List models API to see all of your available models."
         ),
-        examples=[EXAMPLE_EMBEDDING_MODEL],
+        examples=EXAMPLE_EMBEDDING_MODEL_IDS,
     )
     type: Literal["query", "document"] = Field(
         default="document",
@@ -1424,7 +1538,8 @@ class DtypeCreateEnum(str, Enum, metaclass=MetaEnum):
     float_ = "float"
     bool_ = "bool"
     str_ = "str"
-    file_ = "file"
+    image_ = "image"
+    audio_ = "audio"
 
     def __getattribute__(cls, *args, **kwargs):
         warn(ENUM_DEPRECATE_MSSG, FutureWarning, stacklevel=1)
@@ -1598,11 +1713,23 @@ class EmbedGenConfig(BaseModel):
     )
     embedding_model: str = Field(
         description="The embedding model to use.",
-        examples=[EXAMPLE_EMBEDDING_MODEL],
+        examples=EXAMPLE_EMBEDDING_MODEL_IDS,
     )
     source_column: str = Field(
         description="The source column for embedding.",
         examples=["text_column"],
+    )
+
+
+class CodeGenConfig(BaseModel):
+    object: Literal["gen_config.code"] = Field(
+        default="gen_config.code",
+        description='The object type, which is always "gen_config.code".',
+        examples=["gen_config.code"],
+    )
+    source_column: str = Field(
+        description="The source column for python code to execute.",
+        examples=["code_column"],
     )
 
 
@@ -1622,9 +1749,10 @@ def _gen_config_discriminator(x: Any) -> str | None:
     return None
 
 
-GenConfig = LLMGenConfig | EmbedGenConfig
+GenConfig = LLMGenConfig | EmbedGenConfig | CodeGenConfig
 DiscriminatedGenConfig = Annotated[
     Union[
+        Annotated[CodeGenConfig, Tag("gen_config.code")],
         Annotated[LLMGenConfig, Tag("gen_config.llm")],
         Annotated[LLMGenConfig, Tag("gen_config.chat")],
         Annotated[EmbedGenConfig, Tag("gen_config.embed")],
@@ -1664,9 +1792,12 @@ class ColumnSchema(BaseModel):
 
 class ColumnSchemaCreate(ColumnSchema):
     id: str = Field(description="Column name.")
-    dtype: Literal["int", "float", "bool", "str", "file"] = Field(
+    dtype: Literal["int", "float", "bool", "str", "file", "image", "audio"] = Field(
         default="str",
-        description='Column data type, one of ["int", "float", "bool", "str", "file"]',
+        description=(
+            'Column data type, one of ["int", "float", "bool", "str", "file", "image", "audio"]'
+            ". Data type 'file' is deprecated, use 'image' instead."
+        ),
     )
 
     @model_validator(mode="before")
@@ -1899,11 +2030,12 @@ class RowAddRequest(BaseModel):
                     value.startswith("s3://") or value.startswith("file://")
                 ):
                     extension = splitext(value)[1].lower()
-                    if extension not in IMAGE_FILE_EXTENSIONS:
+                    if extension not in IMAGE_FILE_EXTENSIONS + AUDIO_FILE_EXTENSIONS:
                         raise ValueError(
                             "Unsupported file type. Make sure the file belongs to "
                             "one of the following formats: \n"
-                            f"[Image File Types]: \n{IMAGE_FILE_EXTENSIONS}"
+                            f"[Image File Types]: \n{IMAGE_FILE_EXTENSIONS} \n"
+                            f"[Audio File Types]: \n{AUDIO_FILE_EXTENSIONS}"
                         )
         return self
 
@@ -1945,11 +2077,12 @@ class RowUpdateRequest(BaseModel):
                 value.startswith("s3://") or value.startswith("file://")
             ):
                 extension = splitext(value)[1].lower()
-                if extension not in IMAGE_FILE_EXTENSIONS:
+                if extension not in IMAGE_FILE_EXTENSIONS + AUDIO_FILE_EXTENSIONS:
                     raise ValueError(
                         "Unsupported file type. Make sure the file belongs to "
                         "one of the following formats: \n"
-                        f"[Image File Types]: \n{IMAGE_FILE_EXTENSIONS}"
+                        f"[Image File Types]: \n{IMAGE_FILE_EXTENSIONS} \n"
+                        f"[Audio File Types]: \n{AUDIO_FILE_EXTENSIONS}"
                     )
         return self
 

@@ -14,6 +14,7 @@
 	import logger from '$lib/logger';
 	import type { GenTable } from '$lib/types';
 
+	import ExportTableButton from './ExportTableButton.svelte';
 	import { ColumnMatchDialog, DeleteTableDialog } from '../(dialogs)';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
@@ -201,51 +202,6 @@
 
 		$showLoadingOverlay = false;
 	}
-
-	async function handleExportTable() {
-		if (!tableData || $showLoadingOverlay) return;
-
-		if (PUBLIC_IS_LOCAL === 'false') {
-			window
-				.open(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableData.id}/export`, '_blank')
-				?.focus();
-		} else {
-			$showLoadingOverlay = true;
-
-			const response = await fetch(
-				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableData.id}/export`,
-				{
-					headers: {
-						'x-project-id': $page.params.project_id
-					}
-				}
-			);
-
-			if (response.ok) {
-				const contentDisposition = response.headers.get('content-disposition');
-				const responseBody = await response.blob();
-				textToFileDownload(
-					/filename="(?<filename>.*)"/.exec(contentDisposition ?? '')?.groups?.filename ||
-						`${tableData.id}.parquet`,
-					responseBody
-				);
-			} else {
-				const responseBody = await response.json();
-				logger.error(toUpper(`${tableType}TBL_TBL_EXPORTTBL`), responseBody);
-				console.error(responseBody);
-				toast.error('Failed to export rows', {
-					id: responseBody.message || JSON.stringify(responseBody),
-					description: CustomToastDesc,
-					componentProps: {
-						description: responseBody.message || JSON.stringify(responseBody),
-						requestID: responseBody.request_id
-					}
-				});
-			}
-
-			$showLoadingOverlay = false;
-		}
-	}
 </script>
 
 <DropdownMenu.Root>
@@ -349,10 +305,12 @@
 				<ExportIcon class="h-4 w-4 mr-2 mb-[2px]" />
 				<span class="grow text-center"> Export rows (.csv) </span>
 			</DropdownMenu.Item>
-			<DropdownMenu.Item on:click={handleExportTable}>
-				<ExportIcon class="h-4 w-4 mr-2 mb-[2px]" />
-				<span class="grow text-center"> Export table </span>
-			</DropdownMenu.Item>
+			<ExportTableButton let:handleExportTable tableId={tableData?.id} {tableType}>
+				<DropdownMenu.Item on:click={handleExportTable}>
+					<ExportIcon class="h-4 w-4 mr-2 mb-[2px]" />
+					<span class="grow text-center"> Export table </span>
+				</DropdownMenu.Item>
+			</ExportTableButton>
 		</DropdownMenu.Group>
 
 		<DropdownMenu.Separator class="-mx-2 my-2" />
@@ -360,7 +318,7 @@
 		<DropdownMenu.Group class="flex flex-col gap-1 py-1 [&>*]:border [&>*]:border-[#E4E7EC]">
 			<DropdownMenu.Item
 				on:click={() => (isDeletingTable = $page.params.table_id)}
-				class="text-[#D92D20] hover:!text-[#D92D20] hover:!bg-[#FEF3F2]"
+				class="text-[#D92D20] hover:!text-[#D92D20] data-[highlighted]:text-[#D92D20] hover:!bg-[#FEF3F2] data-[highlighted]:bg-[#FEF3F2]"
 			>
 				<Trash_2 class="h-4 w-4 mr-2 mb-[2px]" />
 				<span class="grow text-center"> Delete table </span>

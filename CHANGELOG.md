@@ -16,32 +16,79 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### ADDED
+
+Python SDK - jamaibase
+
+- Add `CodeGenConfig` for python code execution #446
+
+TS SDK - jamaibase
+
+UI
+
+- Support chat mode multiturn option in add column and column resize #451
+- Support `audio` data type #457
+
 Backend - owl (API server)
 
-- Fix bge-small embedding size (1024 -> 384)
-- Correctly filter models at auth level
-- Fix ollama model deployment config
+- GenTable
+  - Support `audio` input column and data type #443
+  - Support python code execution column #446
+  - **Breaking**: Add `Page` column to knowledge table #464
+- LLM
+  - Support function calling # 435
+  - Support DeepSeek models #466
+- Billing
+  - Include background tasks for processing billing events #462
+- Auth
+  - Support specific user role in organization invite #446
+  - Include background tasks for setting project updated at datetime #462
+- Handle and allow setting of file upload size limits for `embed file`, `image` and `audio` file types #443
 
-Frontend
+CI/CD
 
-- Added support for multiple multiturn columns in Chat table chat view.
-- Added multiturn chat toggle to column settings.
-
-Docker
-
-- Added Mac Apple Silicon `compose.mac.yml`
-- Update `ollama.yml` to use Qwen2.5 3B
-- Fix ollama default config
-
-## [v0.3.1] (2024-11-26)
-
-This is a bug fix release for frontend code. SDKs are not affected.
+- Added a new CI workflow for cloud environments in`.github/workflows/ci.cloud.yml` #440
+- Add dummy test job to pass status checks if skipped #468
+- Added a `check_changes` job to the CI workflows to conditionally run SDK tests based on changes. #462
 
 ### CHANGES / FIXED
 
-Frontend
+Python SDK - jamaibase
 
-- Enable Projects for OSS
+TS SDK - jamaibase
+
+- Update the `uploadFile` method in `index.ts` to remove the trailing slash from the API endpoint #462
+
+UI
+
+- Remove unnecessary load function rerunning on client navigation #454
+- Add more export options with confirmation #459
+- Obfuscated external keys and credit values for non-admin users in the `+layout.server.ts` to enhance security and privacy #459
+- Update `FileSelect.svelte` and `NewRow.svelte` to remove trailing slashes from the file upload API endpoint #462
+- Bug fixes:
+  - Fix chat table scrollbar not showing issue #459
+  - Fix keyboard navigation #459
+  - Fix inappropriate model not showing issue in knowledge table column settings #459
+
+Backend - owl (API server)
+
+- GenTable
+  - **Breaking**: Change `file` data type to `image` data type #460
+- LLM
+  - Handle usage tracking and improve error handling #462
+  - Bug fixes
+    - Fix model config embedding size #441
+    - Fix bug with default model choosing invalid models #442
+    - Fix regen sequences issue after columns reordering #455
+
+CI/CD
+
+- Dockerfile: Added `ffmpeg` installation for audio processing. #443
+- Dependency Updates:
+  - Set `litellm` to version `1.50.0` #443
+  - Add `pydub` as a dependency for audio processing #443
+
+### REMOVED
 
 ## [v0.3] (2024-11-20)
 
@@ -427,7 +474,7 @@ Backend - owl (API server)
   - Windows: StreamResponse from FastAPI accumulates all SSE before yielding everything all at once to the client Fixes #145
   - Enabled scanned pdf upload. Fixes #131
 - Dependencies
-  - Support forked version of `unstructured-client==0.24.1`, changed nest-asyncio to ThreadPool, fixed the conflict with uvloop
+  - Support forked version of `unstructured-client==0.24.1`, changed `nest-asyncio` to `ThreadPool`, fixed the conflict with `uvloop`
   - Added `tenacity`, `pandas`
   - Bumped dependency versions
 
@@ -441,7 +488,7 @@ Backend - Admin (cloud)
 
 - Improve insufficient credit error message: include quota/usage type in the message
 - Storage usage update is now a background process; fixes #87
-- Allow dot in the middle for project name and organization name.
+- Allow dot in the middle for project name and organization name.
 - Update `models.json` in `set_model_config()`
 - Billing: Don't include Lance version directories in storage usage computation
 - Bug fixes

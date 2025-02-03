@@ -1,4 +1,5 @@
 import ColumnDropdown from './ColumnDropdown.svelte';
+import ColumnHeader from './ColumnHeader.svelte';
 import ColumnSettings from './ColumnSettings.svelte';
 import DeleteFileDialog from './DeleteFileDialog.svelte';
 import FileColumnView from './FileColumnView.svelte';
@@ -9,6 +10,7 @@ import SelectKnowledgeTableDialog from './SelectKnowledgeTableDialog.svelte';
 import TablePagination from './TablePagination.svelte';
 export {
 	ColumnDropdown,
+	ColumnHeader,
 	ColumnSettings,
 	DeleteFileDialog,
 	FileColumnView,

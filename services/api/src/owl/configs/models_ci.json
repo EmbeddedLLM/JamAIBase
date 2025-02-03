@@ -5,7 +5,7 @@
       "name": "OpenAI GPT-4o Mini",
       "context_length": 128000,
       "languages": ["mul"],
-      "capabilities": ["chat", "image"],
+      "capabilities": ["chat", "image", "tool"],
       "deployments": [
         {
           "litellm_id": "",
@@ -19,7 +19,7 @@
       "name": "Anthropic Claude 3 Haiku",
       "context_length": 200000,
       "languages": ["mul"],
-      "capabilities": ["chat"],
+      "capabilities": ["chat", "tool"],
       "deployments": [
         {
           "litellm_id": "",
@@ -29,16 +29,31 @@
       ]
     },
     {
-      "id": "together_ai/meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-      "name": "Together AI Meta Llama 3.1 (8B)",
-      "context_length": 130000,
+      "id": "meta/Llama3.2-3b-instruct",
+      "name": "Meta Llama 3.2 (3B)",
+      "context_length": 128000,
       "languages": ["mul"],
       "capabilities": ["chat"],
       "deployments": [
         {
-          "litellm_id": "",
-          "api_base": "",
-          "provider": "together_ai"
+          "litellm_id": "openai/meta/Llama3.2-3b-instruct",
+          "api_base": "https://llmci.embeddedllm.com/chat/v1",
+          "provider": "custom"
+        }
+      ]
+    },
+    {
+      "id": "ellm/Qwen/Qwen-2-Audio-7B",
+      "object": "model",
+      "name": "Qwen 2 Audio 7B (Audio, internal)",
+      "context_length": 128000,
+      "languages": ["mul"],
+      "capabilities": ["chat", "audio"],
+      "deployments": [
+        {
+          "litellm_id": "openai/Qwen/Qwen-2-Audio-7B",
+          "api_base": "https://llmci.embeddedllm.com/audio/v1",
+          "provider": "custom"
         }
       ]
     }

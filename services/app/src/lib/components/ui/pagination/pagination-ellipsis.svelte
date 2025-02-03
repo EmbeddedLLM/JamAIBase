@@ -10,7 +10,7 @@
 </script>
 
 <span
-	aria-hidden
+	aria-hidden="true"
 	class={cn('flex h-6 w-6 items-center justify-center', className)}
 	{...$$restProps}
 >

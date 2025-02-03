@@ -9,7 +9,8 @@
 		uploadQueue,
 		uploadController,
 		modelsAvailable,
-		activeOrganization
+		activeOrganization,
+		showRightDock
 	} from '$globalStore';
 	import logger from '$lib/logger';
 	import type { UploadQueue } from '$lib/types';
@@ -120,7 +121,12 @@
 	});
 </script>
 
-<svelte:window bind:innerWidth={windowWidth} />
+<svelte:window
+	bind:innerWidth={windowWidth}
+	on:keydown={(e) => {
+		if (e.key === 'c') $showRightDock = !$showRightDock;
+	}}
+/>
 
 <main class="flex flex-col h-screen">
 	<div
@@ -131,25 +137,36 @@
 		<SideDock {organizationData} />
 
 		<div
-			inert={windowWidth !== undefined && windowWidth < 768 && $showDock}
-			class="@container flex flex-col !h-screen"
+			style="grid-template-columns: minmax(0, auto) {$showRightDock && $page.data.rightDock
+				? '18rem'
+				: '0rem'}"
+			class="grid !h-screen {$page.data.rightDock
+				? 'transition-[grid-template-columns] duration-300'
+				: ''} overflow-hidden"
 		>
-			<div class="flex items-center">
-				<Button
-					variant="ghost"
-					title="Show/hide side navigation bar"
-					on:click={() => ($showDock = !$showDock)}
-					class="flex-[0_0_auto] md:hidden mt-1.5 ml-3 p-0 h-12 w-12 aspect-square rounded-full duration-200 group"
-				>
-					<SideBarIcon class="scale-125" />
-				</Button>
+			<div
+				inert={windowWidth !== undefined && windowWidth < 768 && $showDock}
+				class="@container flex flex-col !h-screen"
+			>
+				<div class="flex items-center">
+					<Button
+						variant="ghost"
+						title="Show/hide side navigation bar"
+						on:click={() => ($showDock = !$showDock)}
+						class="flex-[0_0_auto] md:hidden mt-1.5 ml-3 p-0 h-12 w-12 aspect-square rounded-full duration-200 group"
+					>
+						<SideBarIcon class="scale-125" />
+					</Button>
 
-				{#if !$page.data.hideBreadcrumbs}
-					<BreadcrumbsBar />
-				{/if}
+					{#if !$page.data.hideBreadcrumbs}
+						<BreadcrumbsBar />
+					{/if}
+				</div>
+
+				<slot />
 			</div>
 
-			<slot />
+			<svelte:component this={$page.data.rightDock} />
 		</div>
 
 		<UploadTab bind:completedUploads />

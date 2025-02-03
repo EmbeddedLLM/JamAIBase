@@ -177,5 +177,20 @@ services:
     networks:
       - jamai
 
+  # By default, kopi service is not enabled, and only used for testing. use --profile kopi along docker compose up if kopi is needed.
+  kopi:
+    profiles: ["kopi"]
+    image: hoipangg/kopi
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5569/health')"]
+      interval: 10s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
+    ports:
+      - "5569:5569"
+    networks:
+      - jamai
+
 networks:
   jamai:

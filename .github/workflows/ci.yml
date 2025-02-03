@@ -1,4 +1,4 @@
-name: CI
+name: CI (OSS)
 
 on:
   pull_request:
@@ -18,10 +18,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  check_changes:
+    name: Check for changes
+    runs-on: ubuntu-latest
+    outputs:
+      has-changes: ${{ steps.check.outputs.has-changes }}
+    steps:
+      - name: Check
+        id: check
+        uses: jiahuei/check-changes-action@v0
+        with:
+          watch-dirs: "clients/python/ services/api/ docker/ .github/"
+
+  sdk_tests_noop:
+    # This job is needed so that status checks can still pass
+    # This is because strategy matrix is evaluated after if condition
+    name: SDK unit tests
+    runs-on: ubuntu-latest
+    needs: check_changes
+    if: ${{ !(needs.check_changes.outputs.has-changes == 'true' || github.event_name == 'push') }}
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+    timeout-minutes: 2
+    steps:
+      - name: No-op
+        run: echo Tests skipped !!!
+
   sdk_tests:
     name: SDK unit tests
     runs-on: ubuntu-latest-l
-    # runs-on: namespace-profile-ubuntu-latest-8cpu-16gb-96gb
+    needs: check_changes
+    if: needs.check_changes.outputs.has-changes == 'true' || github.event_name == 'push'
     strategy:
       matrix:
         python-version: ["3.10"]
@@ -42,6 +70,12 @@ jobs:
         run: |
           git --version
 
+      - name: Check Docker Version
+        run: docker version
+
+      - name: Check Docker Compose Version
+        run: docker compose version
+
       - name: Remove cloud-only modules and install Python client
         run: |
           set -e
@@ -49,11 +83,10 @@ jobs:
           cd clients/python
           python -m pip install .[test]
 
-      - name: Check Docker Version
-        run: docker version
-
-      - name: Check Docker Compose Version
-        run: docker compose version
+      - name: Install ffmpeg
+        run: |
+          set -e
+          sudo apt-get update -qq && sudo apt-get install ffmpeg libavcodec-extra -y
 
       - name: Authenticating to the Container registry
         run: echo $JH_PAT | docker login ghcr.io -u tanjiahuei@gmail.com --password-stdin
@@ -87,13 +120,14 @@ jobs:
           TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           HYPERBOLIC_API_KEY: ${{ secrets.HYPERBOLIC_API_KEY }}
+          CUSTOM_API_KEY: ${{ secrets.CUSTOM_API_KEY }}
 
       - name: Launch services (OSS)
         id: launch_oss
         timeout-minutes: 20
         run: |
           set -e
-          docker compose -p jamai -f docker/compose.cpu.yml --profile minio up --quiet-pull -d --wait
+          docker compose -p jamai -f docker/compose.cpu.yml --profile minio --profile kopi up --quiet-pull -d --wait
         env:
           COMPOSE_DOCKER_CLI_BUILD: 1
           DOCKER_BUILDKIT: 1
@@ -116,7 +150,7 @@ jobs:
             --junitxml=junit/test-results-${{ matrix.python-version }}.xml \
             --cov-report=xml \
             --no-flaky-report \
-            clients/python/tests/oss
+            clients/python/tests/oss/
 
       - name: Inspect owl logs if Python SDK tests failed
         if: failure() &&  steps.python_sdk_test_oss.outcome == 'failure'
@@ -169,11 +203,6 @@ jobs:
             --cov-report=xml \
             --no-flaky-report \
             clients/python/tests/oss/test_file.py
-
-      - name: Inspect owl logs if Python SDK tests failed
-        if: failure() &&  steps.python_sdk_test_oss_file.outcome == 'failure'
-        timeout-minutes: 1
-        run: docker exec jamai-owl-1 cat /app/api/logs/owl.log
 
   lance_tests:
     name: Lance tests

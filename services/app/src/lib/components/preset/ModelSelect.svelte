@@ -119,9 +119,11 @@
 		{#each $modelsAvailable as { id, name, languages, capabilities, owned_by }}
 			{@const isDisabled =
 				owned_by !== 'ellm' &&
-				$page.data.organizationData?.tier === 'free' &&
-				!$page.data.organizationData?.credit &&
-				!$page.data.organizationData?.external_keys?.[owned_by]}
+				owned_by !== 'custom' &&
+				$page.data.organizationData &&
+				$page.data.organizationData.credit === 0 &&
+				$page.data.organizationData.credit_grant === 0 &&
+				!$page.data.organizationData.external_keys?.[owned_by]}
 			{#if !capabilityFilter || capabilities.includes(capabilityFilter)}
 				<Select.Item
 					disabled={isDisabled}

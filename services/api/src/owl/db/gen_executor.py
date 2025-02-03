@@ -21,6 +21,7 @@ from owl.protocol import (
     ChatCompletionChunk,
     ChatEntry,
     ChatRequest,
+    CodeGenConfig,
     EmbedGenConfig,
     ExternalKeys,
     GenTableChatCompletionChunks,
@@ -36,14 +37,15 @@ from owl.protocol import (
     TableMeta,
 )
 from owl.utils import mask_string, uuid7_draft2_str
+from owl.utils.code import code_executor
 from owl.utils.io import open_uri_async
 
 
 @dataclass(slots=True)
 class Task:
-    type: Literal["embed", "chat"]
+    type: Literal["embed", "chat", "code"]
     output_column_name: str
-    body: ChatRequest | EmbedGenConfig
+    body: ChatRequest | EmbedGenConfig | CodeGenConfig
     dtype: str
 
 
@@ -290,9 +292,12 @@ class GenExecutor:
         self.error_columns = []
         self.tag_regen_columns = []
         self.skip_regen_columns = []
-        self.file_columns = []
-        self.img_column_dict = {}
-        self.doc_column_dict = {}
+        self.image_columns = []
+        self.audio_columns = []
+        self.audio_gen_columns = []
+        self.image_column_dict = {}
+        self.document_column_dict = {}
+        self.audio_column_dict = {}
 
     def _log_exception(self, exc: Exception, error_message: str):
         if not isinstance(exc, (JamaiException, RequestValidationError)):
@@ -301,6 +306,52 @@ class GenExecutor:
     async def _get_file_binary(self, uri: str) -> bytes:
         async with open_uri_async(uri) as file_handle:
             return await file_handle.read()
+
+    # TODO: resolve duplicated code
+    async def _convert_uri_to_base64(self, uri: str, col_id: str) -> tuple[dict, bool]:
+        """
+        Converts a URI to a base64-encoded string with the appropriate prefix and determines the file type.
+
+        Args:
+            uri (str): The URI of the file.
+            col_id (str): The column ID for error context.
+
+        Returns:
+            tuple: A tuple containing:
+                - dict: A dictionary with the base64-encoded data and its prefix.
+                - bool: A boolean indicating whether the file is audio.
+
+        Raises:
+            ValueError: If the file format is unsupported.
+        """
+        if not uri.startswith(("file://", "s3://")):
+            raise ValueError(
+                f"Invalid URI format for column {col_id}. URI must start with 'file://' or 's3://'"
+            )
+
+        # uri -> file binary -> base64
+        file_binary = await self._get_file_binary(uri)
+        base64_data = self._binary_to_base64(file_binary)
+
+        # uri -> file extension -> prefix
+        extension = splitext(uri)[1].lower()
+
+        if extension in [".mp3", ".wav"]:
+            prefix = f"data:audio/{"mpeg" if extension == ".mp3" else "x-wav"};base64,"
+            return {
+                "data": base64_data,
+                "format": extension[1:],
+                "url": prefix + base64_data,
+            }, True
+        elif extension in [".jpeg", ".jpg", ".png", ".gif", ".webp"]:
+            extension = ".jpeg" if extension == ".jpg" else extension
+            prefix = f"data:image/{extension[1:]};base64,"
+            return {"url": prefix + base64_data}, False
+        else:
+            raise ValueError(
+                "Unsupported file type. Supported formats are: "
+                "['jpeg/jpg', 'png', 'gif', 'webp'] for images and ['mp3', 'wav'] for audio."
+            )
 
     async def gen_row(self) -> Any | tuple[GenTableChatCompletionChunks, dict]:
         cols = self.meta.cols_schema
@@ -354,32 +405,49 @@ class GenExecutor:
                 gen_config = ChatRequest(
                     id=self.request.state.id, messages=messages, **col.gen_config.model_dump()
                 )
+                if gen_config.model != "":
+                    model_config = self.request.state.all_models.get_llm_model_info(
+                        gen_config.model
+                    )
+                    if (
+                        "audio" in model_config.capabilities
+                        and model_config.deployments[0].provider == "openai"
+                    ):
+                        self.audio_gen_columns.append(col.id)
+            elif isinstance(col.gen_config, CodeGenConfig):
+                task_type = "code"
+                gen_config = col.gen_config
             else:
                 raise ValueError(f'Unexpected "gen_config" type: {type(col.gen_config)}')
             self.tasks.append(
                 Task(type=task_type, output_column_name=col.id, body=gen_config, dtype=col.dtype)
             )
 
-        self.file_columns = [col.id for col in cols if col.dtype == "file"]
-        for col_id in self.file_columns:
+        self.image_columns = [col.id for col in cols if col.dtype == "image"]
+        self.audio_columns = [col.id for col in cols if col.dtype == "audio"]
+        for col_id in self.image_columns + self.audio_columns:
             if self.column_dict.get(col_id, None) is not None:
                 uri = self.column_dict[col_id]
-                # uri -> file binary -> base64
-                file_binary = await self._get_file_binary(uri)
-                base64 = self._binary_to_base64(file_binary)
+                b64, is_audio = await self._convert_uri_to_base64(uri, col_id)
 
-                # uri -> file extension -> prefix
-                extension = splitext(uri)[1].lower()
-                if extension in [".jpeg", ".jpg", ".png", ".gif", ".webp"]:
-                    extension = ".jpeg" if extension == ".jpg" else extension
-                    prefix = f"data:image/{extension[1:]};base64,"
-                    # url = prefix + base64
-                    self.img_column_dict[col_id] = prefix + base64
-                else:
-                    raise ValueError(
-                        "Unsupported image, make sure the image belongs to "
-                        "one of the following formats: ['jpeg/jpg', 'png', 'gif', 'webp']."
+                if is_audio:
+                    if col_id not in self.audio_columns:
+                        raise ValueError(
+                            f"Column {col_id} is not marked as an audio column but contains audio data."
+                        )
+                    self.audio_column_dict[col_id] = (
+                        {
+                            "data": b64["data"],
+                            "format": b64["format"],
+                        },  # for audio gen model
+                        {"url": b64["url"]},  # for audio model
                     )
+                else:
+                    if col_id not in self.image_columns:
+                        raise ValueError(
+                            f"Column {col_id} is not marked as a file column but contains image data."
+                        )
+                    self.image_column_dict[col_id] = b64
 
         column_dict_keys = set(self.column_dict.keys())
         if len(column_dict_keys - col_ids) > 0:
@@ -422,7 +490,7 @@ class GenExecutor:
     def _binary_to_base64(self, binary_data: bytes) -> str:
         return base64.b64encode(binary_data).decode("utf-8")
 
-    def _interpolate_column(self, prompt: str) -> str | dict[str, Any]:
+    def _interpolate_column(self, prompt: str, base_column_name: str) -> str | dict[str, Any]:
         """
         Replaces / interpolates column references in the prompt with their contents.
 
@@ -434,21 +502,31 @@ class GenExecutor:
         """
 
         image_column_names = []
+        audio_column_names = []
 
         def replace_match(match):
             column_name = match.group(1)  # Extract the column_name from the match
             try:
-                if column_name in self.img_column_dict:
+                if column_name in self.image_column_dict:
                     image_column_names.append(column_name)
                     return "<image_url>"
-                elif column_name in self.doc_column_dict:
-                    return self.doc_column_dict[column_name]
+                elif column_name in self.audio_column_dict:
+                    audio_column_names.append(column_name)
+                    if base_column_name in self.audio_gen_columns:
+                        return "<input_audio>"  # follow the content type
+                    else:
+                        return "<audio_url>"
+                elif column_name in self.document_column_dict:
+                    return self.document_column_dict[column_name]
                 return str(self.column_dict[column_name])  # Data can be non-string
             except KeyError as e:
                 raise BadInputError(f"Requested column '{column_name}' is not found.") from e
 
         content_ = re.sub(GEN_CONFIG_VAR_PATTERN, replace_match, prompt)
         content = [{"type": "text", "text": content_}]
+
+        if len(image_column_names) > 0 and len(audio_column_names) > 0:
+            raise BadInputError("Either image or audio is supported per completion.")
 
         if len(image_column_names) > 0:
             if len(image_column_names) > 1:
@@ -457,9 +535,28 @@ class GenExecutor:
             content.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": self.img_column_dict[image_column_names[0]]},
+                    "image_url": self.image_column_dict[image_column_names[0]],
                 }
             )
+            return content
+        elif len(audio_column_names) > 0:
+            if len(audio_column_names) > 1:
+                raise BadInputError("Only one audio is supported per completion.")
+
+            if base_column_name in self.audio_gen_columns:
+                content.append(
+                    {
+                        "type": "input_audio",
+                        "input_audio": self.audio_column_dict[audio_column_names[0]][0],
+                    }
+                )
+            else:
+                content.append(
+                    {
+                        "type": "audio_url",
+                        "audio_url": self.audio_column_dict[audio_column_names[0]][1],
+                    }
+                )
             return content
         else:
             return content_
@@ -468,6 +565,53 @@ class GenExecutor:
         matches = re.findall(GEN_CONFIG_VAR_PATTERN, content)
         if any([match in self.error_columns for match in matches]):
             raise Exception
+
+    def _validate_model(self, body: LLMGenConfig, output_column_name: str):
+        for input_column_name in self.dependencies[output_column_name]:
+            if input_column_name in self.image_column_dict:
+                try:
+                    body.model = self.llm.validate_model_id(body.model, ["image"])
+                    break
+                except ResourceNotFoundError as e:
+                    raise BadInputError(
+                        f'Column "{output_column_name}" referred to image file input but using a chat model '
+                        f'"{self.llm.get_model_name(body.model) if self.llm.is_browser else body.model}", '
+                        "select image model instead.",
+                    ) from e
+            if input_column_name in self.audio_column_dict:
+                try:
+                    body.model = self.llm.validate_model_id(body.model, ["audio"])
+                    break
+                except ResourceNotFoundError as e:
+                    raise BadInputError(
+                        f'Column "{output_column_name}" referred to audio file input but using a chat model '
+                        f'"{self.llm.get_model_name(body.model) if self.llm.is_browser else body.model}", '
+                        "select audio model instead.",
+                    ) from e
+
+    async def _execute_code(self, task: Task) -> str:
+        output_column_name = task.output_column_name
+        body: CodeGenConfig = task.body
+        dtype = task.dtype
+        source_code = self.column_dict[body.source_column]
+
+        try:
+            new_column_value = await code_executor(source_code, dtype, self.request)
+        except Exception as e:
+            new_column_value = f"[ERROR] {str(e)}"
+            self._log_exception(e, f'Error executing code for column "{output_column_name}": {e}')
+
+        if dtype == "image" and new_column_value is not None:
+            try:
+                (
+                    self.image_column_dict[output_column_name],
+                    _,
+                ) = await self._convert_uri_to_base64(new_column_value, output_column_name)
+            except ValueError as e:
+                self._log_exception(e, f"Invalid file path for column '{output_column_name}'")
+                new_column_value = None
+
+        return new_column_value
 
     async def _execute_task_stream(self, task: Task) -> AsyncGenerator[str, None]:
         """
@@ -478,38 +622,21 @@ class GenExecutor:
 
         try:
             logger.debug(f"Processing column: {output_column_name}")
-            self._check_upstream_error_chunk(body.messages[-1].content)
-            body.messages[-1].content = self._interpolate_column(body.messages[-1].content)
-
-            if isinstance(body.messages[-1].content, list):
-                for input_column_name in self.dependencies[output_column_name]:
-                    if input_column_name in self.img_column_dict:
-                        try:
-                            body.model = self.llm.validate_model_id(body.model, ["image"])
-                            break
-                        except ResourceNotFoundError as e:
-                            raise BadInputError(
-                                f'Column "{output_column_name}" referred to image file input but using a chat model '
-                                f'"{self.llm.get_model_name(body.model) if self.llm.is_browser else body.model}", '
-                                "select image model instead.",
-                            ) from e
 
             if output_column_name in self.skip_regen_columns:
                 new_column_value = self.column_dict[output_column_name]
                 logger.debug(
                     f"Skipped regen for `{output_column_name}`, value: {new_column_value}"
                 )
-            elif output_column_name in self.file_columns:
-                new_column_value = None
-                logger.info(
-                    f"Identified output column `{output_column_name}` as file type, set value to {new_column_value}"
-                )
 
+            elif isinstance(body, CodeGenConfig):
+                new_column_value = await self._execute_code(task)
+                logger.info(f"Executed Code Execution Column: '{output_column_name}'")
                 chunk = GenTableStreamChatCompletionChunk(
                     id=self.request.state.id,
                     object="gen_table.completion.chunk",
                     created=int(time()),
-                    model="",
+                    model="code_execution",
                     usage=None,
                     choices=[
                         ChatCompletionChoiceDelta(
@@ -522,36 +649,62 @@ class GenExecutor:
                 )
                 yield f"data: {chunk.model_dump_json()}\n\n"
 
-            else:
-                new_column_value = ""
-                kwargs = body.model_dump()
-                messages, references = await self.llm.retrieve_references(
-                    messages=kwargs.pop("messages"),
-                    rag_params=kwargs.pop("rag_params", None),
-                    **kwargs,
+            elif isinstance(body, ChatRequest):
+                self._check_upstream_error_chunk(body.messages[-1].content)
+                body.messages[-1].content = self._interpolate_column(
+                    body.messages[-1].content, output_column_name
                 )
-                if references is not None:
-                    ref = GenTableStreamReferences(
-                        **references.model_dump(exclude=["object"]),
-                        output_column_name=output_column_name,
+
+                if isinstance(body.messages[-1].content, list):
+                    self._validate_model(body, output_column_name)
+
+                if output_column_name in self.image_columns + self.audio_columns:
+                    new_column_value = None
+                    logger.info(
+                        f"Identified output column `{output_column_name}` as image / audio type, set value to {new_column_value}"
                     )
-                    yield f"data: {ref.model_dump_json()}\n\n"
-                async for chunk in self.llm.generate_stream(messages=messages, **kwargs):
-                    new_column_value += chunk.text
                     chunk = GenTableStreamChatCompletionChunk(
-                        **chunk.model_dump(exclude=["object"]),
+                        id=self.request.state.id,
+                        object="gen_table.completion.chunk",
+                        created=int(time()),
+                        model="",
+                        usage=None,
+                        choices=[
+                            ChatCompletionChoiceDelta(
+                                message=ChatEntry.assistant(new_column_value),
+                                index=0,
+                            )
+                        ],
                         output_column_name=output_column_name,
                         row_id=self.row_id,
                     )
                     yield f"data: {chunk.model_dump_json()}\n\n"
-                    if chunk.finish_reason == "error":
-                        self.error_columns.append(output_column_name)
-                logger.info(
-                    (
-                        f"{self.request.state.id} - Streamed completion for "
-                        f"{output_column_name}: <{mask_string(new_column_value)}>"
+                else:
+                    new_column_value = ""
+                    kwargs = body.model_dump()
+                    messages, references = await self.llm.retrieve_references(
+                        messages=kwargs.pop("messages"),
+                        rag_params=kwargs.pop("rag_params", None),
+                        **kwargs,
                     )
-                )
+                    if references is not None:
+                        ref = GenTableStreamReferences(
+                            **references.model_dump(exclude=["object"]),
+                            output_column_name=output_column_name,
+                        )
+                        yield f"data: {ref.model_dump_json()}\n\n"
+                    async for chunk in self.llm.generate_stream(messages=messages, **kwargs):
+                        new_column_value += chunk.text
+                        chunk = GenTableStreamChatCompletionChunk(
+                            **chunk.model_dump(exclude=["object"]),
+                            output_column_name=output_column_name,
+                            row_id=self.row_id,
+                        )
+                        yield f"data: {chunk.model_dump_json()}\n\n"
+                        if chunk.finish_reason == "error":
+                            self.error_columns.append(output_column_name)
+            else:
+                raise ValueError(f"Unsupported task type: {type(body)}")
 
         except Exception as e:
             error_chunk = GenTableStreamChatCompletionChunk(
@@ -580,6 +733,10 @@ class GenExecutor:
             # Append new column data for subsequent tasks
             self.column_dict[output_column_name] = new_column_value
             self.regen_column_dict[output_column_name] = new_column_value
+            logger.info(
+                f"{self.request.state.id} - Streamed completion for "
+                f"{output_column_name}: <{mask_string(new_column_value)}>"
+            )
 
     async def _execute_task_nonstream(self, task: Task):
         """
@@ -589,15 +746,6 @@ class GenExecutor:
         body: ChatRequest = task.body
 
         try:
-            body.messages[-1].content = self._interpolate_column(body.messages[-1].content)
-        except IndexError:
-            pass
-        try:
-            if isinstance(body.messages[-1].content, list):
-                for input_column_name in self.dependencies[output_column_name]:
-                    if input_column_name in self.img_column_dict:
-                        body.model = self.llm.validate_model_id(body.model, ["image"])
-                        break
             if output_column_name in self.skip_regen_columns:
                 new_column_value = self.column_dict[output_column_name]
                 response = ChatCompletionChunk(
@@ -616,27 +764,60 @@ class GenExecutor:
                 logger.debug(
                     f"Skipped regen for `{output_column_name}`, value: {new_column_value}"
                 )
-            elif output_column_name in self.file_columns:
-                new_column_value = None
+
+            elif isinstance(body, CodeGenConfig):
+                new_column_value = await self._execute_code(task)
                 response = ChatCompletionChunk(
                     id=self.request.state.id,
                     object="chat.completion.chunk",
                     created=int(time()),
-                    model="",
+                    model="code_execution",
                     usage=None,
                     choices=[
                         ChatCompletionChoiceDelta(
-                            message=ChatEntry.assistant(new_column_value),
                             index=0,
+                            message=ChatEntry.assistant(new_column_value),
                         )
                     ],
                 )
-                logger.info(
-                    f"Identified output column `{output_column_name}` as file type, set value to {new_column_value}"
+                logger.debug(
+                    f"Identified as Code Execution Column: {task.output_column_name}, executing code."
                 )
+            elif isinstance(body, ChatRequest):
+                self._check_upstream_error_chunk(body.messages[-1].content)
+                try:
+                    body.messages[-1].content = self._interpolate_column(
+                        body.messages[-1].content, output_column_name
+                    )
+                except IndexError:
+                    pass
+
+                if isinstance(body.messages[-1].content, list):
+                    self._validate_model(body, output_column_name)
+
+                if output_column_name in self.image_columns + self.audio_columns:
+                    new_column_value = None
+                    response = ChatCompletionChunk(
+                        id=self.request.state.id,
+                        object="chat.completion.chunk",
+                        created=int(time()),
+                        model="",
+                        usage=None,
+                        choices=[
+                            ChatCompletionChoiceDelta(
+                                message=ChatEntry.assistant(new_column_value),
+                                index=0,
+                            )
+                        ],
+                    )
+                    logger.debug(
+                        f"Identified output column `{output_column_name}` as image / audio type, set value to {new_column_value}"
+                    )
+                else:
+                    response = await self.llm.rag(**body.model_dump())
+                    new_column_value = response.text
             else:
-                response = await self.llm.rag(**body.model_dump())
-                new_column_value = response.text
+                raise ValueError(f"Unsupported task type: {type(body)}")
 
             # append new column data for subsequence tasks
             self.column_dict[output_column_name] = new_column_value
@@ -705,14 +886,25 @@ class GenExecutor:
         self.llm_tasks = {
             task.output_column_name: task for task in self.tasks if task.type == "chat"
         }
+        self.code_tasks = {
+            task.output_column_name: task for task in self.tasks if task.type == "code"
+        }
         self.dependencies = {
             task.output_column_name: self._extract_upstream_columns(task.body.messages[-1].content)
             for task in self.llm_tasks.values()
         }
+        self.dependencies.update(
+            {
+                task.output_column_name: [task.body.source_column]
+                for task in self.code_tasks.values()
+            }
+        )
         logger.debug(f"Initial dependencies: {self.dependencies}")
 
         self.input_column_names = [
-            key for key in self.column_dict.keys() if key not in self.llm_tasks.keys()
+            key
+            for key in self.column_dict.keys()
+            if key not in self.llm_tasks.keys() and key not in self.code_tasks.keys()
         ]
 
     def _mark_regen_columns(self) -> None:
@@ -722,8 +914,12 @@ class GenExecutor:
         if self.is_row_add:
             return
 
+        # Get the current column order from the table metadata
+        cols = self.meta.cols_schema
+        col_ids = [col.id for col in cols]
+
         if self.body.regen_strategy == RegenStrategy.RUN_ALL:
-            self.tag_regen_columns = self.llm_tasks.keys()
+            self.tag_regen_columns = set(self.llm_tasks.keys()).union(self.code_tasks.keys())
 
         elif self.body.regen_strategy == RegenStrategy.RUN_SELECTED:
             self.tag_regen_columns.append(self.body.output_column_id)
@@ -733,13 +929,13 @@ class GenExecutor:
             RegenStrategy.RUN_AFTER,
         ):
             if self.body.regen_strategy == RegenStrategy.RUN_BEFORE:
-                for column_name in self.column_dict.keys():
+                for column_name in col_ids:
                     self.tag_regen_columns.append(column_name)
                     if column_name == self.body.output_column_id:
                         break
             else:  # RegenStrategy.RUN_AFTER
                 reached_column = False
-                for column_name in self.column_dict.keys():
+                for column_name in col_ids:
                     if column_name == self.body.output_column_id:
                         reached_column = True
                     if reached_column:
@@ -749,9 +945,7 @@ class GenExecutor:
             raise ValueError(f"Invalid regeneration strategy: {self.body.regen_strategy}")
 
         self.skip_regen_columns = [
-            column_name
-            for column_name in self.column_dict.keys()
-            if column_name not in self.tag_regen_columns
+            column_name for column_name in col_ids if column_name not in self.tag_regen_columns
         ]
 
     async def _nonstream_concurrent_execution(self) -> tuple[GenTableChatCompletionChunks, dict]:
@@ -766,7 +960,11 @@ class GenExecutor:
         responses = {}
 
         async def execute_task(task_name):
-            task = self.llm_tasks[task_name]
+            try:
+                task = self.llm_tasks[task_name]
+            except Exception:
+                task = self.code_tasks[task_name]
+
             try:
                 responses[task_name] = await self._execute_task_nonstream(task)
             except Exception as e:
@@ -775,7 +973,9 @@ class GenExecutor:
                 completed.add(task_name)
                 tasks_in_progress.remove(task_name)
 
-        while len(completed) < (len(self.llm_tasks) + len(self.input_column_names)):
+        while len(completed) < (
+            len(self.llm_tasks) + len(self.code_tasks) + len(self.input_column_names)
+        ):
             ready_tasks = [
                 task_name
                 for task_name, deps in self.dependencies.items()
@@ -812,8 +1012,20 @@ class GenExecutor:
         queue = asyncio.Queue()
         tasks_in_progress = set()
 
+        ready_tasks = [
+            task_name
+            for task_name, deps in self.dependencies.items()
+            if all(dep in completed for dep in deps)
+            and task_name not in completed
+            and task_name not in tasks_in_progress
+        ]
+
         async def execute_task(task_name):
-            task = self.llm_tasks[task_name]
+            try:
+                task = self.llm_tasks[task_name]
+            except Exception:
+                task = self.code_tasks[task_name]
+
             try:
                 async for chunk in self._execute_task_stream(task):
                     await queue.put((task_name, chunk))
@@ -824,7 +1036,9 @@ class GenExecutor:
                 await queue.put((task_name, None))
                 tasks_in_progress.remove(task_name)
 
-        while len(completed) < (len(self.llm_tasks) + len(self.input_column_names)):
+        while len(completed) < (
+            len(self.llm_tasks) + len(self.code_tasks) + len(self.input_column_names)
+        ):
             ready_tasks = [
                 task_name
                 for task_name, deps in self.dependencies.items()

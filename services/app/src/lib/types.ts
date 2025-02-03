@@ -105,10 +105,15 @@ export type Thread = ThreadObj | ThreadErr;
 
 export interface GenTableCol {
 	id: string;
-	dtype: (typeof genTableDTypes)[number];
+	dtype: (typeof genTableDTypes)[string];
 	vlen: number;
 	index: boolean;
-	gen_config: (LLMGenConfig | EmbedGenConfig) | null;
+	gen_config: (CodeGenConfig | LLMGenConfig | EmbedGenConfig) | null;
+}
+
+export interface CodeGenConfig {
+	object: 'gen_config.code';
+	source_column: string;
 }
 
 export interface LLMGenConfig {
@@ -151,7 +156,7 @@ export type GenTableRow = {
 
 export type GenTableStreamEvent = {
 	id: string;
-	object: 'gen_table.completion.chunk';
+	object: string;
 	created: number;
 	model: string;
 	usage: null;
@@ -221,13 +226,7 @@ export type OrganizationReadRes = {
 	file_usage_gib: number;
 	stripe_id: string;
 	openmeter_id: string;
-	external_keys?: {
-		openai: string;
-		anthropic: string;
-		cohere: string;
-		together_ai: string;
-		[key: string]: string;
-	};
+	external_keys?: Record<string, string>;
 	created_at: string;
 	updated_at: string;
 	members?: {

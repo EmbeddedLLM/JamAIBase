@@ -2,6 +2,7 @@
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { pastChatAgents } from '$lib/components/tables/tablesStore';
 	import { tableIDPattern } from '$lib/constants';
@@ -16,7 +17,7 @@
 	export let isAddingConversation: boolean;
 	export let filterByAgent: string;
 	export let filteredConversations: typeof $pastChatAgents | undefined = undefined;
-	export let refetchTables: () => Promise<void>;
+	export let refetchTables: ((tableID: string) => Promise<void>) | undefined = undefined;
 
 	let isLoading = false;
 
@@ -66,13 +67,14 @@
 				}
 			});
 		} else {
-			if (filteredConversations) {
-				await refetchTables();
+			if (refetchTables) {
+				await refetchTables(responseBody.id);
+				isAddingConversation = false;
+				isLoading = false;
+			} else {
+				goto(`/project/${$page.params.project_id}/chat-table/${responseBody.id}`);
 			}
-			isAddingConversation = false;
 		}
-
-		isLoading = false;
 	}
 </script>
 
@@ -102,11 +104,19 @@
 			<div class="flex flex-col gap-1 px-4 sm:px-6">
 				<span class="font-medium text-left text-xs sm:text-sm text-black"> Agent* </span>
 
-				<Select.Root>
+				<Select.Root
+					selected={{ value: conversationAgent }}
+					onSelectedChange={(v) => {
+						if (v) {
+							conversationAgent = v.value;
+						}
+					}}
+				>
 					<!-- svelte-ignore a11y-no-static-element-interactions -->
 					<div>
 						<Select.Trigger asChild let:builder>
 							<Button
+								disabled={!filteredConversations}
 								builders={[builder]}
 								title="Select Chat Agent"
 								variant="outline-neutral"
@@ -125,7 +135,6 @@
 					<Select.Content side="bottom" class="max-h-64 overflow-y-auto">
 						{#each $pastChatAgents as chatTable}
 							<Select.Item
-								on:click={() => (conversationAgent = chatTable.id)}
 								value={chatTable.id}
 								label={chatTable.id}
 								class="flex justify-between gap-10 cursor-pointer"

@@ -67,7 +67,7 @@ def _get_embedding_router(model_json: str, external_api_keys: str):
         retry_after=5.0,
         timeout=ENV_CONFIG.owl_embed_timeout_sec,
         allowed_fails=3,
-        cooldown_time=0.0,
+        cooldown_time=5.5,
     )
 
 

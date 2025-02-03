@@ -14,6 +14,7 @@
 	import type { Project } from '$lib/types';
 
 	import ProjectDialogs from './ProjectDialogs.svelte';
+	import ExportProjectButton from './ExportProjectButton.svelte';
 	import InputText from '$lib/components/InputText.svelte';
 	import SorterSelect from '$lib/components/preset/SorterSelect.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
@@ -29,6 +30,7 @@
 	import SortByIcon from '$lib/icons/SortByIcon.svelte';
 	import SearchIcon from '$lib/icons/SearchIcon.svelte';
 	import ImportIcon from '$lib/icons/ImportIcon.svelte';
+	import ExportIcon from '$lib/icons/ExportIcon.svelte';
 
 	export let data;
 	$: ({ activeOrganizationId } = data);
@@ -162,7 +164,7 @@
 
 		const allowedFiletypes = ['.parquet'];
 		if (
-			files.some((file) => !allowedFiletypes.includes('.' + (file.name.split('.').pop() ?? '')))
+			files.some((file) => !allowedFiletypes.includes('.' + (file.name.split('.').pop() ?? '').toLowerCase()))
 		) {
 			alert(`Files must be of type: ${allowedFiletypes.join(', ').replaceAll('.', '')}`);
 			return;
@@ -398,6 +400,15 @@
 													<EditIcon class="h-3.5 w-3.5 mr-2" />
 													<span>Rename project</span>
 												</DropdownMenu.Item>
+												<ExportProjectButton let:handleExportProject>
+													<DropdownMenu.Item
+														on:click={() => handleExportProject(project.id)}
+														class="text-[#344054] data-[highlighted]:text-[#344054]"
+													>
+														<ExportIcon class="h-3.5 mr-2" />
+														<span>Export project</span>
+													</DropdownMenu.Item>
+												</ExportProjectButton>
 												<DropdownMenu.Separator />
 												<DropdownMenu.Item
 													on:click={() => (isDeletingProject = project.id)}

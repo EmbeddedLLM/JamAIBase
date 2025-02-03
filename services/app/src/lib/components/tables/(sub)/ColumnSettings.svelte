@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import toUpper from 'lodash/toUpper';
+	import ChevronDown from 'lucide-svelte/icons/chevron-down';
 	import { page } from '$app/stores';
 	import { modelsAvailable } from '$globalStore';
+	import { tableState } from '$lib/components/tables/tablesStore';
 	import { insertAtCursor } from '$lib/utils';
 	import logger from '$lib/logger';
 	import type { GenTable, GenTableCol } from '$lib/types';
@@ -20,13 +22,12 @@
 	import MultiturnChatIcon from '$lib/icons/MultiturnChatIcon.svelte';
 
 	export let tableType: 'action' | 'knowledge' | 'chat';
-	export let isColumnSettingsOpen: { column: GenTableCol | null; showMenu: boolean };
 	export let showPromptTab = true;
 	export let tableData: GenTable | undefined;
 	export let refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
 	export let readonly = false;
 
-	let showActual = isColumnSettingsOpen.showMenu;
+	let showActual = $tableState.columnSettings.isOpen;
 
 	let usableColumns: GenTableCol[] = [];
 	$: if (tableData?.cols) {
@@ -34,7 +35,7 @@
 			tableData.cols
 				.slice(
 					0,
-					tableData.cols.findIndex((col) => col.id == isColumnSettingsOpen.column?.id)
+					tableData.cols.findIndex((col) => col.id == $tableState.columnSettings.column?.id)
 				)
 				.filter((col) => col.id !== 'ID' && col.id !== 'Updated at') ?? [];
 	}
@@ -42,6 +43,8 @@
 	let selectedTab: 'prompt' | 'model_settings' = 'prompt';
 
 	let isLoading = false;
+
+	let selectedGenConfigObj: NonNullable<GenTableCol['gen_config']>['object'] | null = null;
 
 	let selectedEmbedModel = '';
 	let selectedSourceColumn = '';
@@ -62,53 +65,90 @@
 	let editMaxTokens = '1000';
 	let editTopP = '0.1';
 
-	$: if (isColumnSettingsOpen.showMenu) resetValues();
+	$: if (showActual) resetValues();
 	function resetValues() {
-		if (showPromptTab) {
+		selectedGenConfigObj = $tableState.columnSettings.column?.gen_config?.object ?? null;
+
+		if (showPromptTab && selectedGenConfigObj !== 'gen_config.code') {
 			selectedTab = 'prompt';
 		} else {
 			selectedTab = 'model_settings';
 		}
 
-		if (isColumnSettingsOpen.column?.gen_config?.object === 'gen_config.llm') {
-			editPrompt = isColumnSettingsOpen.column?.gen_config?.prompt ?? '';
-			editSystemPrompt = isColumnSettingsOpen.column?.gen_config?.system_prompt ?? '';
-			selectedModel = isColumnSettingsOpen.column?.gen_config?.model ?? '';
-			editTemperature = isColumnSettingsOpen.column?.gen_config?.temperature?.toString() ?? '1';
-			editMaxTokens = isColumnSettingsOpen.column?.gen_config?.max_tokens?.toString() ?? '1000';
-			editTopP = isColumnSettingsOpen.column?.gen_config?.top_p?.toString() ?? '0.1';
+		if ($tableState.columnSettings.column?.gen_config?.object === 'gen_config.llm') {
+			const {
+				gen_config: {
+					prompt: prompt = '',
+					system_prompt: system_prompt = '',
+					model: model = '',
+					temperature: temperature = 1,
+					max_tokens: max_tokens = 1000,
+					top_p: top_p = 0.1,
 
-			isMultiturn = isColumnSettingsOpen.column?.gen_config?.multi_turn ?? false;
-			isRAGEnabled = !!isColumnSettingsOpen.column?.gen_config?.rag_params;
-			editRAGk = isColumnSettingsOpen.column?.gen_config?.rag_params?.k?.toString() ?? '5';
-			selectedRerankModel =
-				isColumnSettingsOpen.column?.gen_config?.rag_params?.reranking_model ?? '';
-			selectedKnowledgeTables = isColumnSettingsOpen.column?.gen_config?.rag_params?.table_id ?? '';
+					multi_turn: multi_turn = false,
+					rag_params
+				}
+			} = $tableState.columnSettings.column;
+
+			editPrompt = prompt;
+			editSystemPrompt = system_prompt;
+			selectedModel = model;
+			editTemperature = temperature.toString();
+			editMaxTokens = max_tokens.toString();
+			editTopP = top_p.toString();
+
+			isMultiturn = multi_turn;
+			isRAGEnabled = !!rag_params;
+			editRAGk = rag_params?.k?.toString() ?? '5';
+			selectedRerankModel = rag_params?.reranking_model ?? '';
+			selectedKnowledgeTables = rag_params?.table_id ?? '';
+
+			// reset irrelevant data
+			selectedEmbedModel = '';
+			selectedSourceColumn = '';
 		} else {
-			selectedEmbedModel = isColumnSettingsOpen.column?.gen_config?.embedding_model ?? '';
-			selectedSourceColumn = isColumnSettingsOpen.column?.gen_config?.source_column ?? '';
+			if ($tableState.columnSettings.column?.gen_config?.object === 'gen_config.embed') {
+				selectedEmbedModel = $tableState.columnSettings.column?.gen_config?.embedding_model;
+			}
+			selectedSourceColumn = $tableState.columnSettings.column?.gen_config?.source_column ?? '';
+
+			// reset irrelevant data
+			editPrompt = '';
+			editSystemPrompt = '';
+			selectedModel = '';
+			editTemperature = '1';
+			editMaxTokens = '1000';
+			editTopP = '0.1';
+
+			isMultiturn = false;
+			isRAGEnabled = false;
+			editRAGk = '5';
+			selectedRerankModel = '';
+			selectedKnowledgeTables = '';
 		}
 	}
 
 	function closeColumnSettings() {
-		if (isColumnSettingsOpen.column?.gen_config?.object === 'gen_config.llm') {
+		if ($tableState.columnSettings.column?.gen_config?.object === 'gen_config.llm') {
 			const {
-				prompt,
-				system_prompt,
-				model,
-				temperature,
-				max_tokens,
-				top_p,
+				object,
+				prompt: prompt = '',
+				system_prompt: system_prompt = '',
+				model: model = '',
+				temperature: temperature = 1,
+				max_tokens: max_tokens = 1000,
+				top_p: top_p = 0.1,
 				multi_turn,
 				rag_params
-			} = isColumnSettingsOpen.column.gen_config;
+			} = $tableState.columnSettings.column.gen_config;
 			if (
-				editPrompt !== (prompt ?? '') ||
-				editSystemPrompt !== (system_prompt ?? '') ||
-				selectedModel !== (model ?? '') ||
-				editTemperature !== (temperature?.toString() ?? '1') ||
-				editMaxTokens !== (max_tokens?.toString() ?? '1000') ||
-				editTopP !== (top_p?.toString() ?? '0.1') ||
+				selectedGenConfigObj !== object ||
+				editPrompt !== prompt ||
+				editSystemPrompt !== system_prompt ||
+				selectedModel !== model ||
+				editTemperature !== temperature.toString() ||
+				editMaxTokens !== max_tokens.toString() ||
+				editTopP !== top_p.toString() ||
 				isMultiturn !== multi_turn ||
 				isRAGEnabled !== !!rag_params ||
 				editRAGk !== (rag_params?.k?.toString() ?? '5') ||
@@ -119,13 +159,20 @@
 					return;
 				}
 			}
+		} else if ($tableState.columnSettings.column?.gen_config?.object === 'gen_config.code') {
+			const { object, source_column } = $tableState.columnSettings.column.gen_config;
+			if (selectedGenConfigObj !== object || selectedSourceColumn !== source_column) {
+				if (!readonly && !confirm('Discard unsaved changes?')) {
+					return;
+				}
+			}
 		}
 
-		isColumnSettingsOpen = { ...isColumnSettingsOpen, showMenu: false };
+		tableState.setColumnSettings({ ...$tableState.columnSettings, isOpen: false });
 	}
 
 	async function saveColumnSettings() {
-		if (!isColumnSettingsOpen.column || isLoading) return;
+		if (!$tableState.columnSettings.column || isLoading) return;
 		if (isRAGEnabled && !selectedKnowledgeTables) {
 			toast.error('Please select a knowledge table', { id: 'kt-select-req', duration: 2000 });
 			return;
@@ -144,24 +191,29 @@
 				body: JSON.stringify({
 					table_id: $page.params.table_id,
 					column_map: {
-						[isColumnSettingsOpen.column.id]: {
-							object: 'gen_config.llm',
-							model: selectedModel,
-							system_prompt: editSystemPrompt,
-							prompt: editPrompt || undefined,
-							temperature: parseFloat(editTemperature),
-							max_tokens: parseInt(editMaxTokens),
-							top_p: parseFloat(editTopP),
-							multi_turn: isMultiturn,
-							rag_params: isRAGEnabled
-								? {
-										k: parseInt(editRAGk),
-										// fetch_k: parseInt(editRAGFetchk),
-										table_id: selectedKnowledgeTables,
-										reranking_model: selectedRerankModel || null
-									}
-								: null
-						} satisfies GenTableCol['gen_config']
+						[$tableState.columnSettings.column.id]: (selectedGenConfigObj === 'gen_config.llm'
+							? {
+									object: 'gen_config.llm',
+									model: selectedModel,
+									system_prompt: editSystemPrompt,
+									prompt: editPrompt || undefined,
+									temperature: parseFloat(editTemperature),
+									max_tokens: parseInt(editMaxTokens),
+									top_p: parseFloat(editTopP),
+									multi_turn: isMultiturn,
+									rag_params: isRAGEnabled
+										? {
+												k: parseInt(editRAGk),
+												// fetch_k: parseInt(editRAGFetchk),
+												table_id: selectedKnowledgeTables,
+												reranking_model: selectedRerankModel || null
+											}
+										: null
+								}
+							: {
+									object: 'gen_config.code',
+									source_column: selectedSourceColumn
+								}) satisfies GenTableCol['gen_config']
 					}
 				})
 			}
@@ -169,7 +221,7 @@
 
 		if (response.ok) {
 			await refetchTable(false);
-			isColumnSettingsOpen = { ...isColumnSettingsOpen, showMenu: false };
+			tableState.setColumnSettings({ ...$tableState.columnSettings, isOpen: false });
 		} else {
 			const responseBody = await response.json();
 			logger.error(toUpper(`${tableType}TBL_COLUMN_SETTINGSUPDATE`), responseBody);
@@ -189,7 +241,7 @@
 
 <svelte:document
 	on:keydown={(e) => {
-		if (isColumnSettingsOpen.showMenu && e.key === 'Escape') {
+		if ($tableState.columnSettings.isOpen && e.key === 'Escape') {
 			closeColumnSettings();
 		}
 	}}
@@ -199,42 +251,45 @@
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
-	class="absolute inset-0 z-30 {isColumnSettingsOpen.showMenu
+	class="absolute inset-0 z-30 {$tableState.columnSettings.isOpen
 		? 'opacity-100 pointer-events-auto'
 		: 'opacity-0 pointer-events-none'} transition-opacity duration-300"
 	on:click={closeColumnSettings}
-/>
+></div>
 
-{#if isColumnSettingsOpen.showMenu || showActual}
+{#if $tableState.columnSettings.isOpen || showActual}
 	<div
 		data-testid="column-settings-area"
-		inert={!isColumnSettingsOpen.showMenu}
+		inert={!$tableState.columnSettings.isOpen}
 		on:animationstart={() => {
-			if (isColumnSettingsOpen.showMenu) {
+			if ($tableState.columnSettings.isOpen) {
 				showActual = true;
 			}
 		}}
 		on:animationend={() => {
-			if (!isColumnSettingsOpen.showMenu) {
+			if (!$tableState.columnSettings.isOpen) {
 				showActual = false;
 			}
 		}}
-		class="absolute z-40 bottom-0 {isColumnSettingsOpen.column?.gen_config
+		class="absolute z-40 bottom-0 {$tableState.columnSettings.column?.gen_config
 			? 'column-settings max-h-full'
-			: 'h-16 max-h-16'} w-full bg-white data-dark:bg-[#0D0E11] {isColumnSettingsOpen.showMenu
+			: 'h-16 max-h-16'} w-full bg-white data-dark:bg-[#0D0E11] {$tableState.columnSettings.isOpen
 			? 'animate-in slide-in-from-bottom-full'
 			: 'animate-out slide-out-to-bottom-full'} duration-300 ease-in-out"
 	>
 		<div class="relative flex flex-col h-full w-full">
 			<div
 				data-testid="column-settings-tabs"
-				style="grid-template-columns: {showPromptTab ? '70px' : ''} 140px;"
+				style="grid-template-columns: {showPromptTab && selectedGenConfigObj !== 'gen_config.code'
+					? '70px'
+					: ''} 140px;"
 				class="flex-[0_0_auto] grid w-full font-medium text-sm bg-white data-dark:bg-[#0D0E11] border-t border-[#E5E5E5] data-dark:border-[#333] overflow-hidden"
 			>
-				{#if showPromptTab}
+				{#if showPromptTab && selectedGenConfigObj !== 'gen_config.code'}
 					<button
 						on:click={() => (selectedTab = 'prompt')}
-						class="relative flex items-center justify-center px-3 py-3 min-h-10 max-h-10 transition-colors font-medium {isColumnSettingsOpen.showMenu
+						class="relative flex items-center justify-center px-3 py-3 min-h-10 max-h-10 transition-colors font-medium {$tableState
+							.columnSettings.isOpen
 							? selectedTab === 'prompt'
 								? 'text-[#1D2939] data-dark:text-[#98A2B3]'
 								: 'text-[#98A2B3] data-dark:text-[#1D2939]'
@@ -246,7 +301,8 @@
 
 				<button
 					on:click={() => (selectedTab = 'model_settings')}
-					class="relative flex items-center justify-center px-3 py-3 min-h-10 max-h-10 transition-colors font-medium {isColumnSettingsOpen.showMenu
+					class="relative flex items-center justify-center px-3 py-3 min-h-10 max-h-10 transition-colors font-medium {$tableState
+						.columnSettings.isOpen
 						? selectedTab === 'model_settings'
 							? 'text-[#1D2939] data-dark:text-[#98A2B3]'
 							: 'text-[#98A2B3] data-dark:text-[#1D2939]'
@@ -256,29 +312,29 @@
 				</button>
 			</div>
 
-			{#if isColumnSettingsOpen.column?.gen_config}
+			{#if selectedGenConfigObj}
 				<div
 					class="flex items-center justify-between px-3 py-1.5 w-full border-t border-b border-[#E4E7EC] data-dark:border-[#333]"
 				>
 					<div class="flex items-center gap-2 text-sm">
 						<span
-							style="background-color: {!isColumnSettingsOpen.column?.gen_config
+							style="background-color: {!$tableState.columnSettings.column?.gen_config
 								? '#E9EDFA'
-								: '#FFEAD5'}; color: {!isColumnSettingsOpen.column?.gen_config
+								: '#FFEAD5'}; color: {!$tableState.columnSettings.column?.gen_config
 								? '#6686E7'
 								: '#FD853A'};"
 							class="w-min p-0.5 py-1 whitespace-nowrap rounded-[0.1875rem] select-none flex items-center"
 						>
 							<span class="capitalize text-xs font-medium px-1">
-								{!isColumnSettingsOpen.column?.gen_config ? 'input' : 'output'}
+								{!$tableState.columnSettings.column?.gen_config ? 'input' : 'output'}
 							</span>
 							<span
 								class="bg-white w-min px-1 text-xs font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
 							>
-								{isColumnSettingsOpen.column?.dtype}
+								{$tableState.columnSettings.column?.dtype}
 							</span>
 
-							{#if isColumnSettingsOpen.column.gen_config?.object === 'gen_config.llm' && isColumnSettingsOpen.column.gen_config.multi_turn}
+							{#if $tableState.columnSettings.column?.gen_config?.object === 'gen_config.llm' && $tableState.columnSettings.column.gen_config.multi_turn}
 								<hr class="ml-1 h-3 border-l border-[#FD853A]" />
 								<div class="relative h-4 w-[18px]">
 									<MultiturnChatIcon class="absolute h-[18px] -translate-y-px" />
@@ -286,27 +342,150 @@
 							{/if}
 						</span>
 
-						<span class="line-clamp-2">
-							{isColumnSettingsOpen.column?.id}
+						<span class="line-clamp-2 break-all">
+							{$tableState.columnSettings.column?.id}
 						</span>
 					</div>
 
-					<div class="flex items-center gap-2 px-2.5 py-1.5 bg-[#F9FAFB] rounded-full">
-						<Label for="multiturn-enabled" class="flex items-center gap-1 min-w-max text-[#475467]">
-							<MultiturnChatIcon class="h-6" />
-							Multi-turn chat
-						</Label>
-						<Switch
-							disabled={readonly}
-							id="multiturn-enabled"
-							name="multiturn-enabled"
-							class="h-[20px] w-[30px] [&>[data-switch-thumb]]:h-4 [&>[data-switch-thumb]]:data-[state=checked]:translate-x-2.5"
-							bind:checked={isMultiturn}
-						/>
+					<div class="flex flex-col sm:flex-row items-end sm:items-center gap-2">
+						{#if (tableType !== 'knowledge' || showPromptTab) && selectedGenConfigObj !== 'gen_config.code'}
+							<div class="flex items-center gap-2 px-2.5 py-1 bg-[#F9FAFB] rounded-full">
+								<Label
+									for="multiturn-enabled"
+									class="flex items-center gap-1 min-w-max text-[#475467]"
+								>
+									<MultiturnChatIcon class="h-6" />
+									Multi-turn chat
+								</Label>
+								<Switch
+									disabled={readonly}
+									id="multiturn-enabled"
+									name="multiturn-enabled"
+									class="h-[20px] w-[30px] [&>[data-switch-thumb]]:h-4 [&>[data-switch-thumb]]:data-[state=checked]:translate-x-2.5"
+									bind:checked={isMultiturn}
+								/>
+							</div>
+						{/if}
+
+						<!-- {#if showPromptTab}
+							<div class="flex items-center gap-2 px-2.5 py-1.5 bg-[#F9FAFB] rounded-full">
+								<Label
+									for="gen-config-obj"
+									class="flex items-center gap-1 min-w-max text-[#475467]"
+								>
+									{selectedGenConfigObj === 'gen_config.code' ? 'Code Config' : 'LLM Config'}
+								</Label>
+								<Switch
+									disabled={readonly}
+									id="gen-config-obj"
+									name="gen-config-obj"
+									class="h-[20px] w-[30px] [&>[data-switch-thumb]]:h-4 [&>[data-switch-thumb]]:data-[state=checked]:translate-x-2.5"
+									checked={selectedGenConfigObj === 'gen_config.code'}
+									on:click={() => {
+										selectedGenConfigObj =
+											selectedGenConfigObj === 'gen_config.code'
+												? 'gen_config.llm'
+												: 'gen_config.code';
+
+										if (selectedGenConfigObj === 'gen_config.code' && selectedTab === 'prompt') {
+											selectedTab = 'model_settings';
+										} else {
+											selectedTab = 'prompt';
+										}
+									}}
+								/>
+							</div>
+						{/if} -->
 					</div>
 				</div>
 
-				{#if selectedTab === 'prompt'}
+				{#if (tableType === 'knowledge' && !showPromptTab) || selectedGenConfigObj === 'gen_config.code'}
+					{@const fileOutput = selectedGenConfigObj === 'gen_config.code'}
+					<div style="grid-template-rows: minmax(0, 1fr) 65px;" class="grow grid min-h-0">
+						<div class="grid grid-rows-[min-content_1fr] py-5 overflow-auto">
+							{#if !fileOutput}
+								<div class="flex flex-col gap-1 px-6 sm:px-14 py-2">
+									<span class="font-medium text-left text-xs sm:text-sm text-black">
+										Embedding Model
+									</span>
+
+									<ModelSelect
+										disabled
+										capabilityFilter="embed"
+										sameWidth={true}
+										selectedModel={selectedEmbedModel}
+										buttonText={($modelsAvailable.find((model) => model.id == selectedEmbedModel)
+											?.name ??
+											selectedEmbedModel) ||
+											'Select model'}
+										class="disabled:opacity-100 bg-[#F2F4F7] data-dark:bg-[#42464e] hover:bg-[#e1e2e6] border-transparent [&>svg]:hidden"
+									/>
+								</div>
+							{/if}
+
+							<div class="flex flex-col gap-1 px-6 sm:px-14 py-2">
+								<span class="font-medium text-left text-xs sm:text-sm text-black">
+									Source Column
+								</span>
+
+								<Select.Root disabled={!fileOutput}>
+									<!-- svelte-ignore a11y-no-static-element-interactions -->
+									<Select.Trigger asChild let:builder>
+										<Button
+											builders={[builder]}
+											variant="outline-neutral"
+											class="flex items-center justify-between gap-8 pl-3 pr-2 h-10 min-w-full bg-[#F2F4F7] data-dark:bg-[#42464e] hover:bg-[#e1e2e6] border-transparent disabled:opacity-100 rounded-md {selectedSourceColumn
+												? ''
+												: 'italic text-muted-foreground hover:text-muted-foreground'}"
+										>
+											<span class="whitespace-nowrap line-clamp-1 font-normal text-left">
+												{selectedSourceColumn || 'Select source column'}
+											</span>
+
+											{#if fileOutput}
+												<ChevronDown class="h-4 w-4" />
+											{/if}
+										</Button>
+									</Select.Trigger>
+									<Select.Content side="bottom" class="max-h-64 overflow-y-auto">
+										{#each tableData?.cols.filter((col) => !['ID', 'Updated at'].includes(col.id) && col.id !== $tableState.columnSettings.column?.id && col.dtype === 'str') ?? [] as column}
+											<Select.Item
+												on:click={() => (selectedSourceColumn = column.id)}
+												value={column.id}
+												label={column.id}
+												class="flex justify-between gap-10 cursor-pointer"
+											>
+												{column.id}
+											</Select.Item>
+										{/each}
+									</Select.Content>
+								</Select.Root>
+							</div>
+						</div>
+
+						<div
+							class="flex items-center justify-end gap-2 px-6 py-3 bg-white data-dark:bg-[#0D0E11] border-t border-[#E5E5E5] data-dark:border-[#333]"
+						>
+							<Button
+								variant="link"
+								on:click={() =>
+									tableState.setColumnSettings({ ...$tableState.columnSettings, isOpen: false })}
+							>
+								Cancel
+							</Button>
+							{#if showPromptTab && !readonly}
+								<Button
+									loading={isLoading}
+									disabled={isLoading}
+									on:click={saveColumnSettings}
+									class="rounded-full"
+								>
+									Update
+								</Button>
+							{/if}
+						</div>
+					</div>
+				{:else if selectedTab === 'prompt'}
 					<div style="grid-template-rows: minmax(0, 1fr) 65px;" class="grow grid min-h-0">
 						<div class="flex flex-col px-5 sm:px-3 py-3 overflow-auto">
 							<span class="font-medium text-sm">Customize prompt</span>
@@ -340,7 +519,7 @@
 								placeholder="Enter prompt"
 								bind:value={editPrompt}
 								class="grow mt-1 p-2 h-1 min-h-64 text-[14px] rounded-md disabled:text-black/60 data-dark:disabled:text-white/60 bg-[#F2F4F7] data-dark:bg-[#42464e] border border-transparent data-dark:border-[#42464E] outline-none placeholder:italic placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors resize-none"
-							/>
+							></textarea>
 						</div>
 
 						<div
@@ -357,72 +536,6 @@
 									Update
 								</Button>
 							{/if}
-						</div>
-					</div>
-				{:else if tableType === 'knowledge' && !showPromptTab}
-					<div style="grid-template-rows: minmax(0, 1fr) 65px;" class="grow grid min-h-0">
-						<div class="grid grid-rows-[min-content_1fr] py-5 overflow-auto">
-							<div class="flex flex-col gap-1 px-6 sm:px-14 py-2">
-								<span class="font-medium text-left text-xs sm:text-sm text-black">
-									Embedding Model
-								</span>
-
-								<ModelSelect
-									disabled
-									capabilityFilter="embed"
-									sameWidth={true}
-									selectedModel={selectedEmbedModel}
-									buttonText={($modelsAvailable.find((model) => model.id == selectedEmbedModel)
-										?.name ??
-										selectedEmbedModel) ||
-										'Select model'}
-									class="disabled:opacity-100 bg-[#F2F4F7] data-dark:bg-[#42464e] hover:bg-[#e1e2e6] border-transparent [&>svg]:hidden"
-								/>
-							</div>
-
-							<div class="flex flex-col gap-1 px-6 sm:px-14 py-2">
-								<span class="font-medium text-left text-xs sm:text-sm text-black">
-									Source Column
-								</span>
-
-								<Select.Root disabled>
-									<!-- svelte-ignore a11y-no-static-element-interactions -->
-									<Select.Trigger asChild let:builder>
-										<Button
-											builders={[builder]}
-											variant="outline-neutral"
-											class="flex items-center justify-between gap-8 pl-3 pr-2 h-10 min-w-full bg-[#F2F4F7] data-dark:bg-[#42464e] hover:bg-[#e1e2e6] border-transparent disabled:opacity-100 rounded-md"
-										>
-											<span class="whitespace-nowrap line-clamp-1 font-normal text-left">
-												{selectedSourceColumn || 'Select Source Column'}
-											</span>
-										</Button>
-									</Select.Trigger>
-									<Select.Content side="bottom" class="max-h-64 overflow-y-auto">
-										{#each tableData?.cols ?? [] as column}
-											<Select.Item
-												value={column.id}
-												label={column.id}
-												class="flex justify-between gap-10 cursor-pointer"
-											>
-												{column.id}
-											</Select.Item>
-										{/each}
-									</Select.Content>
-								</Select.Root>
-							</div>
-						</div>
-
-						<div
-							class="flex items-center justify-end gap-2 px-6 py-3 bg-white data-dark:bg-[#0D0E11] border-t border-[#E5E5E5] data-dark:border-[#333]"
-						>
-							<Button
-								variant="link"
-								on:click={() =>
-									(isColumnSettingsOpen = { ...isColumnSettingsOpen, showMenu: false })}
-							>
-								Cancel
-							</Button>
 						</div>
 					</div>
 				{:else}
@@ -444,7 +557,7 @@
 										placeholder="Enter system prompt"
 										bind:value={editSystemPrompt}
 										class="p-2 h-[25vh] text-[14px] rounded-md disabled:text-black/60 data-dark:disabled:text-white/60 bg-[#F2F4F7] data-dark:bg-[#42464e] border border-transparent data-dark:border-[#42464E] outline-none placeholder:italic placeholder:text-muted-foreground focus-visible:outline-none focus-visible:border-[#4169e1] data-dark:focus-visible:border-[#5b7ee5] disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-									/>
+									></textarea>
 								</div>
 
 								<div class="flex items-center gap-2 px-5 sm:px-3 py-3">
