@@ -47,6 +47,7 @@ from owl.protocol import (
     ChatEntry,
     ChatTableSchemaCreate,
     ChatThread,
+    CodeGenConfig,
     ColName,
     ColumnDropRequest,
     ColumnDtype,
@@ -85,7 +86,8 @@ def _validate_gen_config(
     gen_config: GenConfig | None,
     table_type: TableType,
     column_id: str,
-    file_column_ids: list[str],
+    image_column_ids: list[str],
+    audio_column_ids: list[str],
 ) -> GenConfig | None:
     if gen_config is None:
         return gen_config
@@ -98,8 +100,10 @@ def _validate_gen_config(
             capabilities = ["chat"]
             for message in (gen_config.system_prompt, gen_config.prompt):
                 for col_id in re.findall(GEN_CONFIG_VAR_PATTERN, message):
-                    if col_id in file_column_ids:
+                    if col_id in image_column_ids:
                         capabilities = ["image"]
+                    if col_id in audio_column_ids:
+                        capabilities = ["audio"]
                         break
             gen_config.model = llm.validate_model_id(
                 model=gen_config.model,
@@ -141,6 +145,8 @@ def _validate_gen_config(
             raise ResourceNotFoundError(
                 f'Column {column_id} used a reranking model "{reranking_model}" that is not available.'
             ) from e
+    elif isinstance(gen_config, CodeGenConfig):
+        pass
     elif isinstance(gen_config, EmbedGenConfig):
         pass
     return gen_config
@@ -155,8 +161,15 @@ def _create_table(
 ) -> TableMetaResponse:
     # Validate
     llm = LLMEngine(request=request)
-    file_column_ids = [
-        col.id for col in schema.cols if col.dtype == ColumnDtype.FILE and not col.id.endswith("_")
+    image_column_ids = [
+        col.id
+        for col in schema.cols
+        if col.dtype == ColumnDtype.IMAGE and not col.id.endswith("_")
+    ]
+    audio_column_ids = [
+        col.id
+        for col in schema.cols
+        if col.dtype == ColumnDtype.AUDIO and not col.id.endswith("_")
     ]
     for col in schema.cols:
         col.gen_config = _validate_gen_config(
@@ -164,7 +177,8 @@ def _create_table(
             gen_config=col.gen_config,
             table_type=table_type,
             column_id=col.id,
-            file_column_ids=file_column_ids,
+            image_column_ids=image_column_ids,
+            audio_column_ids=audio_column_ids,
         )
     if table_type == TableType.KNOWLEDGE:
         try:
@@ -497,10 +511,15 @@ def update_gen_config(
     with table.create_session() as session:
         meta = table.open_meta(session, updates.table_id)
         llm = LLMEngine(request=request)
-        file_column_ids = [
+        image_column_ids = [
             col["id"]
             for col in meta.cols
-            if col["dtype"] == ColumnDtype.FILE and not col["id"].endswith("_")
+            if col["dtype"] == ColumnDtype.IMAGE and not col["id"].endswith("_")
+        ]
+        audio_column_ids = [
+            col["id"]
+            for col in meta.cols
+            if col["dtype"] == ColumnDtype.AUDIO and not col["id"].endswith("_")
         ]
 
         if table_type == TableType.KNOWLEDGE:
@@ -519,7 +538,8 @@ def update_gen_config(
                 gen_config=gen_config,
                 table_type=table_type,
                 column_id=col_id,
-                file_column_ids=file_column_ids,
+                image_column_ids=image_column_ids,
+                audio_column_ids=audio_column_ids,
             )
             for col_id, gen_config in updates.column_map.items()
         }
@@ -544,8 +564,11 @@ def _add_columns(
         cols = TableSchema(
             id=meta.id, cols=[c.model_dump() for c in meta.cols_schema + schema.cols]
         ).cols
-        file_column_ids = [
-            col.id for col in cols if col.dtype == ColumnDtype.FILE and not col.id.endswith("_")
+        image_column_ids = [
+            col.id for col in cols if col.dtype == ColumnDtype.IMAGE and not col.id.endswith("_")
+        ]
+        audio_column_ids = [
+            col.id for col in cols if col.dtype == ColumnDtype.AUDIO and not col.id.endswith("_")
         ]
         schema.cols = [col for col in cols if col.id in set(c.id for c in schema.cols)]
         for col in schema.cols:
@@ -554,7 +577,8 @@ def _add_columns(
                 gen_config=col.gen_config,
                 table_type=table_type,
                 column_id=col.id,
-                file_column_ids=file_column_ids,
+                image_column_ids=image_column_ids,
+                audio_column_ids=audio_column_ids,
             )
         # Create
         _, meta = table.add_columns(session, schema)
@@ -1126,6 +1150,7 @@ async def _embed_file(
                 "Title": title,
                 "Title Embed": title_embed,
                 "File ID": file_uri,
+                "Page": chunk.page,
             }
             for chunk, text_embed in zip(chunks, text_embeds, strict=True)
         ]
@@ -1197,6 +1222,10 @@ async def embed_file(
     file_name = file.filename or file_name
     if splitext(file_name)[1].lower() == ".jsonl":
         file_content_type = "application/jsonl"
+    elif splitext(file_name)[1].lower() == ".md":
+        file_content_type = "text/markdown"
+    elif splitext(file_name)[1].lower() == ".tsv":
+        file_content_type = "text/tab-separated-values"
     else:
         file_content_type = file.content_type
     if file_content_type not in EMBED_WHITE_LIST_MIME:
@@ -1303,7 +1332,7 @@ async def import_table_data(
             if dtype == "str":
                 df[col_id] = df[col_id].apply(lambda x: str(x) if not pd.isna(x) else x)
             else:
-                if dtype == ColumnDtype.FILE:
+                if dtype in [ColumnDtype.IMAGE, ColumnDtype.AUDIO]:
                     dtype = "str"
                 df[col_id] = df[col_id].astype(dtype, errors="raise")
         except ValueError as e:

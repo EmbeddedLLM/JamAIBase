@@ -1,7 +1,7 @@
 import { PUBLIC_IS_LOCAL } from '$env/static/public';
 import { JAMAI_URL, JAMAI_SERVICE_KEY } from '$env/static/private';
 import { dev } from '$app/environment';
-import { json, type Handle } from '@sveltejs/kit';
+import { json, redirect, type Handle } from '@sveltejs/kit';
 import { Agent } from 'undici';
 import { getPrices } from '$lib/server/nodeCache';
 import logger from '$lib/logger';
@@ -82,25 +82,40 @@ const handleApiProxy: Handle = async ({ event }) => {
 };
 
 export const handle: Handle = async ({ event, resolve }) => {
-	if (dev && !event.request.url.includes('/api/v1/files'))
-		console.log('Connecting', event.request.url);
+	const { cookies, locals, request, url } = event;
+	if (dev && !request.url.includes('/api/v1/files')) console.log('Connecting', request.url);
 
 	if (PUBLIC_IS_LOCAL === 'false') {
 		//? Workaround for event.platform unavailable in development
 		if (dev) {
 			const user = await (
-				await fetch(`${event.url.origin}/dev-profile`, {
-					headers: { cookie: `appSession=${event.cookies.get('appSession')}` }
+				await fetch(`${url.origin}/dev-profile`, {
+					headers: { cookie: `appSession=${cookies.get('appSession')}` }
 				})
 			).json();
-			event.locals.user = Object.keys(user).length ? user : undefined;
+			locals.user = Object.keys(user).length ? user : undefined;
 		} else {
 			// @ts-expect-error missing type
-			event.locals.user = event.platform?.req?.res?.locals?.user;
+			locals.user = event.platform?.req?.res?.locals?.user;
 		}
 	}
 
-	if (PROXY_PATHS.some((p) => event.url.pathname.startsWith(p.path))) {
+	if (PUBLIC_IS_LOCAL === 'false' && !url.pathname.startsWith('/api')) {
+		if (!locals.user) {
+			const originalUrl =
+				url.pathname + (url.searchParams.size > 0 ? `?${url.searchParams.toString()}` : '');
+			throw redirect(302, `/login${originalUrl ? `?returnTo=${originalUrl}` : ''}`);
+		} else {
+			if (!locals.user.email_verified && !url.pathname.startsWith('/verify-email')) {
+				throw redirect(
+					302,
+					`/verify-email${url.searchParams.size > 0 ? `?${url.searchParams.toString()}` : ''}`
+				);
+			}
+		}
+	}
+
+	if (PROXY_PATHS.some((p) => url.pathname.startsWith(p.path))) {
 		return await handleApiProxy({ event, resolve });
 	}
 

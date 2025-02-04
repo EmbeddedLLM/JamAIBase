@@ -4,6 +4,7 @@
 	import ArrowDownToLine from 'lucide-svelte/icons/arrow-down-to-line';
 	import Trash2 from 'lucide-svelte/icons/trash-2';
 	import Maximize2 from 'lucide-svelte/icons/maximize-2';
+	import { fileColumnFiletypes } from '$lib/constants';
 	import { isValidUri } from '$lib/utils';
 	import logger from '$lib/logger';
 
@@ -55,18 +56,23 @@
 </script>
 
 {#if fileUri && isValidUri(fileUri)}
+	{@const fileType = fileColumnFiletypes.find(({ ext }) => fileUri.endsWith(ext))?.type}
 	<div
 		class="relative flex items-center justify-center {!fileUrl ||
 		!isValidUri(fileUrl)?.protocol.startsWith('http')
 			? 'h-full'
 			: ''} w-full group/image"
 	>
-		{#if fileUrl && isValidUri(fileUrl)?.protocol.startsWith('http')}
-			<img
-				src={fileUrl?.replace(new URL(fileUrl).origin, '')}
-				alt=""
-				class="z-0 h-[83px] sm:h-[133px] max-w-full object-contain"
-			/>
+		{#if fileUrl && isValidUri(fileUrl)?.protocol.startsWith('http') && fileType !== undefined}
+			{#if fileType === 'file'}
+				<img
+					src={fileUrl?.replace(new URL(fileUrl).origin, '')}
+					alt=""
+					class="z-0 h-[83px] sm:h-[133px] max-w-full object-contain"
+				/>
+			{:else if fileType === 'audio'}
+				<audio controls src={fileUrl?.replace(new URL(fileUrl).origin, '')}></audio>
+			{/if}
 		{:else}
 			<div class="flex items-center justify-center h-full">
 				<div class="flex items-center gap-1 pl-1 pr-1.5 py-0.5 bg-white rounded">
@@ -90,7 +96,7 @@
 				<Trash2 class="h-3.5 w-3.5" />
 			</Button>
 
-			{#if fileUrl && isValidUri(fileUrl)?.protocol.startsWith('http')}
+			{#if fileUrl && isValidUri(fileUrl)?.protocol.startsWith('http') && fileType === 'file'}
 				<DropdownMenu.Root>
 					<DropdownMenu.Trigger asChild let:builder>
 						<Button

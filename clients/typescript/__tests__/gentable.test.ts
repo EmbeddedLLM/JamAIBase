@@ -178,7 +178,7 @@ describe("APIClient Gentable", () => {
                             model: llmModel,
                             prompt: "Suggest a followup questions on ${question}.",
                             temperature: 1,
-                            max_tokens: 100,
+                            max_tokens: 30,
                             top_p: 0.1
                         }
                     },
@@ -189,7 +189,7 @@ describe("APIClient Gentable", () => {
                             model: llmModel,
 
                             temperature: 1,
-                            max_tokens: 100,
+                            max_tokens: 30,
                             top_p: 0.1
                         }
                     }
@@ -312,7 +312,7 @@ describe("APIClient Gentable", () => {
                         model: llmModel,
                         prompt: "Suggest a followup questions on ${question}.",
                         temperature: 1,
-                        max_tokens: 100,
+                        max_tokens: 30,
                         top_p: 0.1
                     }
                 }

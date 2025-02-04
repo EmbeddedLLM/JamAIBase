@@ -81,7 +81,7 @@ def _create_table(
                 p.ColumnSchemaCreate(id="words", dtype="int"),
                 p.ColumnSchemaCreate(id="stars", dtype="float"),
                 p.ColumnSchemaCreate(id="inputs", dtype="str"),
-                p.ColumnSchemaCreate(id="photo", dtype="file"),
+                p.ColumnSchemaCreate(id="photo", dtype="image"),
                 p.ColumnSchemaCreate(
                     id="summary",
                     dtype="str",

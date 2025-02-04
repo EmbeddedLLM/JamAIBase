@@ -27,12 +27,14 @@ from owl.db.gen_table import KnowledgeTable
 from owl.models import CloudEmbedder, CloudReranker
 from owl.protocol import (
     ChatCompletionChoiceDelta,
+    ChatCompletionChoiceOutput,
     ChatCompletionChunk,
     ChatEntry,
     ChatRole,
     Chunk,
     CompletionUsage,
     ExternalKeys,
+    LLMModelConfig,
     ModelInfo,
     ModelInfoResponse,
     ModelListConfig,
@@ -77,7 +79,7 @@ def _get_llm_router(model_json: str, external_api_keys: str):
         retry_after=5.0,
         timeout=ENV_CONFIG.owl_llm_timeout_sec,
         allowed_fails=3,
-        cooldown_time=0.0,
+        cooldown_time=5.5,
         debug_level="DEBUG",
         redis_host=ENV_CONFIG.owl_redis_host,
         redis_port=ENV_CONFIG.owl_redis_port,
@@ -288,36 +290,57 @@ class LLMEngine:
         **hyperparams,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         api_key = ""
+        usage = None
         try:
             model = model.strip()
+            # check audio model type
+            is_audio_gen_model = False
+            if model != "":
+                model_config: LLMModelConfig = self.request.state.all_models.get_llm_model_info(
+                    model
+                )
+                if (
+                    "audio" in model_config.capabilities
+                    and model_config.deployments[0].provider == "openai"
+                ):
+                    is_audio_gen_model = True
             hyperparams = self._prepare_hyperparams(model, hyperparams, stream=True)
             messages = self._prepare_messages(messages)
+            # omit system prompt for audio input with audio gen
+            if is_audio_gen_model and messages[0].role in (ChatRole.SYSTEM.value, ChatRole.SYSTEM):
+                messages = messages[1:]
             messages = [m.model_dump(mode="json", exclude_none=True) for m in messages]
             model = self.validate_model_id(
                 model=model,
                 capabilities=capabilities,
             )
             self._log_completion_masked(model, messages, **hyperparams)
-            response = await self.router.acompletion(
-                model=model,
-                messages=messages,
-                # Fixes discrepancy between stream and non-stream token usage
-                stream_options={"include_usage": True},
-                **hyperparams,
-            )
-            chunks = []
-            completion = None
+            if is_audio_gen_model:
+                response = await self.router.acompletion(
+                    model=model,
+                    modalities=["text", "audio"],
+                    audio={"voice": "alloy", "format": "pcm16"},
+                    messages=messages,
+                    # Fixes discrepancy between stream and non-stream token usage
+                    stream_options={"include_usage": True},
+                    **hyperparams,
+                )
+            else:
+                response = await self.router.acompletion(
+                    model=model,
+                    messages=messages,
+                    # Fixes discrepancy between stream and non-stream token usage
+                    stream_options={"include_usage": True},
+                    **hyperparams,
+                )
             output_text = ""
             usage = CompletionUsage()
             async for chunk in response:
-                chunks.append(chunk)
-                content = chunk.choices[0].delta.content
                 if hasattr(chunk, "usage"):
-                    completion = chunk
                     usage = CompletionUsage(
-                        prompt_tokens=completion.usage.prompt_tokens,
-                        completion_tokens=completion.usage.completion_tokens,
-                        total_tokens=completion.usage.total_tokens,
+                        prompt_tokens=chunk.usage.prompt_tokens,
+                        completion_tokens=chunk.usage.completion_tokens,
+                        total_tokens=chunk.usage.total_tokens,
                     )
                 yield ChatCompletionChunk(
                     id=self.id,
@@ -327,7 +350,16 @@ class LLMEngine:
                     usage=usage,
                     choices=[
                         ChatCompletionChoiceDelta(
-                            message=ChatEntry.assistant(choice.delta.content),
+                            message=ChatEntry.assistant(choice.delta.audio.get("transcript", ""))
+                            if is_audio_gen_model and choice.delta.audio is not None
+                            else ChatCompletionChoiceOutput.assistant(
+                                choice.delta.content,
+                                tool_calls=[
+                                    tool_call.model_dump() for tool_call in choice.delta.tool_calls
+                                ]
+                                if isinstance(chunk.choices[0].delta.tool_calls, list)
+                                else None,
+                            ),
                             index=choice.index,
                             finish_reason=choice.get(
                                 "finish_reason", chunk.get("finish_reason", None)
@@ -336,16 +368,17 @@ class LLMEngine:
                         for choice in chunk.choices
                     ],
                 )
-                output_text += content if content else ""
+                if is_audio_gen_model and chunk.choices[0].delta.audio is not None:
+                    output_text += chunk.choices[0].delta.audio.get("transcript", "")
+                else:
+                    content = chunk.choices[0].delta.content
+                    output_text += content if content else ""
             logger.info(f"{self.id} - Streamed completion: <{mask_string(output_text)}>")
 
-            if completion is None:
-                logger.warning("`completion` should not be None !!!")
-                return
             self._billing.create_llm_events(
                 model=model,
-                input_tokens=completion.usage.prompt_tokens,
-                output_tokens=completion.usage.completion_tokens,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
             )
         except Exception as e:
             self._map_and_log_exception(e, model, messages, api_key, **hyperparams)
@@ -354,7 +387,7 @@ class LLMEngine:
                 object="chat.completion.chunk",
                 created=int(time()),
                 model=model,
-                usage=None,
+                usage=usage,
                 choices=[
                     ChatCompletionChoiceDelta(
                         message=ChatEntry.assistant(f"[ERROR] {e!r}"),
@@ -374,31 +407,59 @@ class LLMEngine:
         api_key = ""
         try:
             model = model.strip()
+            # check audio model type
+            is_audio_gen_model = False
+            if model != "":
+                model_config: LLMModelConfig = self.request.state.all_models.get_llm_model_info(
+                    model
+                )
+                if (
+                    "audio" in model_config.capabilities
+                    and model_config.deployments[0].provider == "openai"
+                ):
+                    is_audio_gen_model = True
             hyperparams = self._prepare_hyperparams(model, hyperparams, stream=False)
             messages = self._prepare_messages(messages)
+            # omit system prompt for audio input with audio gen
+            if is_audio_gen_model and messages[0].role in (ChatRole.SYSTEM.value, ChatRole.SYSTEM):
+                messages = messages[1:]
             messages = [m.model_dump(mode="json", exclude_none=True) for m in messages]
             model = self.validate_model_id(
                 model=model,
                 capabilities=capabilities,
             )
             self._log_completion_masked(model, messages, **hyperparams)
-            completion = await self.router.acompletion(
-                model=model,
-                messages=messages,
-                **hyperparams,
-            )
+            if is_audio_gen_model:
+                completion = await self.router.acompletion(
+                    model=model,
+                    modalities=["text", "audio"],
+                    audio={"voice": "alloy", "format": "pcm16"},
+                    messages=messages,
+                    **hyperparams,
+                )
+            else:
+                completion = await self.router.acompletion(
+                    model=model,
+                    messages=messages,
+                    **hyperparams,
+                )
             self._billing.create_llm_events(
                 model=model,
                 input_tokens=completion.usage.prompt_tokens,
                 output_tokens=completion.usage.completion_tokens,
             )
+            choices = []
+            for choice in completion.choices:
+                if is_audio_gen_model and choice.message.audio.transcript is not None:
+                    choice.message.content = choice.message.audio.transcript
+                choices.append(choice.model_dump())
             completion = ChatCompletionChunk(
                 id=self.id,
                 object="chat.completion",
                 created=completion.created,
                 model=model,
                 usage=completion.usage.model_dump(),
-                choices=[choice.model_dump() for choice in completion.choices],
+                choices=choices,
             )
             logger.info(f"{self.id} - Generated completion: <{mask_string(completion.text)}>")
             return completion

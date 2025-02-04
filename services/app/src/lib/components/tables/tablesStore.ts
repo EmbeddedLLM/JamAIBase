@@ -1,10 +1,110 @@
 import { writable } from 'svelte/store';
-import type { GenTable, GenTableRow } from '$lib/types';
+import { persisted } from 'svelte-persisted-store';
+import { serializer } from '$lib/utils';
+import type { GenTable, GenTableCol, GenTableRow } from '$lib/types';
 
+export const tableState = createTableStore();
 export const genTableRows = createGenTableRows();
 export const pastActionTables = writable<Omit<GenTable, 'num_rows'>[]>([]);
 export const pastKnowledgeTables = writable<Omit<GenTable, 'num_rows'>[]>([]);
 export const pastChatAgents = writable<Omit<GenTable, 'num_rows'>[]>([]);
+export const chatTableMode = persisted<'chat' | 'table'>('table_mode', 'table', {
+	serializer,
+	storage: 'session'
+});
+
+interface TableState {
+	templateCols: string;
+	colSizes: Record<string, number>;
+	resizingCol: { columnID: string; diffX: number } | null;
+	editingCell: { rowID: string; columnID: string } | null;
+	selectedRows: string[];
+	streamingRows: Record<string, string[]>;
+	columnSettings: {
+		isOpen: boolean;
+		column: GenTableCol | null;
+	};
+	renamingCol: string | null;
+	deletingCol: string | null;
+}
+
+function createTableStore() {
+	const defaultValue = {
+		templateCols: '',
+		colSizes: {},
+		resizingCol: null,
+		editingCell: null,
+		selectedRows: [],
+		streamingRows: {},
+		columnSettings: {
+			isOpen: false,
+			column: null
+		},
+		renamingCol: null,
+		deletingCol: null
+	} satisfies TableState;
+	const { subscribe, set, update } = writable<TableState>(defaultValue);
+
+	return {
+		subscribe,
+		set,
+		setTemplateCols: (columns: GenTableCol[]) =>
+			update((state) => ({
+				...state,
+				templateCols: columns
+					.filter((col) => col.id !== 'ID' && col.id !== 'Updated at')
+					.map((col) => {
+						const colSize = state.colSizes[col.id];
+						if (colSize) return `${colSize}px`;
+						else return 'minmax(320px, 1fr)';
+					})
+					.join(' ')
+			})),
+		setColSize: (colID: string, value: number) =>
+			update((state) => {
+				const obj = structuredClone(state);
+				obj.colSizes[colID] = value;
+				return obj;
+			}),
+		setResizingCol: (value: TableState['resizingCol']) =>
+			update((state) => ({ ...state, resizingCol: value })),
+		setEditingCell: (cell: TableState['editingCell']) =>
+			update((state) => ({ ...state, editingCell: cell })),
+		toggleRowSelection: (rowID: string) =>
+			update((state) => ({
+				...state,
+				selectedRows: state.selectedRows.includes(rowID)
+					? state.selectedRows.filter((id) => id !== rowID)
+					: [...state.selectedRows, rowID]
+			})),
+		selectAllRows: (tableRows: GenTableRow[]) =>
+			update((state) => ({
+				...state,
+				selectedRows: tableRows.every((row) => state.selectedRows.includes(row.ID))
+					? state.selectedRows.filter((i) => !tableRows?.some(({ ID }) => ID === i))
+					: [
+							...state.selectedRows.filter((i) => !tableRows?.some(({ ID }) => ID === i)),
+							...tableRows.map(({ ID }) => ID)
+						]
+			})),
+		setSelectedRows: (rows: TableState['selectedRows']) =>
+			update((state) => ({ ...state, selectedRows: rows })),
+		addStreamingRows: (rows: TableState['streamingRows']) =>
+			update((state) => ({ ...state, streamingRows: { ...state.streamingRows, ...rows } })),
+		delStreamingRows: (rowIDs: string[]) =>
+			update((state) => ({
+				...state,
+				streamingRows: Object.fromEntries(
+					Object.entries(state.streamingRows).filter(([rowId]) => !rowIDs.includes(rowId))
+				)
+			})),
+		setColumnSettings: (value: TableState['columnSettings']) =>
+			update((state) => ({ ...state, columnSettings: value })),
+		setRenamingCol: (value: string | null) => update((state) => ({ ...state, renamingCol: value })),
+		setDeletingCol: (value: string | null) => update((state) => ({ ...state, deletingCol: value })),
+		reset: () => set(defaultValue)
+	};
+}
 
 function createGenTableRows() {
 	const { subscribe, set, update } = writable<GenTableRow[] | undefined>(undefined);

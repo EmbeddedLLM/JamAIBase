@@ -7,9 +7,10 @@
 	//@ts-expect-error - no types
 	import showdownHtmlEscape from 'showdown-htmlescape';
 	import '../../../../../../showdown-theme.css';
-	import logger from '$lib/logger';
+	import { tableState } from '$lib/components/tables/tablesStore';
 	import { codeblock, codehighlight, table as tableExtension } from '$lib/showdown';
-	import type { GenTable, GenTableCol, GenTableStreamEvent, Thread } from '$lib/types';
+	import logger from '$lib/logger';
+	import type { GenTable, GenTableStreamEvent, Thread } from '$lib/types';
 
 	import RowStreamIndicator from '$lib/components/preset/RowStreamIndicator.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
@@ -24,7 +25,6 @@
 	export let thread: Thread[][];
 	export let threadLoaded: boolean;
 	export let generationStatus: boolean;
-	export let isColumnSettingsOpen: { column: GenTableCol | null; showMenu: boolean };
 	export let refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
 
 	/* let thread: ChatRequest['messages'] = [];
@@ -316,7 +316,7 @@
 	bind:this={chatWindow}
 	data-testid="chat-window"
 	id="chat-window"
-	class="relative grow flex flex-col gap-4 pt-6 pb-16 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
+	class="@container/chat relative grow flex flex-col gap-4 pt-6 pb-16 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
 >
 	{#if threadLoaded}
 		{#each thread as threadItem, index}
@@ -337,7 +337,7 @@
 							{#if role == 'assistant'}
 								<div
 									class="flex flex-col gap-1 {messagesWithContent.length === 1
-										? 'col-span-1 xl:col-span-2'
+										? 'col-span-1 @lg/chat:col-span-2 supports-[not(container-type:inline-size)]:xl:col-span-2'
 										: ''} group/message-container"
 								>
 									<div class="flex items-center justify-between">
@@ -345,7 +345,7 @@
 											on:click={() => {
 												const targetCol = tableData?.cols?.find((col) => col.id == column_id);
 												if (targetCol) {
-													isColumnSettingsOpen = { column: targetCol, showMenu: true };
+													tableState.setColumnSettings({ column: targetCol, isOpen: true });
 												}
 											}}
 											class="flex items-center gap-2 text-sm"
@@ -398,7 +398,7 @@
 							{:else if role == 'user'}
 								<div
 									class="flex flex-col gap-1 {messagesWithContent.length === 1
-										? 'col-span-1 xl:col-span-2'
+										? 'col-span-1 @lg/chat:col-span-2 supports-[not(container-type:inline-size)]:xl:col-span-2'
 										: ''}"
 								>
 									<div
@@ -417,7 +417,7 @@
 					{:else if messages.every((v) => ('content' in v && v.role === 'assistant') || 'error' in v)}
 						<div
 							class="flex flex-col gap-1 {messagesWithContent.length === 1
-								? 'col-span-1 xl:col-span-2'
+								? 'col-span-1 @lg/chat:col-span-2 supports-[not(container-type:inline-size)]:xl:col-span-2'
 								: ''} group/message-container"
 						>
 							<div class="flex items-center justify-between">
@@ -425,7 +425,7 @@
 									on:click={() => {
 										const targetCol = tableData?.cols?.find((col) => col.id == column_id);
 										if (targetCol) {
-											isColumnSettingsOpen = { column: targetCol, showMenu: true };
+											tableState.setColumnSettings({ column: targetCol, isOpen: true });
 										}
 									}}
 									class="flex items-center gap-2 text-sm"
@@ -489,7 +489,7 @@
 				{@const latestStream = latestStreams[key] ?? ''}
 				<div
 					class="flex flex-col gap-1 {Object.keys(loadedStreams).length === 1
-						? 'col-span-1 xl:col-span-2'
+						? 'col-span-1 @lg/chat:col-span-2 supports-[not(container-type:inline-size)]:xl:col-span-2'
 						: ''}"
 				>
 					<div class="flex items-center gap-2 text-sm">
@@ -612,7 +612,7 @@
 		</div> -->
 
 <style>
-	:global(::-webkit-scrollbar) {
+	.message-container::-webkit-scrollbar {
 		width: 6px;
 		height: 0px;
 		border: 0px solid hsl(0, 0%, 27%);
@@ -625,9 +625,17 @@
 		grid-auto-columns: 100%;
 	}
 
-	@media (min-width: 1280px) {
+	@container chat (min-width: 1024px) {
 		.message-container {
 			grid-auto-columns: 50%;
+		}
+	}
+
+	@supports not (container-type: inline-size) {
+		@media (min-width: 1280px) {
+			.message-container {
+				grid-auto-columns: 50%;
+			}
 		}
 	}
 </style>

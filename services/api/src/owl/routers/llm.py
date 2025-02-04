@@ -13,8 +13,9 @@ from jamaibase.exceptions import ResourceNotFoundError
 from owl.llm import LLMEngine
 from owl.models import CloudEmbedder
 from owl.protocol import (
-    EXAMPLE_CHAT_MODEL,
+    EXAMPLE_CHAT_MODEL_IDS,
     ChatRequest,
+    ChatRequestWithTools,
     EmbeddingRequest,
     EmbeddingResponse,
     EmbeddingResponseData,
@@ -39,7 +40,7 @@ async def get_model_info(
         str,
         Query(
             description="ID of the requested model.",
-            examples=[EXAMPLE_CHAT_MODEL],
+            examples=EXAMPLE_CHAT_MODEL_IDS,
         ),
     ] = "",
     capabilities: Annotated[
@@ -79,7 +80,7 @@ async def get_model_names(
         str,
         Query(
             description="ID of the preferred model.",
-            examples=[EXAMPLE_CHAT_MODEL],
+            examples=EXAMPLE_CHAT_MODEL_IDS,
         ),
     ] = "",
     capabilities: Annotated[
@@ -109,7 +110,7 @@ async def get_model_names(
     description="Given a list of messages comprising a conversation, the model will return a response.",
 )
 @handle_exception
-async def generate_completions(request: Request, body: ChatRequest):
+async def generate_completions(request: Request, body: ChatRequest | ChatRequestWithTools):
     # Check quota
     request.state.billing.check_llm_quota(body.model)
     request.state.billing.check_egress_quota()

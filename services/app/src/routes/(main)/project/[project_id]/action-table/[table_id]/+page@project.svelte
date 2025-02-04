@@ -2,11 +2,13 @@
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import debounce from 'lodash/debounce';
 	import Trash_2 from 'lucide-svelte/icons/trash-2';
+	import { browser } from '$app/environment';
 	import { invalidate } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { genTableRows } from '$lib/components/tables/tablesStore';
+	import { genTableRows, tableState } from '$lib/components/tables/tablesStore';
+	import { db } from '$lib/db';
 	import logger from '$lib/logger';
-	import type { GenTable, GenTableCol } from '$lib/types';
+	import type { GenTable } from '$lib/types';
 
 	import ActionTable from '$lib/components/tables/ActionTable.svelte';
 	import { ColumnSettings, TablePagination } from '$lib/components/tables/(sub)';
@@ -28,11 +30,21 @@
 
 	$: table, resetTable();
 	const resetTable = () => {
+		if (!('then' in table)) return;
 		Promise.all([
-			table.then((tableRes) => {
+			table.then(async (tableRes) => {
 				tableData = structuredClone(tableRes.data); // Client reorder column
 				if (tableRes.error) {
 					tableError = { error: tableRes.error, message: tableRes.message };
+				}
+
+				if (tableData) tableState.setTemplateCols(tableData.cols);
+				if (browser && tableData) {
+					const savedColSizes = await db.action_table.get($page.params.table_id);
+					if (savedColSizes) {
+						$tableState.colSizes = savedColSizes.columns;
+					}
+					tableState.setTemplateCols(tableData.cols);
 				}
 			}),
 			tableRows.then((tableRowsRes) => {
@@ -42,9 +54,6 @@
 		]).then(() => (tableLoaded = true));
 	};
 
-	let streamingRows: Record<string, string[]> = {};
-
-	let selectedRows: string[] = [];
 	let searchQuery = '';
 	let searchController: AbortController | null = null;
 	let isLoadingSearch = false;
@@ -53,16 +62,11 @@
 		type: 'input',
 		showDialog: false
 	};
-	let isDeletingColumn: string | null = null;
 	let isDeletingRow: string[] | null = null;
-	let isColumnSettingsOpen: { column: GenTableCol | null; showMenu: boolean } = {
-		column: null,
-		showMenu: false
-	};
 
 	async function refetchTable(hideColumnSettings = true) {
 		//? Don't refetch while streaming
-		if (Object.keys(streamingRows).length === 0) {
+		if (Object.keys($tableState.streamingRows).length === 0) {
 			if (searchQuery) {
 				await handleSearchRows(searchQuery);
 			} else {
@@ -71,8 +75,9 @@
 				isLoadingSearch = false;
 			}
 
-			selectedRows = [];
-			if (hideColumnSettings) isColumnSettingsOpen = { ...isColumnSettingsOpen, showMenu: false };
+			tableState.setSelectedRows([]);
+			if (hideColumnSettings)
+				tableState.setColumnSettings({ ...$tableState.columnSettings, isOpen: false });
 		}
 	}
 
@@ -137,7 +142,7 @@
 >
 	<div
 		data-testid="table-title-row"
-		inert={isColumnSettingsOpen.showMenu}
+		inert={$tableState.columnSettings.isOpen}
 		class="grid grid-cols-[minmax(0,max-content)_minmax(min-content,auto)] items-center pl-4 pr-2 sm:pr-4 pt-[1.5px] sm:pt-3 pb-1.5 sm:pb-3 gap-2"
 	>
 		<div class="flex items-center gap-2 text-sm sm:text-base">
@@ -184,31 +189,33 @@
 				/>
 
 				<div
-					title={selectedRows.length === 0 ? 'Select row to generate output' : undefined}
-					style="grid-template-columns: minmax(0, 1fr) {selectedRows.length !== 0
+					title={$tableState.selectedRows.length === 0
+						? 'Select row to generate output'
+						: undefined}
+					style="grid-template-columns: minmax(0, 1fr) {$tableState.selectedRows.length !== 0
 						? 'minmax(0, 1fr)'
 						: 'minmax(0, 0fr)'};"
-					class="grid place-items-end items-center gap-1 {selectedRows.length !== 0 ||
-					Object.keys(streamingRows).length !== 0
+					class="grid place-items-end items-center gap-1 {$tableState.selectedRows.length !== 0 ||
+					Object.keys($tableState.streamingRows).length !== 0
 						? 'opacity-100'
 						: 'opacity-80 [&_*]:!text-[#98A2B3] [&_button]:bg-[#E4E7EC] [&>button>div]:bg-[#E4E7EC]'} transition-[opacity,grid-template-columns]"
 				>
 					<GenerateButton
-						inert={selectedRows.length === 0 ? true : undefined}
+						inert={$tableState.selectedRows.length === 0 ? true : undefined}
 						tableType="action"
-						bind:selectedRows
-						bind:streamingRows
 						{tableData}
 						{refetchTable}
-						class={selectedRows.length === 0 ? 'z-[5] translate-x-1 pointer-events-none' : ''}
+						class={$tableState.selectedRows.length === 0
+							? 'z-[5] translate-x-1 pointer-events-none'
+							: ''}
 					/>
 
 					<Button
-						inert={selectedRows.length === 0 ? true : undefined}
+						inert={$tableState.selectedRows.length === 0 ? true : undefined}
 						title="Delete row(s)"
-						on:click={() => (isDeletingRow = selectedRows)}
-						class="flex items-center gap-2 p-0 md:px-3 h-8 sm:h-9 text-[#F04438] bg-[#F2F4F7] hover:bg-[#E4E7EC] focus-visible:bg-[#E4E7EC] active:bg-[#E4E7EC] aspect-square md:aspect-auto {selectedRows.length !==
-						0
+						on:click={() => (isDeletingRow = $tableState.selectedRows)}
+						class="flex items-center gap-2 p-0 md:px-3 h-8 sm:h-9 text-[#F04438] bg-[#F2F4F7] hover:bg-[#E4E7EC] focus-visible:bg-[#E4E7EC] active:bg-[#E4E7EC] aspect-square md:aspect-auto {$tableState
+							.selectedRows.length !== 0
 							? 'opacity-100'
 							: 'opacity-0 pointer-events-none'} transition-opacity"
 					>
@@ -236,31 +243,14 @@
 		</div>
 	</div>
 
-	<ActionTable
-		bind:userData
-		bind:tableData
-		bind:tableError
-		bind:selectedRows
-		bind:isColumnSettingsOpen
-		bind:isDeletingColumn
-		bind:streamingRows
-		{table}
-		{refetchTable}
-	/>
+	<ActionTable bind:userData bind:tableData bind:tableError {refetchTable} />
 
 	{#if !tableError}
-		<TablePagination
-			tableType="action"
-			bind:tableData
-			{tableRowsCount}
-			{selectedRows}
-			{searchQuery}
-			{isColumnSettingsOpen}
-		/>
+		<TablePagination tableType="action" bind:tableData {tableRowsCount} {searchQuery} />
 	{/if}
 
-	<ColumnSettings bind:isColumnSettingsOpen {tableData} {refetchTable} tableType="action" />
+	<ColumnSettings {tableData} {refetchTable} tableType="action" />
 </section>
 
 <AddColumnDialog bind:isAddingColumn {tableData} {refetchTable} tableType="action" />
-<DeleteDialogs bind:isDeletingColumn bind:isDeletingRow {refetchTable} tableType="action" />
+<DeleteDialogs bind:isDeletingRow {refetchTable} tableType="action" />

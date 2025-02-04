@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import debounce from 'lodash/debounce';
 	import axios, { CanceledError } from 'axios';
 	import { Dialog as DialogPrimitive } from 'bits-ui';
@@ -18,7 +19,7 @@
 
 	export let uploadFile = false;
 	export let isAddingTable: boolean;
-	export let refetchTables: () => Promise<void>;
+	export let refetchTables: (() => Promise<void>) | undefined = undefined;
 
 	let container: HTMLDivElement;
 	let tableId = '';
@@ -142,12 +143,15 @@
 			activeFile = null;
 		}
 
-		await refetchTables();
-		isAddingTable = false;
-		tableId = '';
-		selectedFiles = [];
-
-		isLoading = false;
+		if (refetchTables) {
+			await refetchTables();
+			isAddingTable = false;
+			tableId = '';
+			selectedFiles = [];
+			isLoading = false;
+		} else {
+			goto(`/project/${$page.params.project_id}/knowledge-table/${responseBody.id}`);
+		}
 	}
 
 	async function handleFilesUpload(files: File[]) {
@@ -158,7 +162,7 @@
 		if (files.length === 0) return;
 		if (
 			files.some(
-				(file) => !knowledgeTableFiletypes.includes('.' + (file.name.split('.').pop() ?? ''))
+				(file) => !knowledgeTableFiletypes.includes('.' + (file.name.split('.').pop() ?? '').toLowerCase())
 			)
 		) {
 			alert(`Files must be of type: ${knowledgeTableFiletypes.join(', ').replaceAll('.', '')}`);

@@ -1,6 +1,7 @@
 FROM python:3.12
 
 RUN pip install --no-cache-dir --upgrade setuptools
+RUN apt-get update -qq && apt-get install ffmpeg libavcodec-extra -y
 
 WORKDIR /app
 

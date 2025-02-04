@@ -9,6 +9,7 @@
 	import logger from '$lib/logger';
 
 	import AddTableDialog from './(dialogs)/AddTableDialog.svelte';
+	import { ExportTableButton } from '../(components)';
 	import { DeleteTableDialog, ImportTableDialog, RenameTableDialog } from '../(dialogs)';
 	import FoundProjectOrgSwitcher from '$lib/components/preset/FoundProjectOrgSwitcher.svelte';
 	import SorterSelect from '$lib/components/preset/SorterSelect.svelte';
@@ -25,6 +26,7 @@
 	import SortByIcon from '$lib/icons/SortByIcon.svelte';
 	import SortAlphabetIcon from '$lib/icons/SortAlphabetIcon.svelte';
 	import ImportIcon from '$lib/icons/ImportIcon.svelte';
+	import ExportIcon from '$lib/icons/ExportIcon.svelte';
 
 	export let data;
 	$: ({ userData } = data);
@@ -213,7 +215,7 @@
 
 		const allowedFiletypes = ['.parquet'];
 		if (
-			files.some((file) => !allowedFiletypes.includes('.' + (file.name.split('.').pop() ?? '')))
+			files.some((file) => !allowedFiletypes.includes('.' + (file.name.split('.').pop() ?? '').toLowerCase()))
 		) {
 			alert(`Files must be of type: ${allowedFiletypes.join(', ').replaceAll('.', '')}`);
 			return;
@@ -341,6 +343,19 @@
 											<EditIcon class="h-3.5 w-3.5 mr-2" />
 											<span>Rename table</span>
 										</DropdownMenu.Item>
+										<ExportTableButton
+											let:handleExportTable
+											tableId={actionTable.id}
+											tableType="action"
+										>
+											<DropdownMenu.Item
+												on:click={handleExportTable}
+												class="text-[#344054] data-[highlighted]:text-[#344054]"
+											>
+												<ExportIcon class="h-3.5 w-3.5 mr-2" />
+												<span>Export table</span>
+											</DropdownMenu.Item>
+										</ExportTableButton>
 										<DropdownMenu.Separator />
 										<DropdownMenu.Item
 											on:click={() => (isDeletingTable = actionTable.id)}
@@ -402,7 +417,7 @@
 	</div>
 {/if}
 
-<AddTableDialog bind:isAddingTable {refetchTables} />
+<AddTableDialog bind:isAddingTable />
 <RenameTableDialog tableType="action" bind:isEditingTableID />
 <DeleteTableDialog tableType="action" bind:isDeletingTable />
 <ImportTableDialog tableType="action" bind:isImportingTable {refetchTables} />

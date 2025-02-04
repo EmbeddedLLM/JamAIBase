@@ -50,7 +50,7 @@ from jamaibase.protocol import (
     UserUpdate,
 )
 from jamaibase.utils import datetime_now_iso
-from owl.configs.manager import PlanName, ProductType
+from owl.configs.manager import ENV_CONFIG, PlanName, ProductType
 from owl.utils import uuid7_str
 
 CLIENT_CLS = [JamAI]
@@ -413,6 +413,21 @@ def test_pat(client_cls: Type[JamAI]):
                 with _create_gen_table(jamai, "action", "xx"):
                     table = jamai.table.get_table("action", "xx")
                     assert isinstance(table, TableMetaResponse)
+                    ### --- Test service key auth --- ###
+                    table = JamAI(
+                        project_id=p0.id,
+                        token=ENV_CONFIG.service_key_plain,
+                        headers={"X-USER-ID": u0.id},
+                    ).table.get_table("action", "xx")
+                    assert isinstance(table, TableMetaResponse)
+                    # Try using invalid user ID
+                    with pytest.raises(RuntimeError):
+                        JamAI(
+                            project_id=p0.id,
+                            token=ENV_CONFIG.service_key_plain,
+                            headers={"X-USER-ID": u1.id},
+                        ).table.get_table("action", "xx")
+                    ### --- Test PAT --- ###
                     # Try using invalid PAT
                     with pytest.raises(RuntimeError):
                         JamAI(project_id=p0.id, token=pat1.id).table.get_table("action", "xx")
@@ -781,7 +796,7 @@ def test_join_and_leave_organization(client_cls: Type[JamAI]):
         # --- Join with public invite link --- #
         with _create_org(owl, u0.id, tier="pro") as pro_org:
             assert u1.id not in set(m.user_id for m in pro_org.members)
-            invite = owl.admin.backend.generate_invite_token(pro_org.id)
+            invite = owl.admin.backend.generate_invite_token(pro_org.id, user_role="member")
             member = owl.admin.backend.join_organization(
                 OrgMemberCreate(
                     user_id=u1.id,
@@ -798,7 +813,9 @@ def test_join_and_leave_organization(client_cls: Type[JamAI]):
         with _create_org(owl, u0.id, tier="pro") as pro_org:
             assert u1.id not in set(m.user_id for m in pro_org.members)
             # Invite token email validation should be case and space insensitive
-            invite = owl.admin.backend.generate_invite_token(pro_org.id, f" {u1.email.upper()} ")
+            invite = owl.admin.backend.generate_invite_token(
+                pro_org.id, f" {u1.email.upper()} ", user_role="admin"
+            )
             member = owl.admin.backend.join_organization(
                 OrgMemberCreate(
                     user_id=u1.id,

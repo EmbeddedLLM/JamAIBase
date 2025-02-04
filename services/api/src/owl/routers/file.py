@@ -1,5 +1,6 @@
 import mimetypes
 import os
+from os.path import splitext
 from typing import Annotated
 from urllib.parse import quote, urlparse, urlunparse
 
@@ -14,6 +15,7 @@ from owl.protocol import FileUploadResponse, GetURLRequest, GetURLResponse
 from owl.utils.auth import ProjectRead, auth_user_project
 from owl.utils.exceptions import handle_exception
 from owl.utils.io import (
+    AUDIO_WHITE_LIST_EXT,
     LOCAL_FILE_DIR,
     S3_CLIENT,
     UPLOAD_WHITE_LIST_MIME,
@@ -91,7 +93,8 @@ async def proxy_file(request: Request, path: str) -> Response:
         raise ResourceNotFoundError("Neither S3 nor local file store is configured")
 
 
-@router.options("/v1/files/upload/")
+@router.options("/v1/files/upload")
+@router.options("/v1/files/upload/", deprecated=True)
 @handle_exception
 async def upload_file_options():
     headers = {
@@ -103,7 +106,8 @@ async def upload_file_options():
     return JSONResponse(content={"accepted_types": list(UPLOAD_WHITE_LIST_MIME)}, headers=headers)
 
 
-@router.post("/v1/files/upload/")
+@router.post("/v1/files/upload")
+@router.post("/v1/files/upload/", deprecated=True)
 @handle_exception
 async def upload_file(
     project: Annotated[ProjectRead, Depends(auth_user_project)],
@@ -164,9 +168,11 @@ async def get_thumbnail_urls(body: GetURLRequest, request: Request) -> GetURLRes
                 file_url = ""
                 if uri.startswith("s3://"):
                     try:
+                        ext = splitext(uri)[1].lower()
                         bucket_name, key = uri[5:].split("/", 1)
+                        thumb_ext = "mp3" if ext in AUDIO_WHITE_LIST_EXT else "webp"
                         thumb_key = key.replace("raw", "thumb")
-                        thumb_key = f"{os.path.splitext(thumb_key)[0]}.webp"
+                        thumb_key = f"{os.path.splitext(thumb_key)[0]}.{thumb_ext}"
                         file_url = await _generate_presigned_url(aclient, bucket_name, thumb_key)
                     except Exception as e:
                         logger.exception(
@@ -179,9 +185,11 @@ async def get_thumbnail_urls(body: GetURLRequest, request: Request) -> GetURLRes
             file_url = ""
             if uri.startswith("file://"):
                 try:
+                    ext = splitext(uri)[1].lower()
                     local_path = os.path.abspath(uri[7:])
+                    thumb_ext = "mp3" if ext in AUDIO_WHITE_LIST_EXT else "webp"
                     thumb_path = local_path.replace("raw", "thumb")
-                    thumb_path = f"{os.path.splitext(thumb_path)[0]}.webp"
+                    thumb_path = f"{os.path.splitext(thumb_path)[0]}.{thumb_ext}"
                     if os.path.exists(thumb_path):
                         relative_path = os.path.relpath(thumb_path, LOCAL_FILE_DIR)
                         file_url = str(request.url_for("proxy_file", path=relative_path))

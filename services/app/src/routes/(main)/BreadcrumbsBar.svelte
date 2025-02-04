@@ -86,8 +86,10 @@
 				</DropdownMenu.Group>
 				<DropdownMenu.Separator />
 				<DropdownMenu.Group>
-					<DropdownMenu.Item asChild>
+					<DropdownMenu.Item asChild let:builder>
 						<a
+							use:builder.action
+							{...builder}
 							href="/new-organization"
 							class="flex items-center justify-start gap-1.5 pl-2 pr-16 py-1.5 text-xs hover:bg-accent rounded-sm"
 						>

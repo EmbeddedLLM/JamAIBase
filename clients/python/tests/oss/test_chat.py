@@ -139,10 +139,19 @@ def _get_chat_request(model: str, **kwargs):
     return request
 
 
-def _get_models(return_all: bool = False) -> list[str]:
-    models = JamAI().model_names(capabilities=["chat"])
+def _get_models(
+    capabilities: list[str] = None, return_all: bool = False, exclude_audio: bool = True
+) -> list[str]:
+    if capabilities is None:
+        capabilities = ["chat"]
+    models = JamAI().model_names(capabilities=capabilities)
+    audio_models = JamAI().model_names(capabilities=["audio"])
     if return_all:
+        if exclude_audio:
+            return list(set(models) - set(audio_models))
         return models
+    if exclude_audio:
+        return list(set(models) - set(audio_models))
     providers = sorted(set(m.split("/")[0] for m in models))
     selected = []
     for provider in providers:
@@ -188,6 +197,148 @@ async def test_chat_completion(
     assert response.prompt_tokens > 0
     assert response.completion_tokens > 0
     assert response.usage.total_tokens == response.prompt_tokens + response.completion_tokens
+
+
+TOOLS = {
+    "get_weather": p.Tool(
+        type="function",
+        function=p.Function(
+            name="get_weather",
+            description="Get the current weather for a location",
+            parameters=p.FunctionParameters(
+                type="object",
+                properties={
+                    "location": p.FunctionParameter(
+                        type="string", description="The city and state, e.g. San Francisco, CA"
+                    )
+                },
+                required=["location"],
+                additionalProperties=False,
+            ),
+        ),
+    ),
+    "calculator": p.Tool(
+        type="function",
+        function=p.Function(
+            name="calculator",
+            description="Perform a basic arithmetic operation",
+            parameters=p.FunctionParameters(
+                type="object",
+                properties={
+                    "operation": p.FunctionParameter(
+                        type="string",
+                        description="The arithmetic operation to perform",
+                        enum=["add", "subtract", "multiply", "divide"],
+                    ),
+                    "first_number": p.FunctionParameter(
+                        type="number",
+                        description="The first number",
+                    ),
+                    "second_number": p.FunctionParameter(
+                        type="number",
+                        description="The second number",
+                    ),
+                },
+                required=["operation", "first_number", "second_number"],
+                additionalProperties=False,
+            ),
+        ),
+    ),
+}
+
+TOOL_PROMPTS = [
+    {
+        "tool_choice": "get_weather",
+        "prompt": "What's the weather like in Paris?",
+        "response": ['{"location":'],
+    },
+    {
+        "tool_choice": "calculator",
+        "prompt": "Divide 5 by 2.",
+        "response": ['"operation":"divide"', "first_number"],
+    },
+]
+
+
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("model", _get_models(capabilities=["tool"], return_all=True))
+@pytest.mark.parametrize("tool_prompt", TOOL_PROMPTS)
+@pytest.mark.parametrize("set_multi_tools", [False, True])
+async def test_chat_completion_with_tools(
+    client_cls: Type[JamAI | JamAIAsync], model: str, tool_prompt: dict, set_multi_tools: bool
+):
+    jamai = client_cls()
+
+    tool_choice = p.ToolChoice(
+        type="function",
+        function=p.ToolChoiceFunction(
+            name=tool_prompt["tool_choice"],
+        ),
+    )
+
+    # Create a chat request with a tool
+    request = p.ChatRequestWithTools(
+        id="test",
+        model=model,
+        messages=[
+            p.ChatEntry.system("You are a concise assistant."),
+            p.ChatEntry.user(tool_prompt["prompt"]),
+        ],
+        tools=[v for _, v in TOOLS.items()]
+        if set_multi_tools
+        else [TOOLS[tool_prompt["tool_choice"]]],
+        tool_choice="auto" if model.startswith("openai/") else tool_choice,
+        temperature=0.001,
+        top_p=0.001,
+        max_tokens=50,
+        stream=False,
+    )
+
+    # Non-streaming
+    response = await run(jamai.generate_chat_completions, request)
+    assert isinstance(response, p.ChatCompletionChunk)
+    assert isinstance(response.text, str)
+    assert len(response.text) == 0
+    tool_calls = response.message.tool_calls
+    assert isinstance(tool_calls, list)
+    assert len(tool_calls) == 1
+    assert tool_calls[0].function.name == tool_prompt["tool_choice"]
+    for argument in tool_prompt["response"]:
+        assert argument in tool_calls[0].function.arguments.replace(" ", "")
+    assert isinstance(response.usage, p.CompletionUsage)
+    assert isinstance(response.prompt_tokens, int)
+    assert isinstance(response.completion_tokens, int)
+    assert response.references is None
+
+    # Streaming
+    request.stream = True
+    responses = await run(jamai.generate_chat_completions, request)
+    assert len(responses) > 0
+    assert all(isinstance(r, p.ChatCompletionChunk) for r in responses)
+    assert all(isinstance(r.text, str) for r in responses)
+    assert len("".join(r.text for r in responses)) == 0
+    assert all(r.references is None for r in responses)
+    response = responses[-1]
+    assert all(isinstance(r.usage, p.CompletionUsage) for r in responses)
+    assert all(isinstance(r.prompt_tokens, int) for r in responses)
+    assert all(isinstance(r.completion_tokens, int) for r in responses)
+    assert response.prompt_tokens > 0
+    assert response.completion_tokens > 0
+    assert response.usage.total_tokens == response.prompt_tokens + response.completion_tokens
+    arguments_result = ""
+    for response in responses:
+        tool_calls = response.message.tool_calls
+        assert isinstance(tool_calls, list) or tool_calls is None
+        if isinstance(tool_calls, list):
+            assert len(tool_calls) == 1
+            arguments_result += tool_calls[0].function.arguments
+            assert (
+                tool_calls[0].function.name == tool_prompt["tool_choice"]
+                or tool_calls[0].function.name is None
+            )
+    for argument in tool_prompt["response"]:
+        assert argument in arguments_result.replace(" ", "")
 
 
 @flaky(max_runs=3, min_passes=1)

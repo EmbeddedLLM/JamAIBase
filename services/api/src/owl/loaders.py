@@ -29,7 +29,10 @@ def make_printable(s: str) -> str:
     return s.translate(NOPRINT_TRANS_TABLE)
 
 
-def format_chunks(documents: list[Document], file_name: str) -> list[Chunk]:
+def format_chunks(documents: list[Document], file_name: str, page: int = None) -> list[Chunk]:
+    if page is not None:
+        for d in documents:
+            d.metadata["page"] = page
     chunks = [
         # TODO: Probably can use regex for this
         # Replace vertical tabs, form feed, Unicode replacement character
@@ -84,7 +87,7 @@ async def load_file(
             loader = DocIOAPIFileLoader(tmp_path, ENV_CONFIG.docio_url)
             documents = loader.load()
             logger.debug('File "{file_name}" loaded: {docs}', file_name=file_name, docs=documents)
-            chunks = format_chunks(documents, file_name)
+            chunks = format_chunks(documents, file_name, page=1)
             if ext == ".json":
                 chunks = split_chunks(
                     SplitChunksRequest(

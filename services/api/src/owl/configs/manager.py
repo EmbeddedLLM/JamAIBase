@@ -15,9 +15,9 @@ from redis.exceptions import ConnectionError, TimeoutError
 from redis.retry import Retry
 
 from owl.protocol import (
-    EXAMPLE_CHAT_MODEL,
-    EXAMPLE_EMBEDDING_MODEL,
-    EXAMPLE_RERANKING_MODEL,
+    EXAMPLE_CHAT_MODEL_IDS,
+    EXAMPLE_EMBEDDING_MODEL_IDS,
+    EXAMPLE_RERANKING_MODEL_IDS,
     ModelListConfig,
 )
 
@@ -26,7 +26,11 @@ CURR_DIR = Path(__file__).resolve().parent
 
 class EnvConfig(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", cli_parse_args=False
+        # env_prefix="owl_",  # TODO: Enable this
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        cli_parse_args=False,
     )
     # API configs
     owl_is_prod: bool = False
@@ -45,7 +49,9 @@ class EnvConfig(BaseSettings):
     owl_redis_port: int = 6379
     owl_internal_org_id: str = "org_82d01c923f25d5939b9d4188"
     # Configs
-    owl_file_upload_max_bytes: int = 20 * 1024 * 1024  # 20MB in bytes
+    owl_embed_file_upload_max_bytes: int = 200 * 1024 * 1024  # 200MB in bytes
+    owl_image_file_upload_max_bytes: int = 20 * 1024 * 1024  # 20MB in bytes
+    owl_audio_file_upload_max_bytes: int = 120 * 1024 * 1024  # 120MB in bytes
     owl_compute_storage_period_min: float = 1
     owl_models_config: str = "models.json"
     owl_pricing_config: str = "cloud_pricing.json"
@@ -63,6 +69,8 @@ class EnvConfig(BaseSettings):
     owl_concurrent_rows_batch_size: int = 3
     owl_concurrent_cols_batch_size: int = 5
     owl_max_write_batch_size: int = 1000
+    # Code Executor configs
+    code_executor_endpoint: str = "http://kopi:5569"
     # Loader configs
     docio_url: str = "http://docio:6979/api/docio"
     unstructuredio_url: str = "http://unstructuredio:6989"
@@ -98,6 +106,7 @@ class EnvConfig(BaseSettings):
     hyperbolic_api_key: SecretStr = ""
     cerebras_api_key: SecretStr = ""
     sambanova_api_key: SecretStr = ""
+    deepseek_api_key: SecretStr = ""
 
     @model_validator(mode="after")
     def make_paths_absolute(self):
@@ -202,6 +211,10 @@ class EnvConfig(BaseSettings):
     @property
     def sambanova_api_key_plain(self):
         return self.sambanova_api_key.get_secret_value()
+
+    @property
+    def deepseek_api_key_plain(self):
+        return self.deepseek_api_key.get_secret_value()
 
 
 MODEL_CONFIG_KEY = "<owl> models"
@@ -341,7 +354,11 @@ class _ModelPrice(BaseModel):
             'Unique identifier in the form of "{provider}/{model_id}". '
             "Users will specify this to select a model."
         ),
-        examples=[EXAMPLE_CHAT_MODEL, EXAMPLE_EMBEDDING_MODEL, EXAMPLE_RERANKING_MODEL],
+        examples=[
+            EXAMPLE_CHAT_MODEL_IDS[0],
+            EXAMPLE_EMBEDDING_MODEL_IDS[0],
+            EXAMPLE_RERANKING_MODEL_IDS[0],
+        ],
     )
     name: str = Field(
         description="Name of the model.",
@@ -482,7 +499,6 @@ class Config:
         if model_json is None:
             model_json = self._load_model_config_from_file().model_dump_json()
             self[MODEL_CONFIG_KEY] = model_json
-            logger.warning(f"Model config set to: {model_json}")
         return model_json
 
     def get_model_config(self) -> ModelListConfig:

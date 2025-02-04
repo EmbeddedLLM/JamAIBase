@@ -160,7 +160,7 @@ table = jamai.table.create_action_table(
     p.ActionTableSchemaCreate(
         id="action-simple",
         cols=[
-            p.ColumnSchemaCreate(id="image", dtype="file"),  # Image input
+            p.ColumnSchemaCreate(id="image", dtype="image"),  # Image input
             p.ColumnSchemaCreate(id="length", dtype="int"),  # Integer input
             p.ColumnSchemaCreate(id="question", dtype="str"),
             p.ColumnSchemaCreate(
@@ -557,7 +557,7 @@ def create_tables(jamai: JamAI):
         p.ActionTableSchemaCreate(
             id="action-simple",
             cols=[
-                p.ColumnSchemaCreate(id="image", dtype="file"),  # Image input
+                p.ColumnSchemaCreate(id="image", dtype="image"),  # Image input
                 p.ColumnSchemaCreate(id="length", dtype="int"),  # Integer input
                 p.ColumnSchemaCreate(id="question", dtype="str"),
                 p.ColumnSchemaCreate(

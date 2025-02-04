@@ -110,7 +110,7 @@
 	class="block md:hidden absolute top-0 bottom-0 left-0 right-0 z-[999] bg-black {$showDock
 		? 'opacity-50'
 		: 'opacity-0 pointer-events-none'} transition-opacity duration-200"
-/>
+></div>
 
 <div
 	inert={windowWidth !== undefined && windowWidth < 768 && !$showDock}
@@ -263,7 +263,7 @@
 				class="{$showDock
 					? 'opacity-0 [transition:top_150ms]'
 					: 'opacity-100 [transition:top_150ms,_opacity_150ms_ease-in-out_160ms]'} absolute left-0 h-11 w-[3px] bg-[#950048]"
-			/>
+			></div>
 		</div>
 
 		{#if organizationData?.tier === 'free'}

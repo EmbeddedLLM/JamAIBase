@@ -12,6 +12,7 @@ import pandas as pd
 import srsly
 import toml
 from PIL import ExifTags, Image
+from pydub import AudioSegment
 
 from jamaibase.utils.types import JSONInput, JSONOutput
 
@@ -176,7 +177,7 @@ def read_image(img_path: str) -> tuple[np.ndarray, bool]:
         return np.asarray(image), is_rotated
 
 
-def generate_thumbnail(
+def generate_image_thumbnail(
     file_content: bytes,
     size: tuple[float, float] = (450.0, 450.0),
 ) -> bytes:
@@ -201,3 +202,26 @@ def generate_thumbnail(
     except Exception as e:
         logger.exception(f"Failed to generate thumbnail due to {e.__class__.__name__}: {e}")
         return b""
+
+
+def generate_audio_thumbnail(file_content: bytes, duration_ms: int = 30000) -> bytes:
+    """
+    Generates a thumbnail audio by extracting a segment from the original audio.
+
+    Args:
+        file_content (bytes): The audio file content.
+        duration_ms (int): Duration of the thumbnail in milliseconds.
+
+    Returns:
+        bytes: The thumbnail audio segment as bytes.
+    """
+    # Use BytesIO to simulate a file object from the byte content
+    audio = AudioSegment.from_file(BytesIO(file_content))
+
+    # Extract the first `duration_ms` milliseconds
+    thumbnail = audio[:duration_ms]
+
+    # Export the thumbnail to a bytes object
+    with BytesIO() as output:
+        thumbnail.export(output, format="mp3")
+        return output.getvalue()

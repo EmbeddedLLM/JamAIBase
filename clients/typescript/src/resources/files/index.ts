@@ -14,7 +14,7 @@ import {
 
 export class Files extends Base {
     public async uploadFile(params: IUploadFileRequest): Promise<IUploadFileResponse> {
-        const apiURL = `/api/v1/files/upload/`;
+        const apiURL = `/api/v1/files/upload`;
 
         const parsedParams = UploadFileRequestSchema.parse(params);
 

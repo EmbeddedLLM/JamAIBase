@@ -2,10 +2,10 @@
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import toUpper from 'lodash/toUpper';
 	import { page } from '$app/stores';
+	import { genTableRows, tableState } from '$lib/components/tables/tablesStore';
 	import { cn } from '$lib/utils';
 	import logger from '$lib/logger';
 	import type { GenTable, GenTableStreamEvent } from '$lib/types';
-	import { genTableRows } from '$lib/components/tables/tablesStore';
 
 	import StarIcon from '$lib/icons/StarIcon.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
@@ -14,8 +14,6 @@
 	type $$Props = Props & {
 		tableType: 'action' | 'knowledge' | 'chat';
 		tableData: GenTable | undefined;
-		selectedRows: string[];
-		streamingRows: Record<string, string[]>;
 		refetchTable: () => void;
 	};
 	type $$Events = Events;
@@ -24,8 +22,6 @@
 	export { className as class };
 	export let tableType: $$Props['tableType'];
 	export let tableData: $$Props['tableData'];
-	export let selectedRows: $$Props['selectedRows'];
-	export let streamingRows: $$Props['streamingRows'];
 	export let refetchTable: $$Props['refetchTable'];
 
 	const keyframes = [
@@ -57,23 +53,22 @@
 
 	async function handleRegenRow() {
 		if (!tableData || !$genTableRows) return;
-		if (Object.keys(streamingRows).length !== 0) return;
+		if (Object.keys($tableState.streamingRows).length !== 0) return;
 
-		const toRegenRowIds = selectedRows.filter((i) => !streamingRows[i]);
+		const toRegenRowIds = $tableState.selectedRows.filter((i) => !$tableState.streamingRows[i]);
 		if (toRegenRowIds.length === 0)
 			return toast.info('Select a row to start generating', { id: 'row-select-req' });
-		selectedRows = [];
+		tableState.setSelectedRows([]);
 
-		streamingRows = {
-			...streamingRows,
-			...toRegenRowIds.reduce(
+		tableState.addStreamingRows(
+			toRegenRowIds.reduce(
 				(acc, curr) => ({
 					...acc,
 					[curr]: tableData.cols.filter((col) => col.gen_config).map((col) => col.id)
 				}),
 				{}
 			)
-		};
+		);
 
 		//? Optimistic update, clear row
 		const originalValues = toRegenRowIds.map((toRegenRowId) => ({
@@ -152,12 +147,16 @@
 											break;
 										}
 										default: {
-											streamingRows = {
-												...streamingRows,
-												[parsedValue.row_id]: streamingRows[parsedValue.row_id].filter(
-													(col) => col !== parsedValue.output_column_name
-												)
-											};
+											const streamingCols = $tableState.streamingRows[parsedValue.row_id].filter(
+												(col) => col !== parsedValue.output_column_name
+											);
+											if (streamingCols.length === 0) {
+												tableState.delStreamingRows([parsedValue.row_id]);
+											} else {
+												tableState.addStreamingRows({
+													[parsedValue.row_id]: streamingCols
+												});
+											}
 											break;
 										}
 									}
@@ -181,10 +180,7 @@
 					console.error(err);
 
 					//? Below necessary for retry
-					for (const toRegenRowId of toRegenRowIds) {
-						delete streamingRows[toRegenRowId];
-					}
-					streamingRows = streamingRows;
+					tableState.delStreamingRows(toRegenRowIds);
 
 					refetchTable();
 
@@ -195,10 +191,7 @@
 			refetchTable();
 		}
 
-		for (const toRegenRowId of toRegenRowIds) {
-			delete streamingRows[toRegenRowId];
-		}
-		streamingRows = streamingRows;
+		tableState.delStreamingRows(toRegenRowIds);
 
 		refetchTable();
 	}
@@ -278,9 +271,9 @@
 	</svg>
 
 	<div
-		style={Object.keys(streamingRows).length !== 0 ? 'opacity: 0%;' : ''}
+		style={Object.keys($tableState.streamingRows).length !== 0 ? 'opacity: 0%;' : ''}
 		class="absolute top-0 left-0 h-full w-full z-[9] bg-[#BF416E] opacity-100 group-hover/gen-btn:opacity-0 group-hover/gen-btn:motion-reduce:opacity-100 group-hover/gen-btn:motion-reduce:bg-[#950048] group-focus/gen-btn:opacity-0 transition-opacity duration-300"
-	/>
+	></div>
 
 	<div class="flex items-center gap-1.5 z-10">
 		<div class="stars relative text-[#FCFCFD]">

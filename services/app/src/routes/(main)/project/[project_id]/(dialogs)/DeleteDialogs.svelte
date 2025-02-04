@@ -3,7 +3,7 @@
 	import toUpper from 'lodash/toUpper';
 	import { page } from '$app/stores';
 	import { Dialog as DialogPrimitive } from 'bits-ui';
-	import { genTableRows } from '$lib/components/tables/tablesStore';
+	import { genTableRows, tableState } from '$lib/components/tables/tablesStore';
 	import logger from '$lib/logger';
 
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
@@ -13,14 +13,13 @@
 	import CloseIcon from '$lib/icons/CloseIcon.svelte';
 
 	export let tableType: 'action' | 'knowledge' | 'chat';
-	export let isDeletingColumn: string | null;
 	export let isDeletingRow: string[] | null;
 	export let refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
 
 	let isLoading = false;
 
 	async function handleDeleteColumn() {
-		if (isLoading || !isDeletingColumn) return;
+		if (isLoading || !$tableState.deletingCol) return;
 		isLoading = true;
 
 		const response = await fetch(
@@ -33,7 +32,7 @@
 				},
 				body: JSON.stringify({
 					table_id: $page.params.table_id,
-					column_names: [isDeletingColumn]
+					column_names: [$tableState.deletingCol]
 				})
 			}
 		);
@@ -50,7 +49,7 @@
 			});
 		} else {
 			await refetchTable();
-			isDeletingColumn = null;
+			tableState.setDeletingCol(null);
 		}
 
 		isLoading = false;
@@ -93,10 +92,10 @@
 </script>
 
 <Dialog.Root
-	open={!!isDeletingColumn}
+	open={!!$tableState.deletingCol}
 	onOpenChange={(e) => {
 		if (!e) {
-			isDeletingColumn = null;
+			tableState.setDeletingCol(null);
 		}
 	}}
 >
@@ -119,7 +118,7 @@
 			<p class="text-text/60 text-sm">
 				Do you really want to drop column
 				<span class="font-medium text-black data-dark:text-white [word-break:break-word]">
-					`{isDeletingColumn}`
+					`{$tableState.deletingCol}`
 				</span>? This process cannot be undone.
 			</p>
 		</div>

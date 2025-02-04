@@ -9,6 +9,7 @@
 	import logger from '$lib/logger';
 
 	import { AddTableDialog } from './(dialogs)';
+	import { ExportTableButton } from '../(components)';
 	import { DeleteTableDialog, ImportTableDialog, RenameTableDialog } from '../(dialogs)';
 	import FoundProjectOrgSwitcher from '$lib/components/preset/FoundProjectOrgSwitcher.svelte';
 	import SorterSelect from '$lib/components/preset/SorterSelect.svelte';
@@ -25,6 +26,7 @@
 	import SortAlphabetIcon from '$lib/icons/SortAlphabetIcon.svelte';
 	import SortByIcon from '$lib/icons/SortByIcon.svelte';
 	import ImportIcon from '$lib/icons/ImportIcon.svelte';
+	import ExportIcon from '$lib/icons/ExportIcon.svelte';
 
 	export let data;
 	$: ({ userData } = data);
@@ -213,7 +215,7 @@
 
 		const allowedFiletypes = ['.parquet'];
 		if (
-			files.some((file) => !allowedFiletypes.includes('.' + (file.name.split('.').pop() ?? '')))
+			files.some((file) => !allowedFiletypes.includes('.' + (file.name.split('.').pop() ?? '').toLowerCase()))
 		) {
 			alert(`Files must be of type: ${allowedFiletypes.join(', ').replaceAll('.', '')}`);
 			return;
@@ -257,7 +259,7 @@
 				<Button
 					title="Import table"
 					on:click={(e) => e.currentTarget.querySelector('input')?.click()}
-					class="flex items-center gap-2 p-0 md:px-3.5 h-8 xs:h-9 text-[#475467] bg-[#F2F4F7] hover:bg-[#E4E7EC] active:bg-[#E4E7EC]  aspect-square md:aspect-auto"
+					class="flex items-center gap-2 p-0 md:px-3.5 h-8 xs:h-9 text-[#475467] bg-[#F2F4F7] hover:bg-[#E4E7EC] focus-visible:bg-[#E4E7EC] active:bg-[#E4E7EC]  aspect-square md:aspect-auto"
 				>
 					<ImportIcon class="h-3.5" />
 
@@ -341,6 +343,19 @@
 											<EditIcon class="h-3.5 w-3.5 mr-2" />
 											<span>Rename table</span>
 										</DropdownMenu.Item>
+										<ExportTableButton
+											let:handleExportTable
+											tableId={knowledgeTable.id}
+											tableType="knowledge"
+										>
+											<DropdownMenu.Item
+												on:click={handleExportTable}
+												class="text-[#344054] data-[highlighted]:text-[#344054]"
+											>
+												<ExportIcon class="h-3.5 w-3.5 mr-2" />
+												<span>Export table</span>
+											</DropdownMenu.Item>
+										</ExportTableButton>
 										<DropdownMenu.Separator />
 										<DropdownMenu.Item
 											on:click={() => (isDeletingTable = knowledgeTable.id)}
@@ -402,7 +417,7 @@
 	</div>
 {/if}
 
-<AddTableDialog bind:isAddingTable {refetchTables} />
+<AddTableDialog bind:isAddingTable />
 <RenameTableDialog tableType="knowledge" bind:isEditingTableID />
 <DeleteTableDialog tableType="knowledge" bind:isDeletingTable />
 <ImportTableDialog tableType="knowledge" bind:isImportingTable {refetchTables} />

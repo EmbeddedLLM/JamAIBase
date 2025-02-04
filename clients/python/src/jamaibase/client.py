@@ -597,6 +597,7 @@ class _BackendAdminClient(_Client):
         self,
         organization_id: str,
         user_email: str = "",
+        user_role: str = "",
         valid_days: int = 7,
     ) -> str:
         """
@@ -606,6 +607,8 @@ class _BackendAdminClient(_Client):
             organization_id (str): Organization ID.
             user_email (str, optional): User email.
                 Leave blank to disable email check and generate a public invite. Defaults to "".
+            user_role (str, optional): User role.
+                Leave blank to default to guest. Defaults to "".
             valid_days (int, optional): How many days should this link be valid for. Defaults to 7.
 
         Returns:
@@ -615,7 +618,10 @@ class _BackendAdminClient(_Client):
             self.api_base,
             "/admin/backend/v1/invite_tokens",
             params=dict(
-                organization_id=organization_id, user_email=user_email, valid_days=valid_days
+                organization_id=organization_id,
+                user_email=user_email,
+                user_role=user_role,
+                valid_days=valid_days,
             ),
             response_model=None,
         )
@@ -1222,7 +1228,7 @@ class _FileClient(_Client):
         with open(file_path, "rb") as f:
             return self._post(
                 self.api_base,
-                "/v1/files/upload/",
+                "/v1/files/upload",
                 body=None,
                 response_model=FileUploadResponse,
                 files={
@@ -2209,7 +2215,9 @@ class JamAI(_Client):
     def model_info(
         self,
         name: str = "",
-        capabilities: list[Literal["completion", "chat", "image", "embed", "rerank"]]
+        capabilities: list[
+            Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]
+        ]
         | None = None,
     ) -> ModelInfoResponse:
         """
@@ -2217,7 +2225,7 @@ class JamAI(_Client):
 
         Args:
             name (str, optional): The model name. Defaults to "".
-            capabilities (list[Literal["completion", "chat", "image", "embed", "rerank"]] | None, optional):
+            capabilities (list[Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]] | None, optional):
                 List of model capabilities to filter by. Defaults to None.
 
         Returns:
@@ -2234,7 +2242,9 @@ class JamAI(_Client):
     def model_names(
         self,
         prefer: str = "",
-        capabilities: list[Literal["completion", "chat", "image", "embed", "rerank"]]
+        capabilities: list[
+            Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]
+        ]
         | None = None,
     ) -> list[str]:
         """
@@ -2242,7 +2252,7 @@ class JamAI(_Client):
 
         Args:
             prefer (str, optional): Preferred model name. Defaults to "".
-            capabilities (list[Literal["completion", "chat", "image", "embed", "rerank"]] | None, optional):
+            capabilities (list[Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]] | None, optional):
                 List of model capabilities to filter by. Defaults to None.
 
         Returns:
@@ -4002,7 +4012,7 @@ class _FileClientAsync(_ClientAsync):
         with open(file_path, "rb") as f:
             return await self._post(
                 self.api_base,
-                "/v1/files/upload/",
+                "/v1/files/upload",
                 body=None,
                 response_model=FileUploadResponse,
                 files={
@@ -4989,7 +4999,9 @@ class JamAIAsync(_ClientAsync):
     async def model_info(
         self,
         name: str = "",
-        capabilities: list[Literal["completion", "chat", "image", "embed", "rerank"]]
+        capabilities: list[
+            Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]
+        ]
         | None = None,
     ) -> ModelInfoResponse:
         """
@@ -4997,7 +5009,7 @@ class JamAIAsync(_ClientAsync):
 
         Args:
             name (str, optional): The model name. Defaults to "".
-            capabilities (list[Literal["completion", "chat", "image", "embed", "rerank"]] | None, optional):
+            capabilities (list[Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]] | None, optional):
                 List of model capabilities to filter by. Defaults to None.
 
         Returns:
@@ -5014,7 +5026,9 @@ class JamAIAsync(_ClientAsync):
     async def model_names(
         self,
         prefer: str = "",
-        capabilities: list[Literal["completion", "chat", "image", "embed", "rerank"]]
+        capabilities: list[
+            Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]
+        ]
         | None = None,
     ) -> list[str]:
         """
@@ -5022,7 +5036,7 @@ class JamAIAsync(_ClientAsync):
 
         Args:
             prefer (str, optional): Preferred model name. Defaults to "".
-            capabilities (list[Literal["completion", "chat", "image", "embed", "rerank"]] | None, optional):
+            capabilities (list[Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]] | None, optional):
                 List of model capabilities to filter by. Defaults to None.
 
         Returns:

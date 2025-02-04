@@ -191,7 +191,7 @@ export class TablePage extends LayoutPage {
 	}
 
 	/** Add column */
-	async addColumn(type: 'input' | 'output', datatype: (typeof genTableDTypes)[number] = 'str') {
+	async addColumn(type: 'input' | 'output', datatype: (typeof genTableDTypes)[string] = 'str') {
 		await this.actionsBtn.click();
 		await this.page
 			.getByTestId('table-actions-dropdown')

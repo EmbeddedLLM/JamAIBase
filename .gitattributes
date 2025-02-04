@@ -19,7 +19,7 @@
 # https://git-scm.com/docs/gitattributes#_text
 *.css text
 *.html text
-*.js text
+*.js* text
 *.md text
 *.py text
 *.sh text

@@ -17,9 +17,9 @@ export const TableTypesSchema = z.enum(["action", "knowledge", "chat"]);
 export const IdSchema = z.string().regex(/^[A-Za-z0-9]([A-Za-z0-9 _-]{0,98}[A-Za-z0-9])?$/, "Invalid Id");
 export const TableIdSchema = z.string().regex(/^[A-Za-z0-9]([A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/, "Invalid Table Id");
 
-const DtypeCreateEnumSchema = z.enum(["int", "float", "str", "bool", "file"]);
+const DtypeCreateEnumSchema = z.enum(["int", "float", "str", "bool", "image"]);
 
-const DtypeEnumSchema = z.enum(["int", "int8", "float", "float64", "float32", "float16", "bool", "str", "date-time", "file", "bytes"]);
+const DtypeEnumSchema = z.enum(["int", "int8", "float", "float64", "float32", "float16", "bool", "str", "date-time", "image", "bytes"]);
 
 export const EmbedGenConfigSchema = z.object({
     object: z.literal("gen_config.embed").default("gen_config.embed"),

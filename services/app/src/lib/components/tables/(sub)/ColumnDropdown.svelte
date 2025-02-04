@@ -3,9 +3,9 @@
 	import { page } from '$app/stores';
 	import toUpper from 'lodash/toUpper';
 	import Trash2 from 'lucide-svelte/icons/trash-2';
-	import { genTableRows } from '../tablesStore';
+	import { genTableRows, tableState } from '../tablesStore';
 	import logger from '$lib/logger';
-	import { chatTableStaticCols, knowledgeTableStaticCols } from '$lib/constants';
+	import { tableStaticCols } from '$lib/constants';
 	import type { GenTable, GenTableCol, GenTableStreamEvent } from '$lib/types';
 
 	import { CustomToastDesc, toast } from '$lib/components/ui/sonner';
@@ -17,13 +17,8 @@
 	import StarIcon from '$lib/icons/StarIcon.svelte';
 
 	export let tableType: 'action' | 'knowledge' | 'chat';
-	export let column: GenTableCol;
 	export let tableData: GenTable | undefined;
-	export let selectedRows: string[];
-	export let streamingRows: Record<string, string[]>;
-	export let isColumnSettingsOpen: { column: any; showMenu: boolean };
-	export let isRenamingColumn: string | null;
-	export let isDeletingColumn: string | null;
+	export let column: GenTableCol;
 	export let refetchTable: () => Promise<void>;
 	export let readonly;
 
@@ -31,12 +26,12 @@
 
 	async function handleRegen(regenStrategy: 'run_before' | 'run_selected' | 'run_after') {
 		if (!tableData || !$genTableRows) return;
-		if (Object.keys(streamingRows).length !== 0) return;
+		if (Object.keys($tableState.streamingRows).length !== 0) return;
 
-		const toRegenRowIds = selectedRows.filter((i) => !streamingRows[i]);
+		const toRegenRowIds = $tableState.selectedRows.filter((i) => !$tableState.streamingRows[i]);
 		if (toRegenRowIds.length === 0)
 			return toast.info('Select a row to start generating', { id: 'row-select-req' });
-		selectedRows = [];
+		tableState.setSelectedRows([]);
 
 		let colsToClear: string[];
 		switch (regenStrategy) {
@@ -58,16 +53,15 @@
 			}
 		}
 
-		streamingRows = {
-			...streamingRows,
-			...toRegenRowIds.reduce(
+		tableState.addStreamingRows(
+			toRegenRowIds.reduce(
 				(acc, curr) => ({
 					...acc,
 					[curr]: colsToClear
 				}),
 				{}
 			)
-		};
+		);
 
 		//? Optimistic update, clear row
 		const originalValues = toRegenRowIds.map((toRegenRowId) => ({
@@ -148,12 +142,16 @@
 											break;
 										}
 										default: {
-											streamingRows = {
-												...streamingRows,
-												[parsedValue.row_id]: streamingRows[parsedValue.row_id].filter(
-													(col) => col !== parsedValue.output_column_name
-												)
-											};
+											const streamingCols = $tableState.streamingRows[parsedValue.row_id].filter(
+												(col) => col !== parsedValue.output_column_name
+											);
+											if (streamingCols.length === 0) {
+												tableState.delStreamingRows([parsedValue.row_id]);
+											} else {
+												tableState.addStreamingRows({
+													[parsedValue.row_id]: streamingCols
+												});
+											}
 											break;
 										}
 									}
@@ -176,12 +174,7 @@
 					// logger.error(toUpper(`${tableType}TBL_ROW_REGENSTREAM`), err);
 					console.error(err);
 
-					//? Below necessary for retry
-					for (const toRegenRowId of toRegenRowIds) {
-						delete streamingRows[toRegenRowId];
-					}
-					streamingRows = streamingRows;
-
+					tableState.delStreamingRows(toRegenRowIds);
 					refetchTable();
 
 					throw err;
@@ -191,11 +184,7 @@
 			refetchTable();
 		}
 
-		for (const toRegenRowId of toRegenRowIds) {
-			delete streamingRows[toRegenRowId];
-		}
-		streamingRows = streamingRows;
-
+		tableState.delStreamingRows(toRegenRowIds);
 		refetchTable();
 	}
 </script>
@@ -219,20 +208,20 @@
 	>
 		{#if colType === 'output'}
 			<DropdownMenu.Group>
-				<DropdownMenu.Item on:click={() => (isColumnSettingsOpen = { column, showMenu: true })}>
+				<DropdownMenu.Item on:click={() => tableState.setColumnSettings({ column, isOpen: true })}>
 					<TuneIcon class="h-4 w-4 mr-2 mb-[1px] -translate-x-px" />
 					<span class="-translate-x-0.5">Open settings</span>
 				</DropdownMenu.Item>
 			</DropdownMenu.Group>
 		{/if}
 
-		{#if colType === 'output' && !readonly && (tableType !== 'chat' || !chatTableStaticCols.includes(column.id)) && (tableType !== 'knowledge' || !knowledgeTableStaticCols.includes(column.id))}
+		{#if colType === 'output' && !readonly && !tableStaticCols[tableType].includes(column.id)}
 			<DropdownMenu.Separator class="bg-[#E4E7EC]" />
 		{/if}
 
-		{#if !readonly && (tableType !== 'chat' || !chatTableStaticCols.includes(column.id)) && (tableType !== 'knowledge' || !knowledgeTableStaticCols.includes(column.id))}
+		{#if !readonly && !tableStaticCols[tableType].includes(column.id)}
 			<DropdownMenu.Group>
-				{#if selectedRows.length > 0}
+				{#if colType === 'output' && $tableState.selectedRows.length > 0}
 					<DropdownMenu.Sub>
 						<DropdownMenu.SubTrigger>
 							<StarIcon class="h-[15px] w-[15px] mr-1.5" />
@@ -254,7 +243,7 @@
 
 				<DropdownMenu.Item
 					on:click={async () => {
-						isRenamingColumn = column.id;
+						tableState.setRenamingCol(column.id);
 						//? Tick doesn't work
 						setTimeout(() => document.getElementById('column-id-edit')?.focus(), 100);
 					}}
@@ -262,7 +251,10 @@
 					<EditIcon class="h-3.5 w-3.5 mr-2" />
 					<span>Rename</span>
 				</DropdownMenu.Item>
-				<DropdownMenu.Item on:click={() => (isDeletingColumn = column.id)} class="!text-[#F04438]">
+				<DropdownMenu.Item
+					on:click={() => tableState.setDeletingCol(column.id)}
+					class="!text-[#F04438]"
+				>
 					<Trash2 class="h-3.5 w-3.5 mr-2" />
 					<span>Delete column</span>
 				</DropdownMenu.Item>

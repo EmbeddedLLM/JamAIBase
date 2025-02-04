@@ -12,4 +12,4 @@
 	data-testid="loading-skeleton"
 	class={cn('animate-pulse rounded-md bg-muted', className)}
 	{...$$restProps}
-/>
+></div>

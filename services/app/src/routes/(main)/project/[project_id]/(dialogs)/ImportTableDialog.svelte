@@ -149,7 +149,7 @@
 							<div
 								class="flex-[0_0_auto] ml-auto my-2 radial-progress text-secondary [transform:_scale(-1,_1)]"
 								style="--value:{Math.floor(uploadProgress)}; --size:20px; --thickness: 5px;"
-							/>
+							></div>
 						{:else}
 							<Button
 								on:click={() => {
