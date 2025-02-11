@@ -23,7 +23,7 @@
 		});
 
 		const fileColumns = tableData.cols.filter(
-			(col) => col.dtype === 'file' || col.dtype === 'audio'
+			(col) => col.dtype === 'image' || col.dtype === 'audio'
 		);
 		if (fileColumns.length === 0) return;
 
@@ -112,7 +112,7 @@
 		} else {
 			toast.error('Failed to retrieve thumbnails', {
 				id: urlBody.message || JSON.stringify(urlBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: urlBody.message || JSON.stringify(urlBody),
 					requestID: urlBody.request_id

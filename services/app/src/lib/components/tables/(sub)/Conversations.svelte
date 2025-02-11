@@ -302,7 +302,7 @@
 							if (e.relatedTarget != saveEditBtn) isEditingTitle = null;
 						}}
 						class="mr-12 w-full bg-transparent resize-none outline-none text-sm"
-					/>
+					></textarea>
 
 					<button
 						bind:this={saveEditBtn}
@@ -345,7 +345,7 @@
 							.params.table_id === conversation.id
 							? 'opacity-100'
 							: 'opacity-0'} group-hover/item:opacity-100 transition-opacity duration-75"
-					/>
+					></div>
 				</div>
 
 				<Button

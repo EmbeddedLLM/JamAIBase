@@ -1204,7 +1204,7 @@ async def embed_file(
     # ] = False,
     chunk_size: Annotated[
         int, Form(description="Maximum chunk size (number of characters). Must be > 0.", gt=0)
-    ] = 1000,
+    ] = 2000,
     chunk_overlap: Annotated[
         int, Form(description="Overlap in characters between chunks. Must be >= 0.", ge=0)
     ] = 200,

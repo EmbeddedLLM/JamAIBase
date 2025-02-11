@@ -41,7 +41,7 @@
 			logger.error(toUpper(`${tableType}TBL_COLUMN_DEL`), responseBody);
 			toast.error('Failed to delete column', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id
@@ -75,7 +75,7 @@
 			logger.error(toUpper(`${tableType}TBL_ROW_DEL`), responseBody);
 			toast.error('Failed to delete row', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id

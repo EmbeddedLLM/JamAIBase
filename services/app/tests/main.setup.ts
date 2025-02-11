@@ -22,6 +22,7 @@ setup('create org and tables', async () => {
 		})
 	});
 	const createOrgBody = await createOrgRes.json();
+	console.log(createOrgBody);
 	if (!createOrgRes.ok) throw { code: 'create_org', ...createOrgBody };
 
 	const organizationId = createOrgBody.id;

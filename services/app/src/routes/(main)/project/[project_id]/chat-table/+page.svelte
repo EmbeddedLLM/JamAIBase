@@ -143,7 +143,7 @@
 				console.error(responseBody);
 				toast.error('Failed to fetch chat agents', {
 					id: responseBody.message || JSON.stringify(responseBody),
-					description: CustomToastDesc,
+					description: CustomToastDesc as any,
 					componentProps: {
 						description: responseBody.message || JSON.stringify(responseBody),
 						requestID: responseBody.request_id
@@ -223,7 +223,7 @@
 				console.error(responseBody);
 				toast.error('Failed to fetch filtered conversations', {
 					id: responseBody.message || JSON.stringify(responseBody),
-					description: CustomToastDesc,
+					description: CustomToastDesc as any,
 					componentProps: {
 						description: responseBody.message || JSON.stringify(responseBody),
 						requestID: responseBody.request_id
@@ -303,7 +303,7 @@
 				console.error(responseBody);
 				toast.error('Failed to search tables', {
 					id: responseBody.message || JSON.stringify(responseBody),
-					description: CustomToastDesc,
+					description: CustomToastDesc as any,
 					componentProps: {
 						description: responseBody.message || JSON.stringify(responseBody),
 						requestID: responseBody.request_id
@@ -337,7 +337,9 @@
 
 		const allowedFiletypes = ['.parquet'];
 		if (
-			files.some((file) => !allowedFiletypes.includes('.' + (file.name.split('.').pop() ?? '').toLowerCase()))
+			files.some(
+				(file) => !allowedFiletypes.includes('.' + (file.name.split('.').pop() ?? '').toLowerCase())
+			)
 		) {
 			alert(`Files must be of type: ${allowedFiletypes.join(', ').replaceAll('.', '')}`);
 			return;

@@ -36,7 +36,7 @@
 	async function resetMaxInputHeight() {
 		if (Object.entries(uploadColumns).some((val) => typeof val[1] === 'string')) {
 			maxInputHeight = 150;
-		} else if (tableData.cols.find((col) => col.dtype === 'file' || col.dtype === 'audio')) {
+		} else if (tableData.cols.find((col) => col.dtype === 'image' || col.dtype === 'audio')) {
 			maxInputHeight = 72;
 		} else {
 			maxInputHeight = 32;
@@ -122,7 +122,7 @@
 			logger.error(toUpper(`${tableType}TBL_ROW_ADD`), responseBody);
 			toast.error('Failed to add row', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id
@@ -282,7 +282,7 @@
 					uploadColumns[columnID] = uploadRes.data.uri;
 					toast.error('Failed to retrieve thumbnail', {
 						id: urlBody.message || JSON.stringify(urlBody),
-						description: CustomToastDesc,
+						description: CustomToastDesc as any,
 						componentProps: {
 							description: urlBody.message || JSON.stringify(urlBody),
 							requestID: urlBody.request_id
@@ -435,7 +435,7 @@
 			<!-- svelte-ignore a11y-interactive-supports-focus -->
 			<div
 				role="gridcell"
-				class="flex justify-start {(column.dtype === 'file' || column.dtype === 'audio') &&
+				class="flex justify-start {(column.dtype === 'image' || column.dtype === 'audio') &&
 				typeof columnFile === 'string'
 					? 'p-2'
 					: 'p-0'} h-full max-h-[149px] w-full text-black break-words {isAddingRow
@@ -443,7 +443,7 @@
 					: 'border-0 group-hover:bg-[#EDEEEF] data-dark:group-hover:bg-white/5'} border-[#E4E7EC] data-dark:border-[#333]"
 			>
 				{#if isAddingRow}
-					{#if column.dtype === 'file' || column.dtype === 'audio'}
+					{#if column.dtype === 'image' || column.dtype === 'audio'}
 						{#if typeof columnFile !== 'string'}
 							<FileSelect
 								{tableType}

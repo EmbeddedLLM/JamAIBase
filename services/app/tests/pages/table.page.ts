@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import { expect, type Locator, type Page } from '@playwright/test';
 import { LayoutPage } from './layout.page';
-import type { genTableDTypes } from '$lib/constants';
 
 /** Only to be instantiated in a project */
 export class TablePage extends LayoutPage {
@@ -191,7 +190,7 @@ export class TablePage extends LayoutPage {
 	}
 
 	/** Add column */
-	async addColumn(type: 'input' | 'output', datatype: (typeof genTableDTypes)[string] = 'str') {
+	async addColumn(type: 'input' | 'output', datatype: 'str' | 'file' = 'str') {
 		await this.actionsBtn.click();
 		await this.page
 			.getByTestId('table-actions-dropdown')
@@ -208,7 +207,7 @@ export class TablePage extends LayoutPage {
 		if (type === 'input') {
 			await newColDialog
 				.getByTestId('datatype-select-btn')
-				.locator('div[role="option"]', { hasText: datatype })
+				.locator('div[role="option"]', { hasText: datatype === 'str' ? 'Text' : 'File' })
 				.click();
 		}
 		if (type === 'output') {

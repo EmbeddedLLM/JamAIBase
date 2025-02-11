@@ -113,7 +113,7 @@
 				console.error(responseBody);
 				toast.error('Failed to search rows', {
 					id: responseBody.message || JSON.stringify(responseBody),
-					description: CustomToastDesc,
+					description: CustomToastDesc as any,
 					componentProps: {
 						description: responseBody.message || JSON.stringify(responseBody),
 						requestID: responseBody.request_id

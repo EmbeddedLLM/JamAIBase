@@ -45,7 +45,7 @@
 			}
 			toast.error('Failed to get raw file', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id
@@ -64,7 +64,7 @@
 			: ''} w-full group/image"
 	>
 		{#if fileUrl && isValidUri(fileUrl)?.protocol.startsWith('http') && fileType !== undefined}
-			{#if fileType === 'file'}
+			{#if fileType === 'image'}
 				<img
 					src={fileUrl?.replace(new URL(fileUrl).origin, '')}
 					alt=""

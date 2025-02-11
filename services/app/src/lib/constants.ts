@@ -15,7 +15,7 @@ export const genTableDTypes = {
 	float: 'Float',
 	bool: 'Boolean',
 	str: 'Text',
-	file: 'File',
+	image: 'Image',
 	audio: 'Audio'
 	// str_code: 'Text (code)',
 	// file_code: 'File (code)'
@@ -53,11 +53,11 @@ export const knowledgeTableFiletypes = [
 	'.jsonl'
 ];
 export const fileColumnFiletypes = [
-	{ ext: '.jpeg', type: 'file' },
-	{ ext: '.jpg', type: 'file' },
-	{ ext: '.png', type: 'file' },
-	{ ext: '.gif', type: 'file' },
-	{ ext: '.webp', type: 'file' },
+	{ ext: '.jpeg', type: 'image' },
+	{ ext: '.jpg', type: 'image' },
+	{ ext: '.png', type: 'image' },
+	{ ext: '.gif', type: 'image' },
+	{ ext: '.webp', type: 'image' },
 	{ ext: '.wav', type: 'audio' },
 	{ ext: '.mp3', type: 'audio' }
 ];

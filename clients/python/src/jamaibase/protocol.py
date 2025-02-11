@@ -608,7 +608,7 @@ class Chunk(BaseModel):
 
     text: str = Field(description="Chunk text.")
     title: str = Field(default="", description='Document title. Defaults to "".')
-    page: int = Field(default=0, description="Page number. Defaults to 0.")
+    page: int | None = Field(default=None, description="Document page the chunk text from.")
     file_name: str = Field(default="", description="File name.")
     file_path: str = Field(default="", description="File path.")
     document_id: str = Field(default="", description="Document ID.")

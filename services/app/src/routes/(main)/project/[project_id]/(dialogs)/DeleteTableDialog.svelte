@@ -42,7 +42,7 @@
 			logger.error(toUpper(`${tableType}TBL_DELETETBL`), responseBody);
 			toast.error('Failed to delete table', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id

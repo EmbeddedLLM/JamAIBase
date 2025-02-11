@@ -143,7 +143,7 @@
 			logger.error('CHATTBL_CHAT_ADD', responseBody);
 			toast.error('Failed to add row', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id
@@ -224,11 +224,21 @@
 
 			thread = [
 				...thread,
-				Object.keys(loadedStreams).map((key) => ({
-					column_id: key,
-					role: 'assistant',
-					content: [...loadedStreams[key], latestStreams[key]].join('')
-				}))
+				Object.keys(loadedStreams)
+					.filter((colID) => {
+						// Filter out columns to display
+						const col = tableData?.cols?.find((col) => col.id === colID);
+						return (
+							col?.gen_config?.object === 'gen_config.llm' &&
+							col.gen_config.multi_turn &&
+							/\${User}/g.test(col.gen_config.prompt ?? '')
+						);
+					})
+					.map((key) => ({
+						column_id: key,
+						role: 'assistant',
+						content: [...loadedStreams[key], latestStreams[key]].join('')
+					}))
 			];
 			loadedStreams = {};
 			latestStreams = {};
@@ -319,6 +329,16 @@
 	class="@container/chat relative grow flex flex-col gap-4 pt-6 pb-16 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
 >
 	{#if threadLoaded}
+		{@const displayedLoadedStreams = Object.keys(loadedStreams).filter((colID) => {
+			// Filter out columns to display
+			const col = tableData?.cols?.find((col) => col.id === colID);
+			return (
+				col?.gen_config?.object === 'gen_config.llm' &&
+				col.gen_config.multi_turn &&
+				/\${User}/g.test(col.gen_config.prompt ?? '')
+			);
+		})}
+
 		{#each thread as threadItem, index}
 			{@const nonErrorMessage = threadItem.find((v) => 'content' in v && v.role === 'user')}
 			{@const messages = nonErrorMessage ? [nonErrorMessage] : threadItem}
@@ -481,14 +501,14 @@
 		{/each}
 
 		<div
-			style="--message-len: {Object.keys(loadedStreams).length};"
+			style="--message-len: {displayedLoadedStreams.length};"
 			class="flex-[0_0_auto] grid message-container gap-3 px-6 lg:px-20 2xl:px-36 3xl:px-72 overflow-x-auto overflow-y-hidden"
 		>
-			{#each Object.keys(loadedStreams) as key}
+			{#each displayedLoadedStreams as key}
 				{@const loadedStream = loadedStreams[key]}
 				{@const latestStream = latestStreams[key] ?? ''}
 				<div
-					class="flex flex-col gap-1 {Object.keys(loadedStreams).length === 1
+					class="flex flex-col gap-1 {displayedLoadedStreams.length === 1
 						? 'col-span-1 @lg/chat:col-span-2 supports-[not(container-type:inline-size)]:xl:col-span-2'
 						: ''}"
 				>
@@ -518,7 +538,7 @@
 					<div
 						data-testid="chat-message"
 						data-streaming="true"
-						class="relative self-start {Object.keys(loadedStreams).length === 1
+						class="relative self-start {displayedLoadedStreams.length === 1
 							? 'xl:mr-[20%]'
 							: 'w-full'} p-4 max-w-full rounded-xl bg-[#F2F4F7] data-dark:bg-[#5B7EE5] text-text group scroll-my-2"
 					>
@@ -560,13 +580,14 @@
 			<button
 				tabindex="-1"
 				title="Drag to resize chat area"
+				aria-label="Drag to resize chat area"
 				on:mousedown={() => (isResizing = true)}
 				class="absolute -top-[4px] left-0 right-0 mx-6 h-[10px] cursor-ns-resize focus:outline-none group"
 			>
 				<div
 					class="absolute top-[4px] h-[1px] w-full bg-black data-dark:bg-white rounded-md opacity-0 group-hover:opacity-100 {isResizing &&
 						'opacity-100'} transition-opacity"
-				/>
+				></div>
 			</button>
 
 			<form bind:this={chatForm} on:submit|preventDefault={handleChatSubmit} class="flex w-full">
@@ -580,7 +601,7 @@
 					on:input={resizeChat}
 					on:keydown={interceptSubmit}
 					class="p-3 pl-5 min-h-[48px] h-12 w-full bg-transparent resize-none outline-none placeholder:text-[#999999]"
-				/>
+				></textarea>
 			</form>
 
 			<Button

@@ -88,7 +88,7 @@
 			console.error(responseBody);
 			toast.error('Failed to regenerate rows', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id
