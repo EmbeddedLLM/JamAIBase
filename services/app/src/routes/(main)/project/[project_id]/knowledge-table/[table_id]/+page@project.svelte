@@ -121,7 +121,7 @@
 				console.error(responseBody);
 				toast.error('Failed to search rows', {
 					id: responseBody.message || JSON.stringify(responseBody),
-					description: CustomToastDesc,
+					description: CustomToastDesc as any,
 					componentProps: {
 						description: responseBody.message || JSON.stringify(responseBody),
 						requestID: responseBody.request_id
@@ -149,7 +149,8 @@
 		if (files.length === 0) return;
 		if (
 			files.some(
-				(file) => !knowledgeTableFiletypes.includes('.' + (file.name.split('.').pop() ?? '').toLowerCase())
+				(file) =>
+					!knowledgeTableFiletypes.includes('.' + (file.name.split('.').pop() ?? '').toLowerCase())
 			)
 		) {
 			alert(`Files must be of type: ${knowledgeTableFiletypes.join(', ').replaceAll('.', '')}`);

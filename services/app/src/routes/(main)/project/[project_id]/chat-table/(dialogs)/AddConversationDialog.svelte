@@ -60,7 +60,7 @@
 			logger.error('CHATTBL_CONV_ADD', responseBody);
 			toast.error('Failed to add conversation', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id

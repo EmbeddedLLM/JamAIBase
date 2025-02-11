@@ -570,6 +570,7 @@ class LLMEngine:
             Chunk(
                 text="" if row["Text"] is None else row["Text"],
                 title="" if row["Title"] is None else row["Title"],
+                page=row["Page"],
                 document_id="" if row["File ID"] is None else row["File ID"],
                 chunk_id=row["ID"],
             )
@@ -617,6 +618,7 @@ Answer the question.
             "File ID": row["File ID"],
             "Title": mask_string(row["Title"]),
             "Text": mask_string(row["Text"]),
+            "Page": str(row["Page"]),
         }
 
     async def rag_stream(

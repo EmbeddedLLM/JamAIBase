@@ -81,7 +81,7 @@
 			logger.error('KNOWTBL_TBL_ROWEDIT', responseBody);
 			toast.error('Failed to edit row', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id
@@ -205,7 +205,7 @@
 				<!-- Obscure padding between header and side nav bar -->
 				<div
 					class="absolute -z-0 -top-[1px] -left-[9px] h-[37px] w-4 bg-[#FAFBFC] data-dark:bg-[#1E2024]"
-				/>
+				></div>
 
 				<div
 					role="columnheader"
@@ -214,7 +214,7 @@
 					<div
 						id="checkbox-bg-obscure"
 						class="absolute -z-10 -top-[1px] -left-0 h-[36px] w-full bg-white data-dark:bg-[#42464E] border-l border-t border-b border-[#E4E7EC] data-dark:border-[#333] rounded-l-lg"
-					/>
+					></div>
 
 					{#if !readonly}
 						<Checkbox
@@ -260,7 +260,7 @@
 								{#if $tableState.streamingRows[row.ID]}
 									<div
 										class="absolute -z-[1] -top-[1px] -left-[9px] h-[calc(100%_+_2px)] w-1.5 bg-[#F2839F]"
-									/>
+									></div>
 								{/if}
 
 								<div
@@ -270,7 +270,7 @@
 											? 'bg-[#FDEFF4]'
 											: 'bg-[#FAFBFC] data-dark:bg-[#1E2024] group-hover:bg-[#ECEDEE]'
 									)}
-								/>
+								></div>
 								{#if !readonly}
 									<Checkbox
 										on:checkedChange={(e) => handleSelectRow(e, row)}
@@ -296,7 +296,7 @@
 										if (column.id === 'ID' || column.id === 'Updated at') return;
 
 										if (
-											(column.dtype === 'file' || column.dtype === 'audio') &&
+											(column.dtype === 'image' || column.dtype === 'audio') &&
 											row[column.id]?.value &&
 											isValidFileUri
 										)
@@ -313,7 +313,7 @@
 										if (column.id === 'ID' || column.id === 'Updated at') return;
 
 										if (
-											(column.dtype === 'file' || column.dtype === 'audio') &&
+											(column.dtype === 'image' || column.dtype === 'audio') &&
 											row[column.id]?.value &&
 											isValidFileUri
 										)
@@ -329,7 +329,7 @@
 										if (column.id === 'ID' || column.id === 'Updated at') return;
 
 										if (
-											(column.dtype === 'file' || column.dtype === 'audio') &&
+											(column.dtype === 'image' || column.dtype === 'audio') &&
 											row[column.id]?.value &&
 											isValidFileUri
 										)
@@ -359,7 +359,7 @@
 									{/if}
 
 									{#if editMode}
-										{#if column.dtype === 'file' || column.dtype === 'audio'}
+										{#if column.dtype === 'image' || column.dtype === 'audio'}
 											<FileSelect
 												tableType="knowledge"
 												controller={uploadController}
@@ -380,9 +380,9 @@
 													}
 												}}
 												class="min-h-[100px] sm:min-h-[150px] h-full w-full p-2 bg-transparent outline outline-secondary resize-none"
-											/>
+											></textarea>
 										{/if}
-									{:else if column.dtype === 'file' || column.dtype === 'audio'}
+									{:else if column.dtype === 'image' || column.dtype === 'audio'}
 										<FileColumnView
 											tableType="knowledge"
 											rowID={row.ID}

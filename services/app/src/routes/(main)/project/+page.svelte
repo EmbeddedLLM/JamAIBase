@@ -112,7 +112,7 @@
 				console.error(responseBody);
 				toast.error('Failed to fetch projects', {
 					id: responseBody.err_message?.message || JSON.stringify(responseBody),
-					description: CustomToastDesc,
+					description: CustomToastDesc as any,
 					componentProps: {
 						description: responseBody.err_message?.message || JSON.stringify(responseBody),
 						requestID: responseBody.err_message?.request_id
@@ -164,7 +164,9 @@
 
 		const allowedFiletypes = ['.parquet'];
 		if (
-			files.some((file) => !allowedFiletypes.includes('.' + (file.name.split('.').pop() ?? '').toLowerCase()))
+			files.some(
+				(file) => !allowedFiletypes.includes('.' + (file.name.split('.').pop() ?? '').toLowerCase())
+			)
 		) {
 			alert(`Files must be of type: ${allowedFiletypes.join(', ').replaceAll('.', '')}`);
 			return;
@@ -227,7 +229,7 @@
 				console.error(responseBody);
 				toast.error('Failed to search projects', {
 					id: responseBody.err_message?.message || JSON.stringify(responseBody),
-					description: CustomToastDesc,
+					description: CustomToastDesc as any,
 					componentProps: {
 						description: responseBody.err_message?.message || JSON.stringify(responseBody),
 						requestID: responseBody.err_message?.request_id

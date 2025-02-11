@@ -8,7 +8,8 @@
 	type $$Props = Props & { loading?: boolean };
 	type $$Events = Events;
 
-	let className: $$Props['class'] = undefined;
+	//FIXME: Fix this type
+	let className: any = undefined;
 	export let variant: $$Props['variant'] = 'default';
 	export let size: $$Props['size'] = 'default';
 	export let builders: $$Props['builders'] = [];

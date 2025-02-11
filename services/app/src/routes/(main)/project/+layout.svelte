@@ -38,7 +38,7 @@
 				console.error(projectBody);
 				toast.error('Failed to fetch project', {
 					id: projectBody?.err_message?.message || JSON.stringify(projectBody),
-					description: CustomToastDesc,
+					description: CustomToastDesc as any,
 					componentProps: {
 						description: projectBody?.err_message?.message || JSON.stringify(projectBody),
 						requestID: projectBody?.err_message?.request_id

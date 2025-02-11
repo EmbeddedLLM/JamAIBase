@@ -83,7 +83,7 @@
 			logger.error('ACTIONTBL_TBL_ADD', responseBody);
 			toast.error('Failed to add table', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id
@@ -231,7 +231,7 @@
 														? CODE_GEN_CONFIG_DEFAULT
 														: LLM_GEN_CONFIG_DEFAULT;
 
-													if (!['str', 'file'].includes(columns[index].dtype)) {
+													if (!['str', 'image'].includes(columns[index].dtype)) {
 														columns[index].dtype = 'str';
 													}
 												} else {

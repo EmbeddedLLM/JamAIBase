@@ -80,7 +80,7 @@
 			logger.error('ACTIONTBL_TBL_ROWEDIT', responseBody);
 			toast.error('Failed to edit row', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id
@@ -310,7 +310,7 @@
 									if (column.id === 'ID' || column.id === 'Updated at') return;
 
 									if (
-										(column.dtype === 'file' || column.dtype === 'audio') &&
+										(column.dtype === 'image' || column.dtype === 'audio') &&
 										row[column.id]?.value &&
 										isValidFileUri
 									)
@@ -327,7 +327,7 @@
 									if (column.id === 'ID' || column.id === 'Updated at') return;
 
 									if (
-										(column.dtype === 'file' || column.dtype === 'audio') &&
+										(column.dtype === 'image' || column.dtype === 'audio') &&
 										row[column.id]?.value &&
 										isValidFileUri
 									)
@@ -343,7 +343,7 @@
 									if (column.id === 'ID' || column.id === 'Updated at') return;
 
 									if (
-										(column.dtype === 'file' || column.dtype === 'audio') &&
+										(column.dtype === 'image' || column.dtype === 'audio') &&
 										row[column.id]?.value &&
 										isValidFileUri
 									)
@@ -373,7 +373,7 @@
 								{/if}
 
 								{#if editMode}
-									{#if column.dtype === 'file' || column.dtype === 'audio'}
+									{#if column.dtype === 'image' || column.dtype === 'audio'}
 										<FileSelect
 											tableType="action"
 											controller={uploadController}
@@ -396,7 +396,7 @@
 											class="min-h-[100px] sm:min-h-[150px] h-full w-full p-2 bg-transparent outline outline-secondary resize-none"
 										></textarea>
 									{/if}
-								{:else if column.dtype === 'file' || column.dtype === 'audio'}
+								{:else if column.dtype === 'image' || column.dtype === 'audio'}
 									<FileColumnView
 										tableType="action"
 										rowID={row.ID}

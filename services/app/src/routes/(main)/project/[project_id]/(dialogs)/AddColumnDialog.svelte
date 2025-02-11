@@ -105,7 +105,7 @@
 			logger.error(toUpper(`${tableType}TBL_COLUMN_ADD`), responseBody);
 			toast.error('Failed to add column', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id

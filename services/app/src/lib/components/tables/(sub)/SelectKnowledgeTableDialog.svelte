@@ -77,7 +77,7 @@
 			console.error(responseBody.message);
 			toast.error('Failed to fetch knowledge tables', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id
@@ -134,7 +134,7 @@
 				console.error(responseBody);
 				toast.error('Failed to search tables', {
 					id: responseBody.message || JSON.stringify(responseBody),
-					description: CustomToastDesc,
+					description: CustomToastDesc as any,
 					componentProps: {
 						description: responseBody.message || JSON.stringify(responseBody),
 						requestID: responseBody.request_id

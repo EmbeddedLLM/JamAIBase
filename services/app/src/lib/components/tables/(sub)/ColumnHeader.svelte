@@ -83,7 +83,7 @@
 			logger.error(toUpper(`${tableType}TBL_COLUMN_RENAME`), responseBody);
 			toast.error('Failed to rename column', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id
@@ -197,7 +197,7 @@
 			logger.error(toUpper(`${tableType}TBL_TBL_REORDER`), responseBody);
 			toast.error('Failed to reorder columns', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id

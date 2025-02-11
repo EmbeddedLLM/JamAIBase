@@ -114,9 +114,3 @@
 <Toaster closeButton richColors />
 
 <slot />
-
-<style>
-	:global(body) {
-		font-family: 'Roboto Flex Variable', sans-serif;
-	}
-</style>

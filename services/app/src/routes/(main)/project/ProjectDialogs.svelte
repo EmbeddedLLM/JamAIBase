@@ -46,7 +46,7 @@
 		if (!response.ok) {
 			toast.error('Failed to create project', {
 				id: responseBody.err_message?.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.err_message?.message || JSON.stringify(responseBody),
 					requestID: responseBody.err_message?.request_id
@@ -92,7 +92,7 @@
 		if (!response.ok) {
 			toast.error('Error saving project name', {
 				id: 'project-name-error',
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.err_message?.message || JSON.stringify(responseBody),
 					requestID: responseBody.err_message?.request_id
@@ -122,7 +122,7 @@
 		if (!response.ok) {
 			toast.error('Error deleting project', {
 				id: responseBody.err_message?.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.err_message?.message || JSON.stringify(responseBody),
 					requestID: responseBody.err_message?.request_id

@@ -68,7 +68,7 @@
 			logger.error('CHATTBL_AGENT_ADD', responseBody);
 			toast.error('Failed to add agent', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id

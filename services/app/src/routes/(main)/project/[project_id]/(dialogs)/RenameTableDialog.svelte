@@ -47,7 +47,7 @@
 			logger.error(toUpper(`${tableType}TBL_RENAMETBL`), responseBody);
 			toast.error('Failed to rename table', {
 				id: responseBody.message || JSON.stringify(responseBody),
-				description: CustomToastDesc,
+				description: CustomToastDesc as any,
 				componentProps: {
 					description: responseBody.message || JSON.stringify(responseBody),
 					requestID: responseBody.request_id
@@ -82,6 +82,7 @@
 							id: editedTableID,
 							updated_at: new Date().toISOString()
 						});
+						$pastActionTables = $pastActionTables;
 					}
 
 					if ($page.params.table_id === isEditingTableID) {
@@ -97,6 +98,7 @@
 							id: editedTableID,
 							updated_at: new Date().toISOString()
 						});
+						$pastKnowledgeTables = $pastKnowledgeTables;
 					}
 
 					if ($page.params.table_id === isEditingTableID) {
@@ -112,6 +114,7 @@
 							id: editedTableID,
 							updated_at: new Date().toISOString()
 						});
+						$pastChatAgents = $pastChatAgents;
 					}
 
 					if ($page.params.table_id === isEditingTableID) {
