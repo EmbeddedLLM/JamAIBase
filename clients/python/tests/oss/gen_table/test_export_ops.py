@@ -969,6 +969,82 @@ def test_export_data(
 @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
+@pytest.mark.parametrize("delimiter", [","], ids=["comma_delimiter"])
+def test_export_reordered_columns_data(
+    client_cls: Type[JamAI],
+    table_type: p.TableType,
+    delimiter: str,
+):
+    jamai = client_cls()
+    with _create_table(jamai, table_type) as table:
+        assert isinstance(table, p.TableMetaResponse)
+        _add_row(
+            jamai,
+            table_type,
+            False,
+            data={"good": True, "words": 5, "stars": 0.0, "inputs": TEXT, "summary": TEXT},
+        )
+        # Reorder columns
+        new_cols_order = [
+            "words",
+            "inputs",
+            "summary",
+            "stars",
+            "photo",
+            "captioning",
+            "good",
+        ]
+        if table_type == p.TableType.knowledge:
+            new_cols_order = [
+                "Title",
+                "Title Embed",
+                "Text",
+                "Text Embed",
+                "File ID",
+                "Page",
+            ] + new_cols_order
+        if table_type == p.TableType.chat:
+            new_cols_order = ["User", "AI"] + new_cols_order
+
+        jamai.table.reorder_columns(
+            table_type=table_type,
+            request=p.ColumnReorderRequest(
+                table_id=TABLE_ID_A,
+                column_names=new_cols_order,
+            ),
+        )
+        reordered_columns = [
+            col_meta.id
+            for col_meta in jamai.table.get_table(table_type=table_type, table_id=TABLE_ID_A).cols
+        ]
+
+        # Export data
+        csv_data = jamai.export_table_data(table_type, TABLE_ID_A, delimiter=delimiter)
+        csv_df = csv_to_df(csv_data.decode("utf-8"), sep=delimiter)
+        exported_columns = list(csv_df.columns)
+
+        assert exported_columns == reordered_columns, (
+            f"Exported Columns: {','.join(exported_columns)}, "
+            f"Reordered Columns: {','.join(reordered_columns)}"
+        )
+
+        # Export selected columns
+        csv_data = jamai.export_table_data(
+            table_type, TABLE_ID_A, delimiter=delimiter, columns=["good", "words", "summary"]
+        )
+        csv_df = csv_to_df(csv_data.decode("utf-8"), sep=delimiter)
+        selected_exported_columns = list(csv_df.columns)
+        selected_reordered_columns = ["ID", "Updated at", "words", "summary", "good"]
+
+        assert selected_exported_columns == selected_reordered_columns, (
+            f"Exported Columns: {','.join(selected_exported_columns)}, "
+            f"Reordered Columns: {','.join(selected_reordered_columns)}"
+        )
+
+
+@flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
+@pytest.mark.parametrize("client_cls", CLIENT_CLS)
+@pytest.mark.parametrize("table_type", TABLE_TYPES)
 @pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
 @pytest.mark.parametrize("delimiter", [",", "\t"], ids=["comma_delimiter", "tab_delimiter"])
 def test_import_export_data_round_trip(

@@ -1379,9 +1379,19 @@ def export_table_data(
     filepath = join(tmp_dir.name, filename)
     # Keep a reference to the directory and only delete upon completion
     bg_tasks.add_task(tmp_dir.cleanup)
+    # Get column ordering
+    with table.create_session() as session:
+        meta = table.open_meta(session, table_id, remove_state_cols=True)
+        columns_order = [c.id for c in meta.cols_schema]
+    if columns is None:
+        columns_to_export = columns_order
+    else:
+        columns_to_export = [
+            col for col in columns_order if col in columns or col.lower() in ("id", "updated at")
+        ]
     table.export_csv(
         table_id=table_id,
-        columns=columns,
+        columns=columns_to_export,
         file_path=filepath,
         delimiter=delimiter,
     )

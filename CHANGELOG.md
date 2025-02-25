@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Python SDK - jamaibase
 
 - Add `CodeGenConfig` for python code execution #446
+- Remove pydub dependency for SDK `v0.4.1` #488
 
 TS SDK - jamaibase
 

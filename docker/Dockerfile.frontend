@@ -8,7 +8,7 @@ ARG CHECK_ORIGIN=false
 WORKDIR /app
 COPY ./services/app .
 RUN mv .env.example .env
-RUN npm ci
+RUN npm ci --force
 
 RUN JAMAI_URL=${JAMAI_URL} PUBLIC_JAMAI_URL=${PUBLIC_JAMAI_URL} PUBLIC_IS_SPA=${PUBLIC_IS_SPA} CHECK_ORIGIN=${CHECK_ORIGIN} npx vite build
 RUN mv temp build

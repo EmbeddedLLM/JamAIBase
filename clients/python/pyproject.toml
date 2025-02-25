@@ -101,7 +101,6 @@ dependencies = [
     "Pillow>=10.0.1",
     "pydantic-settings>=2.0.3",
     "pydantic>=2.4.2",
-    "pydub~=0.25.1",
     "srsly>=2.4.8",
     "toml>=0.10.2",
     "typing_extensions>=4.10.0",

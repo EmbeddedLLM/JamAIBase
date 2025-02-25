@@ -12,7 +12,6 @@ import pandas as pd
 import srsly
 import toml
 from PIL import ExifTags, Image
-from pydub import AudioSegment
 
 from jamaibase.utils.types import JSONInput, JSONOutput
 
@@ -215,6 +214,8 @@ def generate_audio_thumbnail(file_content: bytes, duration_ms: int = 30000) -> b
     Returns:
         bytes: The thumbnail audio segment as bytes.
     """
+    from pydub import AudioSegment
+
     # Use BytesIO to simulate a file object from the byte content
     audio = AudioSegment.from_file(BytesIO(file_content))
 
