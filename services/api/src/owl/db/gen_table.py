@@ -1427,7 +1427,12 @@ class GenerativeTable:
         t0 = perf_counter()
         cols = self.fts_cols(meta)
         for col in cols:
-            rows += table.search().where(f"regexp_match(`{col.id}`, '{query}')").to_list()
+            rows += (
+                table.search()
+                .where(f"regexp_match(`{col.id}`, '{query}')")
+                .limit(table.count_rows())
+                .to_list()
+            )
         logger.info(f"Regex search timings ({len(cols)} cols): {perf_counter() - t0:,.3f}")
         # De-duplicate and sort
         rows = {r["ID"]: r for r in rows}.values()
