@@ -16,6 +16,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [v0.4.1] (2025-02-26)
+
+### CHANGED / FIXED
+
+Python SDK - jamaibase
+
+- Remove pydub dependency for SDK `v0.4.1` #488
+
+- GenTable
+  - Bug fixes
+    - Fix csv export columns ordering #487
+    - Fix `search_query` rows return limit #482
+
 ## [v0.4] (2025-02-12)
 
 ### ADDED

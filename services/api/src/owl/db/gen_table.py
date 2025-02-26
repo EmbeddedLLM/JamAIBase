@@ -1036,7 +1036,12 @@ class GenerativeTable:
                 limit = total - offset
             if order_descending:
                 offset = max(0, total - limit - offset)
-            rows = table._dataset.to_table(offset=offset, limit=limit).to_pylist()
+            if columns is not None:
+                if "ID" not in columns:
+                    columns.insert(0, "ID")
+                if "Updated at" not in columns:
+                    columns.insert(1, "Updated at")
+            rows = table._dataset.to_table(columns=columns, offset=offset, limit=limit).to_pylist()
             rows = sorted(rows, reverse=order_descending, key=lambda r: r["ID"])
             rows = self._post_process_rows(
                 rows,
@@ -1170,7 +1175,7 @@ class GenerativeTable:
     def export_csv(
         self,
         table_id: TableName,
-        columns: list[ColName] | None = None,
+        columns: list[ColName],
         file_path: str = "",
         delimiter: CSVDelimiter | str = ",",
     ) -> pd.DataFrame:
@@ -1422,7 +1427,12 @@ class GenerativeTable:
         t0 = perf_counter()
         cols = self.fts_cols(meta)
         for col in cols:
-            rows += table.search().where(f"regexp_match(`{col.id}`, '{query}')").to_list()
+            rows += (
+                table.search()
+                .where(f"regexp_match(`{col.id}`, '{query}')")
+                .limit(table.count_rows())
+                .to_list()
+            )
         logger.info(f"Regex search timings ({len(cols)} cols): {perf_counter() - t0:,.3f}")
         # De-duplicate and sort
         rows = {r["ID"]: r for r in rows}.values()
