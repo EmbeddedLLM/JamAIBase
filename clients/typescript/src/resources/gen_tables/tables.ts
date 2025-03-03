@@ -17,9 +17,9 @@ export const TableTypesSchema = z.enum(["action", "knowledge", "chat"]);
 export const IdSchema = z.string().regex(/^[A-Za-z0-9]([A-Za-z0-9 _-]{0,98}[A-Za-z0-9])?$/, "Invalid Id");
 export const TableIdSchema = z.string().regex(/^[A-Za-z0-9]([A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/, "Invalid Table Id");
 
-const DtypeCreateEnumSchema = z.enum(["int", "float", "str", "bool", "image"]);
+const DtypeCreateEnumSchema = z.enum(["int", "float", "str", "bool", "image", "audio"]);
 
-const DtypeEnumSchema = z.enum(["int", "int8", "float", "float64", "float32", "float16", "bool", "str", "date-time", "image", "bytes"]);
+const DtypeEnumSchema = z.enum(["int", "int8", "float", "float64", "float32", "float16", "bool", "str", "date-time", "image", "bytes", "audio"]);
 
 export const EmbedGenConfigSchema = z.object({
     object: z.literal("gen_config.embed").default("gen_config.embed"),
@@ -42,12 +42,17 @@ export const LLMGenConfigSchema = z.object({
     logit_bias: z.record(z.string(), z.any()).default({})
 });
 
+export const CodeGenConfigSchema = z.object({
+    object: z.literal("gen_config.code").default("gen_config.code"),
+    source_column: z.string()
+});
+
 export const ColumnSchemaSchema = z.object({
     id: z.string(),
     dtype: DtypeEnumSchema.default("str"),
     vlen: z.number().int().gte(0).default(0),
     index: z.boolean().default(true),
-    gen_config: z.union([LLMGenConfigSchema, EmbedGenConfigSchema, z.null()]).optional()
+    gen_config: z.union([LLMGenConfigSchema, EmbedGenConfigSchema, CodeGenConfigSchema, z.null()]).optional()
 });
 
 export const ColumnSchemaCreateSchema = ColumnSchemaSchema.extend({
@@ -162,7 +167,7 @@ export const AddColumnRequestSchema = z.object({
 export const UpdateGenConfigRequestSchema = z.object({
     table_type: TableTypesSchema,
     table_id: TableIdSchema,
-    column_map: z.record(z.string(), z.union([LLMGenConfigSchema, EmbedGenConfigSchema, z.null()]))
+    column_map: z.record(z.string(), z.union([LLMGenConfigSchema, EmbedGenConfigSchema, CodeGenConfigSchema, z.null()]))
 });
 
 export const DeleteRowRequestSchema = z.object({

@@ -155,4 +155,13 @@ describe("APIClient File", () => {
         const parsedDataGetThumbUrl = GetUrlResponseSchema.parse(responseGetThumbUrls);
         expect(parsedDataGetThumbUrl).toEqual(responseGetThumbUrls);
     });
+
+    it("audio file upload by file path", async () => {
+        const responseUploadFile = await client.file.uploadFile({
+            file_path: path.resolve(__dirname, "./zoom-in-audio.mp3")
+        });
+
+        const parsedDataUploadFile = UploadFileResponseSchema.parse(responseUploadFile);
+        expect(parsedDataUploadFile).toEqual(responseUploadFile);
+    });
 });

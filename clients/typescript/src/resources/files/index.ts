@@ -12,6 +12,17 @@ import {
     UploadFileResponseSchema
 } from "./types";
 
+function createFormData() {
+    if (isRunningInBrowser()) {
+        // Node environment
+        // (import from `formdata-node`)
+        const { FormData } = require("formdata-node");
+        return new FormData();
+    } else {
+        // Browser environment
+        return new FormData();
+    }
+}
 export class Files extends Base {
     public async uploadFile(params: IUploadFileRequest): Promise<IUploadFileResponse> {
         const apiURL = `/api/v1/files/upload`;
@@ -19,7 +30,7 @@ export class Files extends Base {
         const parsedParams = UploadFileRequestSchema.parse(params);
 
         // Create FormData to send as multipart/form-data
-        const formData = new FormData();
+        const formData = createFormData();
         if (parsedParams.file) {
             formData.append("file", parsedParams.file, parsedParams.file.name);
         } else if (parsedParams.file_path) {
@@ -27,7 +38,9 @@ export class Files extends Base {
                 const mimeType = await getMimeType(parsedParams.file_path!);
                 const fileName = await getFileName(parsedParams.file_path!);
                 const data = await readFile(parsedParams.file_path!);
-                const file = new Blob([data], { type: mimeType });
+                // const file = new Blob([data], { type: mimeType });
+                const { File } = require("formdata-node");
+                const file = new File([data], fileName, { type: mimeType });
                 formData.append("file", file, fileName);
             } else {
                 throw new Error("Pass File instead of file path if you are using this function in client.");

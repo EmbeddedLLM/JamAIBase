@@ -66,7 +66,19 @@ import {
 } from "@/resources/gen_tables/tables";
 import { ChunkError } from "@/resources/shared/error";
 import axios, { AxiosResponse } from "axios";
-import { Blob, FormData } from "formdata-node";
+// import { Blob, FormData } from "formdata-node";
+
+function createFormData() {
+    if (isRunningInBrowser()) {
+        // Node environment
+        // (import from `formdata-node`)
+        const { FormData } = require("formdata-node");
+        return new FormData();
+    } else {
+        // Browser environment
+        return new FormData();
+    }
+}
 
 export class GenTable extends Base {
     // Helper method to handle stream responses
@@ -520,7 +532,7 @@ export class GenTable extends Base {
         const apiURL = `/api/v1/gen_tables/knowledge/upload_file`;
 
         // Create FormData to send as multipart/form-data
-        const formData = new FormData();
+        const formData = createFormData();
         if (params.file) {
             formData.append("file", params.file, params.file.name);
         } else if (params.file_path) {
@@ -528,7 +540,9 @@ export class GenTable extends Base {
                 const mimeType = await getMimeType(params.file_path!);
                 const fileName = await getFileName(params.file_path!);
                 const data = await readFile(params.file_path!);
-                const file = new Blob([data], { type: mimeType });
+                // const file = new Blob([data], { type: mimeType });
+                const { File } = require("formdata-node");
+                const file = new File([data], fileName, { type: mimeType });
                 formData.append("file", file, fileName);
             } else {
                 throw new Error("Pass File instead of file path if you are using this function in client.");
@@ -559,7 +573,7 @@ export class GenTable extends Base {
         const apiURL = `/api/v1/gen_tables/knowledge/embed_file`;
 
         // Create FormData to send as multipart/form-data
-        const formData = new FormData();
+        const formData = createFormData();
         if (params.file) {
             formData.append("file", params.file, params.file.name);
         } else if (params.file_path) {
@@ -567,7 +581,9 @@ export class GenTable extends Base {
                 const mimeType = await getMimeType(params.file_path!);
                 const fileName = await getFileName(params.file_path!);
                 const data = await readFile(params.file_path!);
-                const file = new Blob([data], { type: mimeType });
+                // const file = new Blob([data], { type: mimeType });
+                const { File } = require("formdata-node");
+                const file = new File([data], fileName, { type: mimeType });
                 formData.append("file", file, fileName);
             } else {
                 throw new Error("Pass File instead of file path if you are using this method in client.");
@@ -599,7 +615,7 @@ export class GenTable extends Base {
 
         const delimiter = params.delimiter ? params.delimiter : ",";
 
-        const formData = new FormData();
+        const formData = createFormData();
         if (params.file) {
             formData.append("file", params.file, params.file.name);
         } else if (params.file_path) {
@@ -607,7 +623,9 @@ export class GenTable extends Base {
                 const mimeType = await getMimeType(params.file_path!);
                 const fileName = await getFileName(params.file_path!);
                 const data = await readFile(params.file_path!);
-                const file = new Blob([data], { type: mimeType });
+                // const file = new Blob([data], { type: mimeType });
+                const { File } = require("formdata-node");
+                const file = new File([data], fileName, { type: mimeType });
                 formData.append("file", file, fileName);
             } else {
                 throw new Error("Pass File instead of file path if you are using this function in client.");
@@ -644,7 +662,10 @@ export class GenTable extends Base {
                 const mimeType = await getMimeType(params.file_path!);
                 const fileName = await getFileName(params.file_path!);
                 const data = await readFile(params.file_path!);
-                const file = new Blob([data], { type: mimeType });
+                // const file = new Blob([data], { type: mimeType });
+                const { File } = require("formdata-node");
+                const file = new File([data], fileName, { type: mimeType });
+
                 formData.append("file", file, fileName);
             } else {
                 throw new Error("Pass File instead of file path if you are using this function in client.");
