@@ -1,6 +1,6 @@
 {
     "name": "jamaibase",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "description": "JamAIBase Client SDK (JS/TS). JamAI Base: Let Your Database Orchestrate LLMs and RAG",
     "main": "dist/index.cjs",
     "module": "dist/index.mjs",

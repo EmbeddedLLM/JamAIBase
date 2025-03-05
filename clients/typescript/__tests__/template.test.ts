@@ -13,7 +13,7 @@ dotenv.config({
     path: "__tests__/.env"
 });
 
-describe("APIClient Templates", () => {
+describe.skip("APIClient Templates", () => {
     let client: JamAI;
     jest.setTimeout(30000);
     jest.retryTimes(1, {

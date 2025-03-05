@@ -39,6 +39,9 @@ Python SDK - jamaibase
 
 TS SDK - jamaibase
 
+- Add `CodeGenConfigSchema` for code execution #446
+- Support audio data type
+
 UI
 
 - Support chat mode multiturn option in add column and column resize #451
@@ -73,6 +76,7 @@ Python SDK - jamaibase
 TS SDK - jamaibase
 
 - Update the `uploadFile` method in `index.ts` to remove the trailing slash from the API endpoint #462
+- Update client and node enviroment conflict in file upload
 
 UI
 
