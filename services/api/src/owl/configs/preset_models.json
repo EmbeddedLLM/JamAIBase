@@ -298,8 +298,8 @@
     "llm_output_cost_per_mtoken": 0.45,
     "deployments": [
       {
-        "name": "Qwen/Qwen3-235B-A22B-FP8",
-        "huggingface_id": "Qwen3 (235B-A22B, MoE)",
+        "name": "Qwen3 (235B-A22B, MoE)",
+        "huggingface_id": "Qwen/Qwen3-235B-A22B-FP8",
         "cpu_count": "4",
         "memory_gb": "8",
         "required_vram": "280",
@@ -370,8 +370,8 @@
     "llm_output_cost_per_mtoken": 0.4,
     "deployments": [
       {
-        "name": "Qwen/Qwen2.5-VL-32B-Instruct",
-        "huggingface_id": "Qwen2.5 VL (32B)",
+        "name": "Qwen2.5 VL (32B)",
+        "huggingface_id": "Qwen/Qwen2.5-VL-32B-Instruct",
         "cpu_count": "4",
         "memory_gb": "16",
         "required_vram": "52",
@@ -521,7 +521,7 @@
     "reranking_cost_per_ksearch": 2,
     "deployments": [
       {
-        "name": "BAAI/bge-m3",
+        "name": "BGE Reranker V2 M3",
         "huggingface_id": "BAAI/bge-reranker-v2-m3",
         "cpu_count": "2",
         "memory_gb": "4",
