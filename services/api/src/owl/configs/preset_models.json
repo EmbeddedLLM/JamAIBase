@@ -322,8 +322,8 @@
     "llm_output_cost_per_mtoken": 0.45,
     "deployments": [
       {
-        "name": "Qwen/Qwen3-32B-FP8",
-        "huggingface_id": "Qwen3 (32B)",
+        "name": "Qwen3 (32B)",
+        "huggingface_id": "Qwen/Qwen3-32B-FP8",
         "cpu_count": "4",
         "memory_gb": "8",
         "required_vram": "42",
@@ -346,8 +346,8 @@
     "llm_output_cost_per_mtoken": 0.22,
     "deployments": [
       {
-        "name": "Qwen/Qwen3-8B-FP8",
-        "huggingface_id": "Qwen3 (8B)",
+        "name": "Qwen3 (8B)",
+        "huggingface_id": "Qwen/Qwen3-8B-FP8",
         "cpu_count": "4",
         "memory_gb": "8",
         "required_vram": "15",
