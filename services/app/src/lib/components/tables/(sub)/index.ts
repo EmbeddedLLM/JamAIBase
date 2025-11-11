@@ -8,6 +8,7 @@ import FileThumbsFetch from './FileThumbsFetch.svelte';
 import NewRow from './NewRow.svelte';
 import SelectKnowledgeTableDialog from './SelectKnowledgeTableDialog.svelte';
 import TablePagination from './TablePagination.svelte';
+import TableSorter from './TableSorter.svelte';
 export {
 	ColumnDropdown,
 	ColumnHeader,
@@ -18,5 +19,6 @@ export {
 	FileThumbsFetch,
 	NewRow,
 	SelectKnowledgeTableDialog,
-	TablePagination
+	TablePagination,
+	TableSorter
 };

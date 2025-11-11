@@ -1,13 +1,13 @@
-import 'dotenv/config';
-import { expect, test as base } from '@playwright/test';
 import { faker } from '@faker-js/faker';
+import { test as base, expect } from '@playwright/test';
+import 'dotenv/config';
 import { ProjectPage } from '../pages/project.page';
-import { TableListPage } from '../pages/tableList.page';
 import { TablePage } from '../pages/table.page';
+import { TableListPage } from '../pages/tableList.page';
 
-const { JAMAI_URL, JAMAI_SERVICE_KEY } = process.env;
+const { OWL_URL, OWL_SERVICE_KEY } = process.env;
 const headers = {
-	Authorization: `Bearer ${JAMAI_SERVICE_KEY}`
+	Authorization: `Bearer ${OWL_SERVICE_KEY}`
 };
 
 const test = base.extend<{ tablePage: TablePage; agentTablePage: TablePage }>({
@@ -164,7 +164,7 @@ test.describe('Chat Table Page Basic', () => {
 		const tableName = 'test-chat-conv';
 		const tableParent = 'temp-chat-agent';
 
-		const deleteTableRes = await fetch(`${JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableName}`, {
+		const deleteTableRes = await fetch(`${OWL_URL}/api/v2/gen_tables/${tableType}/${tableName}`, {
 			method: 'DELETE',
 			headers: {
 				...headers,
@@ -177,7 +177,7 @@ test.describe('Chat Table Page Basic', () => {
 		}
 
 		//* Temp chat agent in case original has been changed
-		const createTempAgentRes = await fetch(`${JAMAI_URL}/api/v1/gen_tables/${tableType}`, {
+		const createTempAgentRes = await fetch(`${OWL_URL}/api/v2/gen_tables/${tableType}`, {
 			method: 'POST',
 			headers: {
 				...headers,
@@ -186,7 +186,7 @@ test.describe('Chat Table Page Basic', () => {
 			},
 			body: JSON.stringify({
 				id: tableParent,
-				version: '0.3.0',
+				version: '0.5.0',
 				cols: [
 					{
 						id: 'User',
@@ -202,7 +202,7 @@ test.describe('Chat Table Page Basic', () => {
 						index: true,
 						gen_config: {
 							object: 'gen_config.llm',
-							model: 'anthropic/claude-3-haiku-20240307',
+							model: 'openai/gpt-4o-mini',
 							multi_turn: true
 						}
 					}
@@ -216,9 +216,10 @@ test.describe('Chat Table Page Basic', () => {
 
 		//* Duplicate agent to chat conv
 		const dupeTableRes = await fetch(
-			`${JAMAI_URL}/api/v1/gen_tables/chat/duplicate/${tableParent}?${new URLSearchParams({
-				create_as_child: 'true',
-				table_id_dst: tableName
+			`${OWL_URL}/api/v2/gen_tables/chat/duplicate?${new URLSearchParams({
+				table_id_src: tableParent,
+				table_id_dst: tableName,
+				create_as_child: 'true'
 			})}`,
 			{
 				method: 'POST',
@@ -234,7 +235,7 @@ test.describe('Chat Table Page Basic', () => {
 		}
 
 		const deleteTempAgentRes = await fetch(
-			`${JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableParent}`,
+			`${OWL_URL}/api/v2/gen_tables/${tableType}/${tableParent}`,
 			{
 				method: 'DELETE',
 				headers: {
@@ -260,7 +261,7 @@ test.describe('Chat Table Page with File Col', () => {
 
 	test.describe('Column create, rename, reorder, delete', () => {
 		test('can add new input column', async ({ agentTablePage }) => {
-			await agentTablePage.addColumn('input', 'file');
+			await agentTablePage.addColumn('input', 'image');
 		});
 
 		test('can add new output column', async ({ agentTablePage }) => {
@@ -326,7 +327,7 @@ test.describe('Chat Table Page with File Col', () => {
 		const tableType = 'chat';
 		const tableName = 'test-chat-agent';
 
-		const deleteTableRes = await fetch(`${JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableName}`, {
+		const deleteTableRes = await fetch(`${OWL_URL}/api/v2/gen_tables/${tableType}/${tableName}`, {
 			method: 'DELETE',
 			headers: {
 				...headers,
@@ -338,7 +339,7 @@ test.describe('Chat Table Page with File Col', () => {
 			throw await deleteTableRes.json();
 		}
 
-		const createTableRes = await fetch(`${JAMAI_URL}/api/v1/gen_tables/${tableType}`, {
+		const createTableRes = await fetch(`${OWL_URL}/api/v2/gen_tables/${tableType}`, {
 			method: 'POST',
 			headers: {
 				...headers,
@@ -347,7 +348,7 @@ test.describe('Chat Table Page with File Col', () => {
 			},
 			body: JSON.stringify({
 				id: tableName,
-				version: '0.3.0',
+				version: '0.5.0',
 				cols: [
 					{
 						id: 'User',
@@ -363,7 +364,7 @@ test.describe('Chat Table Page with File Col', () => {
 						index: true,
 						gen_config: {
 							object: 'gen_config.llm',
-							model: 'anthropic/claude-3-haiku-20240307',
+							model: 'openai/gpt-4o-mini',
 							multi_turn: true
 						}
 					}

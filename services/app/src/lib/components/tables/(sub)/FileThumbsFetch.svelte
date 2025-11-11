@@ -1,41 +1,47 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import debounce from 'lodash/debounce';
-	import { page } from '$app/stores';
-	import { genTableRows, tableState } from '../tablesStore';
+	import { page } from '$app/state';
 	import type { GenTable, GenTableCol } from '$lib/types';
 
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
+	import { getTableState, getTableRowsState } from '$lib/components/tables/tablesState.svelte';
 	import { isValidUri } from '$lib/utils';
 
-	export let tableData: GenTable | undefined;
-	export let rowThumbs: { [rowID: string]: { [colID: string]: { value: string; url: string } } };
+	const tableState = getTableState();
+	const tableRowsState = getTableRowsState();
 
-	$: tableData, $genTableRows, debouncedFetchThumbs();
+	interface Props {
+		tableData: GenTable | undefined;
+		rowThumbs: { [rowID: string]: { [colID: string]: { value: string; url: string } } };
+	}
+
+	let { tableData, rowThumbs = $bindable() }: Props = $props();
+
 	const debouncedFetchThumbs = debounce(fetchThumbs, 250);
 	async function fetchThumbs() {
-		if (!tableData || !$genTableRows) return;
+		if (!tableData || !tableRowsState.rows) return;
 
 		Object.keys(rowThumbs).forEach((key) => {
-			if ($genTableRows?.find((row) => row.ID === key) === undefined) {
+			if (tableRowsState.rows?.find((row) => row.ID === key) === undefined) {
 				delete rowThumbs[key];
 			}
 		});
 
 		const fileColumns = tableData.cols.filter(
-			(col) => col.dtype === 'image' || col.dtype === 'audio'
+			(col) => col.dtype === 'image' || col.dtype === 'audio' || col.dtype === 'document'
 		);
 		if (fileColumns.length === 0) return;
 
 		const rowThumbsArr: string[] = [];
-		const rowThumbsMap: typeof $genTableRows = [];
-		for (const row of $genTableRows) {
+		const rowThumbsMap: typeof tableRowsState.rows = [];
+		for (const row of tableRowsState.rows) {
 			fileColumns.forEach((col) => {
 				if (
 					row[col.id]?.value &&
 					(rowThumbs[row.ID]?.[col.id] === undefined ||
 						row[col.id].value !== rowThumbs[row.ID]?.[col.id]?.value) &&
-					!$tableState.streamingRows[row.ID]
+					!tableState.streamingRows[row.ID]
 				) {
 					if (isValidUri(row[col.id].value)) {
 						rowThumbsArr.push(row[col.id].value);
@@ -59,11 +65,11 @@
 
 		if (rowThumbsArr.length === 0) return;
 
-		const urlResponse = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/files/url/thumb`, {
+		const urlResponse = await fetch(`${PUBLIC_JAMAI_URL}/api/owl/files/url/thumb`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
-				'x-project-id': $page.params.project_id
+				'x-project-id': page.params.project_id
 			},
 			body: JSON.stringify({
 				uris: rowThumbsArr
@@ -122,4 +128,9 @@
 
 		rowThumbs = rowThumbs;
 	}
+	$effect(() => {
+		tableData;
+		tableRowsState.rows;
+		debouncedFetchThumbs();
+	});
 </script>

@@ -3,9 +3,6 @@ import { z } from "zod";
 export const UploadFileRequestSchema = z.object({
     file: z
         .any()
-        .refine((value) => value instanceof File, {
-            message: "Value must be a File object"
-        })
         .optional(),
     file_path: z.string().optional()
 });

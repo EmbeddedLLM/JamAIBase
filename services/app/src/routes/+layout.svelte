@@ -8,49 +8,66 @@
 	import '@fontsource-variable/roboto-flex';
 	import { showDock, showRightDock, preferredTheme, activeOrganization } from '$globalStore';
 
-	import { Toaster } from '$lib/components/ui/sonner';
+	import * as Tooltip from '$lib/components/ui/tooltip';
+	import { CustomToastDesc, toast, Toaster } from '$lib/components/ui/sonner';
 
 	let timeout: NodeJS.Timeout;
 	NProgress.configure({ showSpinner: false });
-	beforeNavigate(() => (timeout = setTimeout(() => NProgress.start(), 250)));
-	afterNavigate(() => {
-		clearTimeout(timeout);
-		NProgress.done();
-	});
+	// beforeNavigate(() => (timeout = setTimeout(() => NProgress.start(), 250)));
+	// afterNavigate(() => {
+	// 	clearTimeout(timeout);
+	// 	NProgress.done();
+	// });
 
-	export let data;
-	$: ({ dockOpen, rightDockOpen, userData, activeOrganizationId } = data);
+	let { data, children } = $props();
+	let { dockOpen, rightDockOpen, user, activeOrganizationId } = $derived(data);
 
 	//* Initialize showDock using cookie store
-	$: $showDock = dockOpen;
-	$: $showRightDock = rightDockOpen;
+	// svelte-ignore state_referenced_locally (mimic run function)
+	$showDock = dockOpen;
+	$effect.pre(() => {
+		$showDock = dockOpen;
+	});
+	// svelte-ignore state_referenced_locally (mimic run function)
+	$showRightDock = rightDockOpen;
+	$effect.pre(() => {
+		$showRightDock = rightDockOpen;
+	});
 
-	$: if (browser) {
-		document.cookie = `dockOpen=${$showDock}; path=/; sameSite=Lax`;
-		document.cookie = `rightDockOpen=${$showRightDock}; path=/; sameSite=Lax`;
-	}
-
-	$: if (browser) {
-		if ($preferredTheme == 'SYSTEM') {
-			document.documentElement.setAttribute(
-				'data-theme',
-				window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-			);
-		} else {
-			document.documentElement.setAttribute(
-				'data-theme',
-				$preferredTheme == 'LIGHT' ? 'light' : 'dark'
-			);
+	$effect(() => {
+		if (browser) {
+			document.cookie = `dockOpen=${$showDock}; path=/; sameSite=Lax`;
+			document.cookie = `rightDockOpen=${$showRightDock}; path=/; sameSite=Lax`;
 		}
-	}
+	});
 
-	$: if (activeOrganizationId) {
-		$activeOrganization =
-			userData?.member_of?.find((org) => org.organization_id === activeOrganizationId) ?? null;
-	}
-	$: if (browser && $activeOrganization) {
-		document.cookie = `activeOrganizationId=${$activeOrganization?.organization_id}; path=/; max-age=604800; samesite=strict`;
-	}
+	$effect(() => {
+		if (browser) {
+			if ($preferredTheme == 'SYSTEM') {
+				document.documentElement.setAttribute(
+					'data-theme',
+					window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+				);
+			} else {
+				document.documentElement.setAttribute(
+					'data-theme',
+					$preferredTheme == 'LIGHT' ? 'light' : 'dark'
+				);
+			}
+		}
+	});
+
+	$effect(() => {
+		if (activeOrganizationId) {
+			$activeOrganization =
+				user?.organizations?.find((org) => org.id === activeOrganizationId) ?? null;
+		}
+	});
+	// $effect(() => {
+	// 	if (browser && $activeOrganization) {
+	// 		document.cookie = `activeOrganizationId=${$activeOrganization?.id}; path=/; max-age=604800; samesite=strict`;
+	// 	}
+	// });
 
 	onMount(() => {
 		//* Reflect changes to user preference for immediately
@@ -85,6 +102,53 @@
 	// 		document.startViewTransition(switchTheme);
 	// 	}
 	// }
+
+	// function switchTheme(e: KeyboardEvent) {
+	// 	const target = e.target as HTMLElement;
+	// 	if (
+	// 		target.tagName == 'INPUT' ||
+	// 		target.tagName == 'TEXTAREA' ||
+	// 		target.getAttribute('contenteditable') == 'true'
+	// 	)
+	// 		return;
+
+	// 	if (!e.ctrlKey && !e.shiftKey && !e.metaKey) {
+	// 		switch (e.key) {
+	// 			case 'e':
+	// 				toast.error('Test', {
+	// 					duration: Number.POSITIVE_INFINITY,
+	// 					description: CustomToastDesc as any,
+	// 					componentProps: {
+	// 						description: 'Error desc here',
+	// 						requestID: 'Request ID here'
+	// 					}
+	// 				});
+	// 				break;
+	// 			case 's':
+	// 				toast.success('Test', {
+	// 					duration: Number.POSITIVE_INFINITY,
+	// 					description: CustomToastDesc as any,
+	// 					componentProps: {
+	// 						description: 'Error desc here',
+	// 						requestID: 'Request ID here'
+	// 					}
+	// 				});
+	// 				break;
+	// 			case 'i':
+	// 				toast.info('Test', {
+	// 					duration: Number.POSITIVE_INFINITY,
+	// 					description: CustomToastDesc as any,
+	// 					componentProps: {
+	// 						description: 'Error desc here',
+	// 						requestID: 'Request ID here'
+	// 					}
+	// 				});
+	// 				break;
+	// 			default:
+	// 				break;
+	// 		}
+	// 	}
+	// }
 </script>
 
 <!-- <svelte:window on:keydown={switchTheme} /> -->
@@ -113,4 +177,6 @@
 
 <Toaster closeButton richColors />
 
-<slot />
+<Tooltip.Provider>
+	{@render children?.()}
+</Tooltip.Provider>

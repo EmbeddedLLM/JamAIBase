@@ -1,6 +1,8 @@
-import 'dotenv/config';
 import { expect, type Page } from '@playwright/test';
+import 'dotenv/config';
 import { LayoutPage } from './layout.page';
+
+const ossMode = !process.env.OWL_SERVICE_KEY;
 
 export class ProjectPage extends LayoutPage {
 	constructor(page: Page) {
@@ -8,7 +10,7 @@ export class ProjectPage extends LayoutPage {
 	}
 
 	async goto() {
-		if (process.env.PUBLIC_IS_LOCAL === 'false') {
+		if (!ossMode) {
 			await this.page.goto('/');
 			await this.page.waitForURL(/.*\/project/);
 		} else {
@@ -18,7 +20,7 @@ export class ProjectPage extends LayoutPage {
 	}
 
 	async gotoProject(projectName: string) {
-		if (process.env.PUBLIC_IS_LOCAL === 'false') {
+		if (!ossMode) {
 			await this.page
 				.locator('a', { has: this.page.getByText(projectName, { exact: true }) })
 				.click();

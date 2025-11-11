@@ -5,7 +5,7 @@ from flaky import flaky
 from loguru import logger
 
 from jamaibase import JamAI, JamAIAsync
-from jamaibase import protocol as p
+from jamaibase import types as t
 from jamaibase.utils import run
 
 CLIENT_CLS = [JamAI, JamAIAsync]
@@ -19,9 +19,9 @@ async def test_model_info(
 
     # Get all model info
     response = await run(jamai.model_info)
-    assert isinstance(response, p.ModelInfoResponse)
+    assert isinstance(response, t.ModelInfoListResponse)
     assert len(response.data) > 0
-    assert isinstance(response.data[0], p.ModelInfo)
+    assert isinstance(response.data[0], t.ModelInfo)
     model = response.data[0]
     assert isinstance(model.id, str)
     assert isinstance(model.context_length, int)
@@ -31,20 +31,20 @@ async def test_model_info(
 
     # Get specific model info
     response = await run(jamai.model_info, name=model.id)
-    assert isinstance(response, p.ModelInfoResponse)
+    assert isinstance(response, t.ModelInfoListResponse)
     assert len(response.data) == 1
     assert response.data[0].id == model.id
 
     # Filter based on capability
     response = await run(jamai.model_info, capabilities=["chat"])
-    assert isinstance(response, p.ModelInfoResponse)
+    assert isinstance(response, t.ModelInfoListResponse)
     for m in response.data:
         assert "chat" in m.capabilities
         assert "embed" not in m.capabilities
         assert "rerank" not in m.capabilities
 
     response = await run(jamai.model_info, capabilities=["chat", "image"])
-    assert isinstance(response, p.ModelInfoResponse)
+    assert isinstance(response, t.ModelInfoListResponse)
     for m in response.data:
         assert "chat" in m.capabilities
         assert "image" in m.capabilities
@@ -52,14 +52,14 @@ async def test_model_info(
         assert "rerank" not in m.capabilities
 
     response = await run(jamai.model_info, capabilities=["embed"])
-    assert isinstance(response, p.ModelInfoResponse)
+    assert isinstance(response, t.ModelInfoListResponse)
     for m in response.data:
         assert "chat" not in m.capabilities
         assert "embed" in m.capabilities
         assert "rerank" not in m.capabilities
 
     response = await run(jamai.model_info, capabilities=["rerank"])
-    assert isinstance(response, p.ModelInfoResponse)
+    assert isinstance(response, t.ModelInfoListResponse)
     for m in response.data:
         assert "chat" not in m.capabilities
         assert "embed" not in m.capabilities
@@ -124,12 +124,12 @@ async def test_model_names(
 
 
 def _get_chat_request(model: str, **kwargs):
-    request = p.ChatRequest(
+    request = t.ChatRequest(
         id="test",
         model=model,
         messages=[
-            p.ChatEntry.system("You are a concise assistant."),
-            p.ChatEntry.user("What is a llama?"),
+            t.ChatEntry.system("You are a concise assistant."),
+            t.ChatEntry.user("What is a llama?"),
         ],
         temperature=0.001,
         top_p=0.001,
@@ -171,10 +171,10 @@ async def test_chat_completion(
     # Non-streaming
     request = _get_chat_request(model, stream=False)
     response = await run(jamai.generate_chat_completions, request)
-    assert isinstance(response, p.ChatCompletionChunk)
+    assert isinstance(response, t.ChatCompletionChunk)
     assert isinstance(response.text, str)
     assert len(response.text) > 1
-    assert isinstance(response.usage, p.CompletionUsage)
+    assert isinstance(response.usage, t.CompletionUsage)
     assert isinstance(response.prompt_tokens, int)
     assert isinstance(response.completion_tokens, int)
     assert response.prompt_tokens > 0
@@ -186,12 +186,12 @@ async def test_chat_completion(
     request.stream = True
     responses = await run(jamai.generate_chat_completions, request)
     assert len(responses) > 0
-    assert all(isinstance(r, p.ChatCompletionChunk) for r in responses)
+    assert all(isinstance(r, t.ChatCompletionChunk) for r in responses)
     assert all(isinstance(r.text, str) for r in responses)
     assert len("".join(r.text for r in responses)) > 1
     assert all(r.references is None for r in responses)
     response = responses[-1]
-    assert all(isinstance(r.usage, p.CompletionUsage) for r in responses)
+    assert all(isinstance(r.usage, t.CompletionUsage) for r in responses)
     assert all(isinstance(r.prompt_tokens, int) for r in responses)
     assert all(isinstance(r.completion_tokens, int) for r in responses)
     assert response.prompt_tokens > 0
@@ -200,15 +200,15 @@ async def test_chat_completion(
 
 
 TOOLS = {
-    "get_weather": p.Tool(
+    "get_weather": t.Tool(
         type="function",
-        function=p.Function(
+        function=t.Function(
             name="get_weather",
             description="Get the current weather for a location",
-            parameters=p.FunctionParameters(
+            parameters=t.FunctionParameters(
                 type="object",
                 properties={
-                    "location": p.FunctionParameter(
+                    "location": t.FunctionParameter(
                         type="string", description="The city and state, e.g. San Francisco, CA"
                     )
                 },
@@ -217,24 +217,24 @@ TOOLS = {
             ),
         ),
     ),
-    "calculator": p.Tool(
+    "calculator": t.Tool(
         type="function",
-        function=p.Function(
+        function=t.Function(
             name="calculator",
             description="Perform a basic arithmetic operation",
-            parameters=p.FunctionParameters(
+            parameters=t.FunctionParameters(
                 type="object",
                 properties={
-                    "operation": p.FunctionParameter(
+                    "operation": t.FunctionParameter(
                         type="string",
                         description="The arithmetic operation to perform",
                         enum=["add", "subtract", "multiply", "divide"],
                     ),
-                    "first_number": p.FunctionParameter(
+                    "first_number": t.FunctionParameter(
                         type="number",
                         description="The first number",
                     ),
-                    "second_number": p.FunctionParameter(
+                    "second_number": t.FunctionParameter(
                         type="number",
                         description="The second number",
                     ),
@@ -270,20 +270,20 @@ async def test_chat_completion_with_tools(
 ):
     jamai = client_cls()
 
-    tool_choice = p.ToolChoice(
+    tool_choice = t.ToolChoice(
         type="function",
-        function=p.ToolChoiceFunction(
+        function=t.ToolChoiceFunction(
             name=tool_prompt["tool_choice"],
         ),
     )
 
     # Create a chat request with a tool
-    request = p.ChatRequestWithTools(
+    request = t.ChatRequestWithTools(
         id="test",
         model=model,
         messages=[
-            p.ChatEntry.system("You are a concise assistant."),
-            p.ChatEntry.user(tool_prompt["prompt"]),
+            t.ChatEntry.system("You are a concise assistant."),
+            t.ChatEntry.user(tool_prompt["prompt"]),
         ],
         tools=[v for _, v in TOOLS.items()]
         if set_multi_tools
@@ -297,7 +297,7 @@ async def test_chat_completion_with_tools(
 
     # Non-streaming
     response = await run(jamai.generate_chat_completions, request)
-    assert isinstance(response, p.ChatCompletionChunk)
+    assert isinstance(response, t.ChatCompletionChunk)
     assert isinstance(response.text, str)
     assert len(response.text) == 0
     tool_calls = response.message.tool_calls
@@ -306,7 +306,7 @@ async def test_chat_completion_with_tools(
     assert tool_calls[0].function.name == tool_prompt["tool_choice"]
     for argument in tool_prompt["response"]:
         assert argument in tool_calls[0].function.arguments.replace(" ", "")
-    assert isinstance(response.usage, p.CompletionUsage)
+    assert isinstance(response.usage, t.CompletionUsage)
     assert isinstance(response.prompt_tokens, int)
     assert isinstance(response.completion_tokens, int)
     assert response.references is None
@@ -315,12 +315,12 @@ async def test_chat_completion_with_tools(
     request.stream = True
     responses = await run(jamai.generate_chat_completions, request)
     assert len(responses) > 0
-    assert all(isinstance(r, p.ChatCompletionChunk) for r in responses)
+    assert all(isinstance(r, t.ChatCompletionChunk) for r in responses)
     assert all(isinstance(r.text, str) for r in responses)
     assert len("".join(r.text for r in responses)) == 0
     assert all(r.references is None for r in responses)
     response = responses[-1]
-    assert all(isinstance(r.usage, p.CompletionUsage) for r in responses)
+    assert all(isinstance(r.usage, t.CompletionUsage) for r in responses)
     assert all(isinstance(r.prompt_tokens, int) for r in responses)
     assert all(isinstance(r.completion_tokens, int) for r in responses)
     assert response.prompt_tokens > 0
@@ -351,13 +351,13 @@ async def test_chat_opener(
     jamai = client_cls()
 
     # Non-streaming
-    request = p.ChatRequest(
+    request = t.ChatRequest(
         id="test",
         model=model,
         messages=[
-            p.ChatEntry.system("You are a concise assistant."),
-            p.ChatEntry.assistant("Sam has 7 apples."),
-            p.ChatEntry.user("How many apples does Sam have?"),
+            t.ChatEntry.system("You are a concise assistant."),
+            t.ChatEntry.assistant("Sam has 7 apples."),
+            t.ChatEntry.user("How many apples does Sam have?"),
         ],
         temperature=0.001,
         top_p=0.001,
@@ -365,11 +365,11 @@ async def test_chat_opener(
         stream=False,
     )
     response = await run(jamai.generate_chat_completions, request)
-    assert isinstance(response, p.ChatCompletionChunk)
+    assert isinstance(response, t.ChatCompletionChunk)
     assert isinstance(response.text, str)
     assert "7" in response.text or "seven" in response.text.lower()
     assert len(response.text) > 1
-    assert isinstance(response.usage, p.CompletionUsage)
+    assert isinstance(response.usage, t.CompletionUsage)
     assert isinstance(response.prompt_tokens, int)
     assert isinstance(response.completion_tokens, int)
     assert response.references is None
@@ -378,11 +378,11 @@ async def test_chat_opener(
     request.stream = True
     responses = await run(jamai.generate_chat_completions, request)
     assert len(responses) > 0
-    assert all(isinstance(r, p.ChatCompletionChunk) for r in responses)
+    assert all(isinstance(r, t.ChatCompletionChunk) for r in responses)
     assert all(isinstance(r.text, str) for r in responses)
     assert "7" in response.text or "seven" in response.text.lower()
     assert all(r.references is None for r in responses)
-    assert isinstance(response.usage, p.CompletionUsage)
+    assert isinstance(response.usage, t.CompletionUsage)
     assert isinstance(response.prompt_tokens, int)
     assert isinstance(response.completion_tokens, int)
 
@@ -397,20 +397,20 @@ async def test_chat_user_only(
     jamai = client_cls()
 
     # Non-streaming
-    request = p.ChatRequest(
+    request = t.ChatRequest(
         id="test",
         model=model,
-        messages=[p.ChatEntry.user("Hi there")],
+        messages=[t.ChatEntry.user("Hi there")],
         temperature=0.001,
         top_p=0.001,
         max_tokens=30,
         stream=False,
     )
     response = await run(jamai.generate_chat_completions, request)
-    assert isinstance(response, p.ChatCompletionChunk)
+    assert isinstance(response, t.ChatCompletionChunk)
     assert isinstance(response.text, str)
     assert len(response.text) > 1
-    assert isinstance(response.usage, p.CompletionUsage)
+    assert isinstance(response.usage, t.CompletionUsage)
     assert isinstance(response.prompt_tokens, int)
     assert isinstance(response.completion_tokens, int)
     assert response.references is None
@@ -419,11 +419,11 @@ async def test_chat_user_only(
     request.stream = True
     responses = await run(jamai.generate_chat_completions, request)
     assert len(responses) > 0
-    assert all(isinstance(r, p.ChatCompletionChunk) for r in responses)
+    assert all(isinstance(r, t.ChatCompletionChunk) for r in responses)
     assert all(isinstance(r.text, str) for r in responses)
     assert len("".join(r.text for r in responses)) > 1
     assert all(r.references is None for r in responses)
-    assert isinstance(response.usage, p.CompletionUsage)
+    assert isinstance(response.usage, t.CompletionUsage)
     assert isinstance(response.prompt_tokens, int)
     assert isinstance(response.completion_tokens, int)
 
@@ -438,20 +438,20 @@ async def test_chat_system_only(
     jamai = client_cls()
 
     # Non-streaming
-    request = p.ChatRequest(
+    request = t.ChatRequest(
         id="test",
         model=model,
-        messages=[p.ChatEntry.system("You are a concise assistant.")],
+        messages=[t.ChatEntry.system("You are a concise assistant.")],
         temperature=0.001,
         top_p=0.001,
         max_tokens=30,
         stream=False,
     )
     response = await run(jamai.generate_chat_completions, request)
-    assert isinstance(response, p.ChatCompletionChunk)
+    assert isinstance(response, t.ChatCompletionChunk)
     assert isinstance(response.text, str)
     assert len(response.text) > 1
-    assert isinstance(response.usage, p.CompletionUsage)
+    assert isinstance(response.usage, t.CompletionUsage)
     assert isinstance(response.prompt_tokens, int)
     assert isinstance(response.completion_tokens, int)
     assert response.references is None
@@ -460,11 +460,11 @@ async def test_chat_system_only(
     request.stream = True
     responses = await run(jamai.generate_chat_completions, request)
     assert len(responses) > 0
-    assert all(isinstance(r, p.ChatCompletionChunk) for r in responses)
+    assert all(isinstance(r, t.ChatCompletionChunk) for r in responses)
     assert all(isinstance(r.text, str) for r in responses)
     assert len("".join(r.text for r in responses)) > 1
     assert all(r.references is None for r in responses)
-    assert isinstance(response.usage, p.CompletionUsage)
+    assert isinstance(response.usage, t.CompletionUsage)
     assert isinstance(response.prompt_tokens, int)
     assert isinstance(response.completion_tokens, int)
 
@@ -479,12 +479,12 @@ async def test_long_chat_completion(
     jamai = client_cls()
 
     # Streaming
-    request = p.ChatRequest(
+    request = t.ChatRequest(
         id="test",
         model=model,
         messages=[
-            p.ChatEntry.system("You are a concise assistant."),
-            p.ChatEntry.user(" ".join(["What is a llama?"] * 50000)),
+            t.ChatEntry.system("You are a concise assistant."),
+            t.ChatEntry.user(" ".join(["What is a llama?"] * 50000)),
         ],
         temperature=0.001,
         top_p=0.001,
@@ -493,7 +493,7 @@ async def test_long_chat_completion(
     )
     responses = await run(jamai.generate_chat_completions, request)
     assert len(responses) == 1
-    assert all(isinstance(r, p.ChatCompletionChunk) for r in responses)
+    assert all(isinstance(r, t.ChatCompletionChunk) for r in responses)
     completion = responses[0]
     assert completion.finish_reason == "error"
     assert "ContextWindowExceededError" in completion.text

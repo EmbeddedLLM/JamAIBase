@@ -18,7 +18,7 @@
 		<div class="flex flex-col gap-3 h-min max-w-[65%] md:max-w-none">
 			<button
 				title="Switch to light mode"
-				on:click={() => ($preferredTheme = 'LIGHT')}
+				onclick={() => ($preferredTheme = 'LIGHT')}
 				class="!block text-start cursor-pointer"
 			>
 				<div
@@ -46,7 +46,7 @@
 		</div>
 
 		<div title="Switch to dark mode" class="flex flex-col gap-3 h-min max-w-[65%] md:max-w-none">
-			<button on:click={() => ($preferredTheme = 'DARK')} class="!block text-start cursor-pointer">
+			<button onclick={() => ($preferredTheme = 'DARK')} class="!block text-start cursor-pointer">
 				<div
 					class="relative after:content-[''] after:absolute after:top-0 after:left-0 after:right-0 after:bottom-0 after:border-4 after:border-[#0096EB] after:rounded-xl after:[box-shadow:0px_0px_8px_0px_#0096eb80] after:opacity-0 after:transition-opacity"
 					class:after:opacity-100={$preferredTheme == 'DARK'}
@@ -76,7 +76,7 @@
 			class="flex flex-col gap-3 h-min max-w-[65%] md:max-w-none"
 		>
 			<button
-				on:click={() => ($preferredTheme = 'SYSTEM')}
+				onclick={() => ($preferredTheme = 'SYSTEM')}
 				class="!block text-start cursor-pointer"
 			>
 				<div

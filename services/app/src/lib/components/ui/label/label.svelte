@@ -1,21 +1,26 @@
 <script lang="ts">
-	import { Label as LabelPrimitive } from "bits-ui";
-	import { cn } from "$lib/utils.js";
+	import { Label as LabelPrimitive } from 'bits-ui';
+	import { cn } from '$lib/utils.js';
 
-	type $$Props = LabelPrimitive.Props;
-	type $$Events = LabelPrimitive.Events;
-
-	let className: $$Props["class"] = undefined;
-	export { className as class };
+	let {
+		ref = $bindable(null),
+		class: className,
+		required = false,
+		children,
+		...restProps
+	}: LabelPrimitive.RootProps & { required?: boolean } = $props();
 </script>
 
 <LabelPrimitive.Root
+	bind:ref
 	class={cn(
-		"text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70",
+		'text-left text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70',
 		className
 	)}
-	{...$$restProps}
-	on:mousedown
+	{...restProps}
 >
-	<slot />
+	{@render children?.()}
+	{#if required}
+		<span class="pl-0.5 text-sm font-medium text-destructive">*</span>
+	{/if}
 </LabelPrimitive.Root>

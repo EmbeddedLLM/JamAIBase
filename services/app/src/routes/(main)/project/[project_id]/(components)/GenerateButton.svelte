@@ -1,28 +1,40 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import toUpper from 'lodash/toUpper';
-	import { page } from '$app/stores';
-	import { genTableRows, tableState } from '$lib/components/tables/tablesStore';
+	import { page } from '$app/state';
+	import { getTableState, getTableRowsState } from '$lib/components/tables/tablesState.svelte';
 	import { cn } from '$lib/utils';
 	import logger from '$lib/logger';
 	import type { GenTable, GenTableStreamEvent } from '$lib/types';
 
 	import StarIcon from '$lib/icons/StarIcon.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
-	import { Button, type Props, type Events } from '$lib/components/ui/button';
+	import { Button, type Props } from '$lib/components/ui/button';
+
+	const tableState = getTableState();
+	const tableRowsState = getTableRowsState();
 
 	type $$Props = Props & {
 		tableType: 'action' | 'knowledge' | 'chat';
 		tableData: GenTable | undefined;
 		refetchTable: () => void;
 	};
-	type $$Events = Events;
 
-	let className: $$Props['class'] = undefined;
-	export { className as class };
-	export let tableType: $$Props['tableType'];
-	export let tableData: $$Props['tableData'];
-	export let refetchTable: $$Props['refetchTable'];
+	interface Props_1 {
+		class?: $$Props['class'];
+		tableType: $$Props['tableType'];
+		tableData: $$Props['tableData'];
+		refetchTable: $$Props['refetchTable'];
+		[key: string]: any;
+	}
+
+	let {
+		class: className = undefined,
+		tableType,
+		tableData,
+		refetchTable,
+		...rest
+	}: Props_1 = $props();
 
 	const keyframes = [
 		{
@@ -52,10 +64,10 @@
 	];
 
 	async function handleRegenRow() {
-		if (!tableData || !$genTableRows) return;
-		if (Object.keys($tableState.streamingRows).length !== 0) return;
+		if (!tableData || !tableRowsState.rows) return;
+		if (Object.keys(tableState.streamingRows).length !== 0) return;
 
-		const toRegenRowIds = $tableState.selectedRows.filter((i) => !$tableState.streamingRows[i]);
+		const toRegenRowIds = tableState.selectedRows.filter((i) => !tableState.streamingRows[i]);
 		if (toRegenRowIds.length === 0)
 			return toast.info('Select a row to start generating', { id: 'row-select-req' });
 		tableState.setSelectedRows([]);
@@ -73,15 +85,15 @@
 		//? Optimistic update, clear row
 		const originalValues = toRegenRowIds.map((toRegenRowId) => ({
 			id: toRegenRowId,
-			value: $genTableRows!.find((row) => row.ID === toRegenRowId)!
+			value: tableRowsState.rows!.find((row) => row.ID === toRegenRowId)!
 		}));
-		genTableRows.clearOutputs(tableData, toRegenRowIds);
+		tableRowsState.clearOutputs(tableData, toRegenRowIds);
 
-		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/rows/regen`, {
+		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/${tableType}/rows/regen`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				table_id: $page.params.table_id,
+				table_id: page.params.table_id,
 				row_ids: toRegenRowIds,
 				stream: true
 			})
@@ -101,79 +113,81 @@
 			});
 
 			//? Revert back to original value
-			genTableRows.revert(originalValues);
+			tableRowsState.revert(originalValues);
 		} else {
 			const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
 
-			let isStreaming = true;
-			let lastMessage = '';
-			while (isStreaming) {
+			// let references: Record<string, Record<string, ChatReferences>> | null = null;
+			let buffer = '';
+			// eslint-disable-next-line no-constant-condition
+			while (true) {
 				try {
 					const { value, done } = await reader.read();
 					if (done) break;
 
-					if (value.endsWith('\n\n')) {
-						const lines = (lastMessage + value)
-							.split('\n\n')
-							.filter((i) => i.trim())
-							.flatMap((line) => line.split('\n')); //? Split by \n to handle collation
+					buffer += value;
+					const lines = buffer.split('\n'); //? Split by \n to handle collation
+					buffer = lines.pop() || '';
 
-						lastMessage = '';
-
-						for (const line of lines) {
-							const sumValue = line.replace(/^data: /, '').replace(/data: \[DONE\]\s+$/, '');
-
-							if (sumValue.trim() == '[DONE]') break;
-
-							let parsedValue;
-							try {
-								parsedValue = JSON.parse(sumValue) as GenTableStreamEvent;
-							} catch (err) {
-								console.error('Error parsing:', sumValue);
-								logger.error(toUpper(`${tableType}TBL_ROW_REGENSTREAMPARSE`), {
-									parsing: sumValue,
-									error: err
-								});
-								continue;
-							}
-
-							if (parsedValue.object === 'gen_table.completion.chunk') {
-								if (parsedValue.choices[0].finish_reason) {
-									switch (parsedValue.choices[0].finish_reason) {
-										case 'error': {
-											logger.error(toUpper(`${tableType}_ROW_ADDSTREAM`), parsedValue);
-											console.error('STREAMING_ERROR', parsedValue);
-											alert(`Error while streaming: ${parsedValue.choices[0].message.content}`);
-											break;
-										}
-										default: {
-											const streamingCols = $tableState.streamingRows[parsedValue.row_id].filter(
-												(col) => col !== parsedValue.output_column_name
-											);
-											if (streamingCols.length === 0) {
-												tableState.delStreamingRows([parsedValue.row_id]);
-											} else {
-												tableState.addStreamingRows({
-													[parsedValue.row_id]: streamingCols
-												});
+					let parsedEvent: { data: GenTableStreamEvent } | undefined = undefined;
+					for (const line of lines) {
+						if (line === '') {
+							if (parsedEvent) {
+								if (parsedEvent.data.object === 'gen_table.completion.chunk') {
+									if (parsedEvent.data.choices[0].finish_reason) {
+										switch (parsedEvent.data.choices[0].finish_reason) {
+											case 'error': {
+												logger.error(toUpper(`${tableType}_ROW_ADDSTREAM`), parsedEvent.data);
+												console.error('STREAMING_ERROR', parsedEvent.data);
+												alert(
+													`Error while streaming: ${parsedEvent.data.choices[0].message.content}`
+												);
+												break;
 											}
-											break;
+											default: {
+												const streamingCols =
+													tableState.streamingRows[parsedEvent.data.row_id]?.filter(
+														(col) => col !== parsedEvent?.data.output_column_name
+													) ?? [];
+												if (streamingCols.length === 0) {
+													tableState.delStreamingRows([parsedEvent.data.row_id]);
+												} else {
+													tableState.addStreamingRows({
+														[parsedEvent.data.row_id]: streamingCols
+													});
+												}
+												break;
+											}
 										}
+									} else {
+										//* Add chunk to active row'
+										tableRowsState.stream(
+											parsedEvent.data.row_id,
+											parsedEvent.data.output_column_name,
+											parsedEvent.data.choices[0].message.content ?? ''
+										);
 									}
+								} else if (parsedEvent.data.object === 'gen_table.references') {
+									// references = {
+									// 	...(references ?? {}),
+									// 	[parsedEvent.data.row_id]: {
+									// 		...((references ?? {})[parsedEvent.data.row_id] ?? {}),
+									// 		[parsedEvent.data.output_column_name]:
+									// 			parsedEvent.data as unknown as ChatReferences
+									// 	}
+									// };
 								} else {
-									//* Add chunk to active row'
-									genTableRows.stream(
-										parsedValue.row_id,
-										parsedValue.output_column_name,
-										parsedValue.choices[0].message.content ?? ''
-									);
+									console.warn('Unknown event data:', parsedEvent.data);
 								}
 							} else {
-								console.log('Unknown message:', parsedValue);
+								console.warn('Unknown event object:', parsedEvent);
 							}
-						}
-					} else {
-						lastMessage += value;
+						} else if (line.startsWith('data: ')) {
+							if (line.slice(6) === '[DONE]') break;
+							parsedEvent = { ...(parsedEvent ?? {}), data: JSON.parse(line.slice(6)) };
+						} /*  else if (line.startsWith('event: ')) {
+						parsedEvent = { ...(parsedEvent ?? {}), event: line.slice(7) };
+					} */
 					}
 				} catch (err) {
 					// logger.error(toUpper(`${tableType}TBL_ROW_REGENSTREAM`), err);
@@ -196,34 +210,36 @@
 		refetchTable();
 	}
 
-	let generateBtnSvg: SVGSVGElement;
-	$: if (generateBtnSvg) {
-		const shapes = generateBtnSvg.querySelectorAll('path');
+	let generateBtnSvg: SVGSVGElement | undefined = $state();
+	$effect(() => {
+		if (generateBtnSvg) {
+			const shapes = generateBtnSvg.querySelectorAll('path');
 
-		let currentKeyframe = 0;
+			let currentKeyframe = 0;
 
-		function animate() {
-			const frame = keyframes[currentKeyframe];
+			function animate() {
+				const frame = keyframes[currentKeyframe];
 
-			shapes.forEach((shape, index) => {
-				shape?.setAttribute('d', frame.paths[index]);
-				shape?.setAttribute('fill', frame.colors[index]);
-			});
+				shapes.forEach((shape, index) => {
+					shape?.setAttribute('d', frame.paths[index]);
+					shape?.setAttribute('fill', frame.colors[index]);
+				});
 
-			currentKeyframe = (currentKeyframe + 1) % keyframes.length;
+				currentKeyframe = (currentKeyframe + 1) % keyframes.length;
+			}
+
+			animate();
+			setInterval(animate, 1400);
 		}
-
-		animate();
-		setInterval(animate, 1400);
-	}
+	});
 </script>
 
 <Button
-	{...$$restProps}
+	{...rest}
 	title="Generate"
-	on:click={handleRegenRow}
+	onclick={handleRegenRow}
 	class={cn(
-		`relative pl-0 sm:pl-2.5 pr-0 sm:pr-3.5 py-0 h-8 sm:h-9 w-min aspect-square sm:aspect-auto font-normal overflow-hidden transition-colors group/gen-btn`,
+		`group/gen-btn relative aspect-square h-8 w-9 overflow-hidden py-0 pl-0 pr-0 font-normal transition-colors sm:w-auto md:aspect-auto md:h-9 md:pl-2.5 md:pr-3.5`,
 		className
 	)}
 >
@@ -234,7 +250,7 @@
 		viewBox="0 0 94 47"
 		fill="none"
 		xmlns="http://www.w3.org/2000/svg"
-		class="absolute top-0 left-0 h-full w-full z-0 bg-[#232324] scale-[2] translate-x-3.5 -translate-y-1.5 [&_path]:transition-all [&_path]:[transition-duration:3s]"
+		class="absolute left-0 top-0 z-0 h-full w-full -translate-y-1.5 translate-x-3.5 scale-[2] bg-[#232324] [&_path]:transition-all [&_path]:[transition-duration:3s]"
 	>
 		<g style="mix-blend-mode: color-dodge" filter="url(#filter0_f_4380_34276)">
 			<path
@@ -271,21 +287,21 @@
 	</svg>
 
 	<div
-		style={Object.keys($tableState.streamingRows).length !== 0 ? 'opacity: 0%;' : ''}
-		class="absolute top-0 left-0 h-full w-full z-[9] bg-[#BF416E] opacity-100 group-hover/gen-btn:opacity-0 group-hover/gen-btn:motion-reduce:opacity-100 group-hover/gen-btn:motion-reduce:bg-[#950048] group-focus/gen-btn:opacity-0 transition-opacity duration-300"
+		style={Object.keys(tableState.streamingRows).length !== 0 ? 'opacity: 0%;' : ''}
+		class="absolute left-0 top-0 z-[9] h-full w-full bg-[#BF416E] opacity-100 transition-opacity duration-300 group-hover/gen-btn:opacity-0 group-focus/gen-btn:opacity-0 group-hover/gen-btn:motion-reduce:bg-[#950048] group-hover/gen-btn:motion-reduce:opacity-100"
 	></div>
 
-	<div class="flex items-center gap-1.5 z-10">
+	<div class="z-10 flex items-center gap-1.5">
 		<div class="stars relative text-[#FCFCFD]">
 			<StarIcon class="h-4 w-4 rotate-180 transition-[color,transform] duration-300" />
 			<StarIcon
-				class="stars absolute -bottom-1 -left-1 h-1.5 w-1.5 opacity-0 group-hover/gen-btn:opacity-100 group-focus/gen-btn:opacity-100 transition-opacity duration-300"
+				class="stars absolute -bottom-1 -left-1 h-1.5 w-1.5 opacity-0 transition-opacity duration-300 group-hover/gen-btn:opacity-100 group-focus/gen-btn:opacity-100"
 			/>
 			<StarIcon
-				class="stars absolute -top-1 -right-1 h-[7px] w-[7px] opacity-0 group-hover/gen-btn:opacity-100 group-focus/gen-btn:opacity-100 transition-opacity duration-300"
+				class="stars absolute -right-1 -top-1 h-[7px] w-[7px] opacity-0 transition-opacity duration-300 group-hover/gen-btn:opacity-100 group-focus/gen-btn:opacity-100"
 			/>
 		</div>
-		<span class="hidden sm:block"> Generate </span>
+		<span class="hidden md:block"> Generate </span>
 	</div>
 </Button>
 

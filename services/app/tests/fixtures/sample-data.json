@@ -1,0 +1,122 @@
+{
+	"admin": {
+		"email": "admin@example.com",
+		"name": "Sue Dough",
+		"username": "admin",
+		"password": "password"
+	},
+
+	"test": {
+		"email": "test@example.com",
+		"name": "Deepak Gurr",
+		"username": "test-user",
+		"password": "password"
+	},
+
+	"chat_model": {
+		"meta": {
+			"icon": "openai"
+		},
+		"id": "openai/gpt-4o",
+		"name": "OpenAI GPT-4o",
+		"type": "llm",
+		"context_length": 1047576,
+		"capabilities": ["chat", "image"],
+		"languages": ["en", "fr"],
+		"llm_input_cost_per_mtoken": 2.5,
+		"llm_output_cost_per_mtoken": 10.0
+	},
+	"chat_model_deployment": {
+		"model_id": "openai/gpt-4o",
+		"name": "OpenAI GPT-4o",
+		"provider": "openai",
+		"routing_id": "openai/gpt-4o",
+		"api_base": ""
+	},
+
+	"embedding_model": {
+		"meta": {
+			"icon": "openai"
+		},
+		"id": "openai/text-embedding-3-small-1536",
+		"name": "OpenAI Text Embedding 3 Small (1536-dim)",
+		"type": "embed",
+		"context_length": 8192,
+		"capabilities": ["embed"],
+		"languages": ["en", "fr"],
+		"embedding_size": 1536,
+		"embedding_cost_per_mtoken": 0.022
+	},
+	"embedding_model_deployment": {
+		"model_id": "openai/text-embedding-3-small-1536",
+		"name": "OpenAI Text Embedding 3 Small (1536-dim)",
+		"provider": "openai",
+		"routing_id": "openai/text-embedding-3-small",
+		"api_base": ""
+	},
+
+	"pro_plan": {
+		"name": "Pro",
+		"stripe_price_id_live": "a",
+		"stripe_price_id_test": "a",
+		"flat_cost": 0,
+		"credit_grant": 10000,
+		"max_users": 20,
+		"products": {
+			"llm_tokens": {
+				"name": "LLM Tokens",
+				"included": {
+					"unit_cost": 0,
+					"up_to": 100000
+				},
+				"tiers": [],
+				"unit": "tokens"
+			},
+			"embedding_tokens": {
+				"name": "Embedding Tokens",
+				"included": {
+					"unit_cost": 0,
+					"up_to": 100000
+				},
+				"tiers": [],
+				"unit": "Tokens"
+			},
+			"reranker_searches": {
+				"name": "Reranker Searches",
+				"included": {
+					"unit_cost": 0,
+					"up_to": 100000
+				},
+				"tiers": [],
+				"unit": "Searches"
+			},
+			"db_storage": {
+				"name": "DB Storage",
+				"included": {
+					"unit_cost": 0,
+					"up_to": 100000
+				},
+				"tiers": [],
+				"unit": "bytes"
+			},
+			"file_storage": {
+				"name": "File Storage",
+				"included": {
+					"unit_cost": 0,
+					"up_to": 100000
+				},
+				"tiers": [],
+				"unit": "bytes"
+			},
+			"egress": {
+				"name": "Egress",
+				"included": {
+					"unit_cost": 0,
+					"up_to": 100000
+				},
+				"tiers": [],
+				"unit": "bytes"
+			}
+		}
+	}
+}

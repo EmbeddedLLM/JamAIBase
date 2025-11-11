@@ -1,0 +1,89 @@
+{
+	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"sortable_field_name": "Name",
+	"sortable_field_created_at": "Date created",
+	"sortable_field_updated_at": "Date modified",
+	"left_dock": {
+		"home": "Home",
+		"project": "Project",
+		"organization": "Organization",
+		"docs": "Docs",
+		"logout": "Log Out",
+		"upgrade": "Ready for more? <br /> Upgrade to our premium plan",
+		"upgrade_btn": "Upgrade Plan",
+		"show_hide_btn": "Show/hide side navigation bar",
+		"analytics": "Analytics"
+	},
+	"breadcrumbs": {
+		"org_btn": "Switch organizations",
+		"org_placeholder": "Unknown",
+		"org_create_btn": "Create organization",
+		"org_default": "Default Organization",
+		"org_join_btn": "Join organization"
+	},
+	"organization": {
+		"navigation": {
+			"general": "General",
+			"team": "Team",
+			"secrets": "Secrets",
+			"billing": "Billing",
+			"usage": "Usage",
+			"heading": "Organization"
+		},
+		"team_page": {
+			"subheading": "Organization Members",
+			"invite_btn": "Invite people",
+			"idx": "No.",
+			"uid": "User ID",
+			"email": "Email",
+			"role": "Role",
+			"created": "Created at",
+			"useredit_heading": "Edit user role",
+			"useredit_field_role": "User role",
+			"useredit_field_role_title": "Select user role"
+		}
+	},
+	"save": "Save",
+	"cancel": "Cancel",
+	"close": "Close",
+	"confirm_message": "Are you sure?",
+	"project": {
+		"heading": "Projects",
+		"search_placeholder": "Search Project",
+		"create_btn": "New Project",
+		"import_btn": "Import Project",
+		"subheading": "All Projects",
+		"settings_rename": "Rename project",
+		"settings_export": "Export project",
+		"settings_delete": "Delete project",
+		"updated_at": "Last updated",
+		"settings_btn": "Project settings",
+		"edit": {
+			"heading": "Edit project name",
+			"field_name": "Project name"
+		},
+		"create": {
+			"heading": "New project",
+			"field_name": "Project name"
+		},
+		"delete": {
+			"heading": "Delete project",
+			"text_content": "Do you really want to delete project <span>`{project_name}`</span> ? This process cannot be undone.",
+			"text_confirm": "Enter project {confirm_text} to confirm",
+			"field_confirm": "Project {confirm_text}"
+		}
+	},
+	"sortable": {
+		"name": "Name",
+		"created_at": "Date created",
+		"updated_at": "Date modified",
+		"direction_asc": "Ascending",
+		"direction_desc": "Descending"
+	},
+	"field_required": "Required",
+	"add": "Add",
+	"create": "Create",
+	"delete": "Delete",
+	"project_export_confirm": "Export project `{project_name}`?",
+	"project_export_fail": "Failed to export project"
+}

@@ -130,7 +130,7 @@ Create an API client with api key and project id:
 ```javascript
 import JamAI from "jamaibase";
 
-const jamai = new JamAI({ apiKey: "jamai_apikey", projectId: "proj_id" });
+const jamai = new JamAI({ token: "jamai_pat", projectId: "proj_id" });
 ```
 
 Create an API client with custom HTTP client:
@@ -186,18 +186,12 @@ jamai.setHttpagentConfig({
 });
 ```
 
-Can be imported from different modules depending on the need:
-
-```javascript
-import JamAI from "jamaibase/index.umd.js";
-```
-
 ### Types
 
 Types can be imported from resources:
 
 ```javascript
-import { ChatRequest } from "jamaibase/dist/resources/llm/chat";
+import { ChatRequest } from "jamaibase/resources/llm/chat";
 
 let response: ChatRequest;
 ```
@@ -297,7 +291,7 @@ To integrate JamAI into a React application, follow these steps:
 
 import { useEffect, useState } from "react";
 import JamAI from "jamaibase";
-import { PageListTableMetaResponse } from "jamaibase/dist/resources/gen_tables/tables";
+import { PageListTableMetaResponse } from "jamaibase/resources/gen_tables/tables";
 
 export default function Home() {
     const [tableData, setTableData] = useState<PageListTableMetaResponse>();
@@ -420,7 +414,7 @@ export async function GET(request: NextRequest) {
 
 "use client";
 
-import { PageListTableMetaResponse } from "jamaibase/dist/resources/gen_tables/tables";
+import { PageListTableMetaResponse } from "jamaibase/resources/gen_tables/tables";
 import { ChangeEvent, useEffect, useState } from "react";
 
 export default function Home() {

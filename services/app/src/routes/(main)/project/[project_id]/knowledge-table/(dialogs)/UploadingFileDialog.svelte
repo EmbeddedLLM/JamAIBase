@@ -1,12 +1,20 @@
 <script lang="ts">
 	import * as Dialog from '$lib/components/ui/dialog';
 
-	export let isUploadingFile: boolean;
+	interface Props {
+		isUploadingFile: boolean;
+	}
+
+	let { isUploadingFile }: Props = $props();
 </script>
 
-<Dialog.Root closeOnEscape={false} closeOnOutsideClick={false} open={isUploadingFile}>
-	<Dialog.Content class="min-h-[25rem] w-[clamp(0px,24rem,100%)]">
-		<div class="grow flex flex-col items-center justify-center gap-1 p-6 w-full overflow-auto">
+<Dialog.Root open={isUploadingFile}>
+	<Dialog.Content
+		interactOutsideBehavior="ignore"
+		escapeKeydownBehavior="ignore"
+		class="min-h-[25rem] w-[clamp(0px,24rem,100%)]"
+	>
+		<div class="flex w-full grow flex-col items-center justify-center gap-1 overflow-auto p-6">
 			<svg
 				viewBox="0 0 172 146"
 				fill="none"

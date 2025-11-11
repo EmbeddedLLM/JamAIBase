@@ -9,7 +9,7 @@ timeout = 90
 log_cli = true
 asyncio_mode = "auto"
 # log_cli_level = "DEBUG"
-addopts = "--cov=owl --doctest-modules"
+addopts = "--doctest-modules -vv -ra --strict-markers --no-flaky-report --durations=200 --durations-min=0.05"
 testpaths = ["tests"]
 filterwarnings = [
     "ignore::DeprecationWarning:tensorflow.*",
@@ -17,6 +17,24 @@ filterwarnings = [
     "ignore::DeprecationWarning:matplotlib.*",
     "ignore::DeprecationWarning:flatbuffers.*",
 ]
+markers = [
+    "oss: Cloud-only tests",
+    "cloud: Cloud-only tests",
+    "stripe: Stripe tests",
+]
+
+# -----------------------------------------------------------------------------
+# Coverage configuration
+# https://coverage.readthedocs.io/en
+
+[tool.coverage.run]
+source = ["owl"]
+relative_files = true
+concurrency = ["multiprocessing", "thread", "greenlet"]
+parallel = true
+
+[tool.coverage.paths]
+source = ["src", "api/src"]
 
 # -----------------------------------------------------------------------------
 # Ruff configuration
@@ -57,7 +75,7 @@ unfixable = ["B"]
 "**/{tests,docs,tools}/*" = ["E402"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["jamaibase", "owl", "docio"]
+known-first-party = ["jamaibase", "owl"]
 
 [tool.ruff.lint.flake8-bugbear]
 # Allow default arguments like, e.g., `data: List[str] = fastapi.Query(None)`.
@@ -74,91 +92,140 @@ extend-immutable-calls = [
 # https://setuptools.pypa.io/en/latest/userguide/pyproject_config.html
 
 [build-system]
-# setuptools-scm considers all files tracked by git to be data files
-requires = ["setuptools>=62.0", "setuptools-scm"]
+requires = ["setuptools>=62.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "owl"
 description = "Owl: API server for JamAI Base."
 readme = "README.md"
-requires-python = "~=3.10"
+requires-python = "~=3.12.0"
 # keywords = ["one", "two"]
-license = { text = "Apache 2.0" }
+license = "Apache-2.0"
 classifiers = [ # https://pypi.org/classifiers/
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3 :: Only",
     "Intended Audience :: Information Technology",
     "Operating System :: Unix",
 ]
+# Sort your dependencies https://sortmylist.com/
+# In general, for v1 and above, we pin to minor version using ~=
 dependencies = [
     "aioboto3~=7.0.0",
-    "aiobotocore~=2.15.0",
+    "aiobotocore~=2.21.0",                                  # Took long time to resolve
     "aiofiles~=24.1.0",
-    "authlib~=1.3.2",
-    "boto3~=1.35.7",
-    "celery~=5.4.0",
-    "duckdb~=1.1.3",
-    "fastapi[standard]~=0.115.2",
-    "filelock~=3.15.1",
-    "flower~=2.0.1",
+    "aiosqlite~=0.21.0",
+    "async-lru~=2.0.0",
+    "asyncpg~=0.30.0",
+    "authlib~=1.6.0",
+    "bm25s~=0.2.0",
+    "boto3==1.37.1",                                        # Took long time to resolve
+    "celery~=5.5.0",
+    "clickhouse-connect~=0.8.0",
+    "cloudevents~=1.12.0",
+    "coredis~=4.24.0",
+    "coverage~=7.10.0",
+    "cryptography",
+    "duckdb~=1.3.0",
+    "email-validator~=2.2.0",
+    "fastapi[standard]~=0.115.0",
+    "flower~=2.0.0",
     "gunicorn~=22.0.0",
     "httpx~=0.27.0",
     "itsdangerous~=2.2.0",
-    "jamaibase>=0.2.1",
-    # lancedb 0.9.0 has issues with row deletion
+    "jamaibase>=0.4.1",
     "lancedb==0.12.0",
-    "langchain-community~=0.2.12",
-    "langchain~=0.2.14",
-    "litellm~=1.50.0",
-    "loguru~=0.7.2",
-    "natsort[fast]>=8.4.0",
-    "numpy>=1.26.4",
-    "openai>=1.51.0",
-    "openmeter~=1.0.0b89",
-    "orjson~=3.10.7",
-    "pandas~=2.2",
-    "Pillow~=10.4.0",
+    "langchain~=0.2.0",
+    "limits~=3.14.0",
+    "litellm~=1.75.0",
+    "loguru~=0.7.0",
+    "natsort[fast]~=8.4.0",
+    "nltk~=3.9.0",
+    "numpy>=1.26.0",
+    "openai~=1.99.0",
+    "opentelemetry-api~=1.36.0",
+    "opentelemetry-distro~=0.57b0",
+    "opentelemetry-exporter-otlp~=1.36.0",
+    "opentelemetry-instrumentation-aiohttp-client~=0.57b0",
+    "opentelemetry-instrumentation-aiohttp-server~=0.57b0",
+    "opentelemetry-instrumentation-asgi~=0.57b0",
+    "opentelemetry-instrumentation-asyncio~=0.57b0",
+    "opentelemetry-instrumentation-boto3sqs~=0.57b0",
+    "opentelemetry-instrumentation-botocore~=0.57b0",
+    "opentelemetry-instrumentation-celery~=0.57b0",
+    "opentelemetry-instrumentation-dbapi~=0.57b0",
+    "opentelemetry-instrumentation-fastapi~=0.57b0",
+    "opentelemetry-instrumentation-grpc~=0.57b0",
+    "opentelemetry-instrumentation-httpx~=0.57b0",
+    "opentelemetry-instrumentation-jinja2~=0.57b0",
+    "opentelemetry-instrumentation-logging~=0.57b0",
+    "opentelemetry-instrumentation-redis~=0.57b0",
+    "opentelemetry-instrumentation-requests~=0.57b0",
+    "opentelemetry-instrumentation-sqlalchemy~=0.57b0",
+    "opentelemetry-instrumentation-sqlite3~=0.57b0",
+    "opentelemetry-instrumentation-starlette~=0.57b0",
+    "opentelemetry-instrumentation-system-metrics~=0.57b0",
+    "opentelemetry-instrumentation-threading~=0.57b0",
+    "opentelemetry-instrumentation-tornado~=0.57b0",
+    "opentelemetry-instrumentation-tortoiseorm~=0.57b0",
+    "opentelemetry-instrumentation-urllib3~=0.57b0",
+    "opentelemetry-instrumentation-urllib~=0.57b0",
+    "opentelemetry-instrumentation-wsgi~=0.57b0",
+    "opentelemetry-sdk~=1.36.0",
+    "orjson~=3.11.0",
+    "pandas~=2.3.0",
+    "pdf2image~=1.17.0",
+    "pgvector~=0.3.0",
+    "Pillow~=11.3.0",
+    "pottery~=3.0.0",
+    "prometheus-api-client~=0.5.0",
+    "psutil~=7.0.0",
+    "psycopg[binary]~=3.2.0",
+    "pwdlib[argon2]>=0.2.0",
     "pyarrow~=17.0.0",
-    "pycryptodomex~=3.20.0",
-    "pydantic-settings~=2.4.0",
-    "pydantic[email,timezone]~=2.8.2",
-    "pydub~=0.25.1",
-    "pyjwt~=2.9.0",
-    # pylance 0.13.0 has issues with row deletion
+    "pycountry~=24.6.0",
+    "pycryptodomex~=3.23.0",
+    "pydantic-extra-types~=2.10.0",
+    "pydantic-settings~=2.10.0",
+    "pydantic[email,timezone]~=2.11.0",
+    "pydub~=0.25.0",
+    "pyjwt~=2.10.0",
     "pylance==0.16.0",
-    "python-multipart~=0.0.9",
-    "redis[hiredis]~=5.0.8",
-    "SQLAlchemy>=2.0",
-    "sqlmodel~=0.0.21",
-    "srsly~=2.4.8",
-    # starlette 0.38.3 and 0.38.4 seem to have issues with background tasks
-    "starlette~=0.41.3",
+    "python-multipart~=0.0.20",
+    "redis[hiredis]~=5.3.0",
+    "SQLAlchemy~=2.0.0",
+    "sqlmodel~=0.0.20",
+    "sqlparse~=0.5.0",
+    "starlette~=0.41.0",
     "stripe~=9.12.0",
+    "tabulate~=0.9.0",
     "tantivy~=0.22.0",
     "tenacity~=8.5.0",
     "tiktoken~=0.7.0",
-    "toml~=0.10.2",
-    "tqdm~=4.66.5",
-    "typer[all]~=0.12.4",
-    "typing_extensions>=4.12.2",
-    "unstructured-client @ git+https://github.com/EmbeddedLLM/unstructured-python-client.git@fix-nested-asyncio-conflict-with-uvloop#egg=unstructured-client",
+    "toml~=0.10.0",
+    "tqdm~=4.67.0",
+    "typer~=0.17.0",
+    "typing_extensions~=4.14.0",
     "uuid-utils~=0.9.0",
     "uuid7~=0.1.0",
     # uvicorn 0.29.x shutdown seems unclean and 0.30.x child process sometimes dies
-    "uvicorn[standard]~=0.28.1",
-] # Sort your dependencies https://sortmylist.com/
+    "uvicorn[standard]~=0.28.0",
+    "xmltodict~=0.14.0",
+]
 dynamic = ["version"]
 
 [project.optional-dependencies]
-lint = ["ruff~=0.6.1"]
+lint = ["ruff~=0.12.9"]
 test = [
-    "flaky~=3.8.1",
-    "mypy~=1.11.1",
+    "flaky~=3.8",
+    "freezegun~=1.5",
+    "junitparser",
+    "locust~=2.36",
+    "mcp[cli]~=1.12",
+    "mypy~=1.11",
     "pytest-asyncio>=0.23.8",
-    "pytest-cov~=5.0.0",
-    "pytest-timeout>=2.3.1",
-    "pytest~=8.3.2",
+    "pytest-timeout~=2.3",
+    "pytest~=8.3",
 ]
 docs = [
     "furo~=2024.8.6",              # Sphinx theme (nice looking, with dark mode)
@@ -186,4 +253,4 @@ version = { attr = "owl.version.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-owl = ["**/*.json", "**/*.parquet"]
+owl = ["**/*.json", "**/*.parquet", "**/*.ttf"]

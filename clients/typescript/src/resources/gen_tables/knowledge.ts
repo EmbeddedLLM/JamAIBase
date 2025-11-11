@@ -7,12 +7,7 @@ export const CreateKnowledgeTableRequestSchema = TableSchemaCreateSchema.extend(
 export type CreateKnowledgeTableRequest = z.input<typeof CreateKnowledgeTableRequestSchema>;
 
 export const UploadFileRequestSchema = z.object({
-    file: z
-        .any()
-        .refine((value) => value instanceof File, {
-            message: "Value must be a File object"
-        })
-        .optional(),
+    file: z.any().optional(),
     file_path: z.string().optional(),
     table_id: IdSchema,
     chunk_size: z.number().gt(0).optional(),

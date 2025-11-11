@@ -1,10 +1,9 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import debounce from 'lodash/debounce';
 	import axios, { CanceledError } from 'axios';
-	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import { modelsAvailable } from '$globalStore';
 	import { jamaiApiVersion, knowledgeTableFiletypes, tableIDPattern } from '$lib/constants';
 	import logger from '$lib/logger';
@@ -12,28 +11,39 @@
 	import ModelSelect from '$lib/components/preset/ModelSelect.svelte';
 	import InputText from '$lib/components/InputText.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
+	import { Label } from '$lib/components/ui/label';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import CloseIcon from '$lib/icons/CloseIcon.svelte';
 	import CheckIcon from '$lib/icons/CheckIcon.svelte';
 
-	export let uploadFile = false;
-	export let isAddingTable: boolean;
-	export let refetchTables: (() => Promise<void>) | undefined = undefined;
-
-	let container: HTMLDivElement;
-	let tableId = '';
-	let selectedModel = '';
-
-	let filesDragover = false;
-	let selectedFiles: File[] = [];
-	let activeFile: { index: number; progress: number } | null = null;
-
-	let isLoading = false;
-
-	$: if (!isAddingTable) {
-		tableId = '';
+	interface Props {
+		uploadFile?: boolean;
+		isAddingTable: boolean;
+		refetchTables?: (() => Promise<void>) | undefined;
 	}
+
+	let {
+		uploadFile = false,
+		isAddingTable = $bindable(),
+		refetchTables = undefined
+	}: Props = $props();
+
+	let container: HTMLDivElement | undefined = $state();
+	let tableId = $state('');
+	let selectedModel = $state('');
+
+	let filesDragover = $state(false);
+	let selectedFiles: File[] = $state([]);
+	let activeFile: { index: number; progress: number } | null = $state(null);
+
+	let isLoading = $state(false);
+
+	$effect(() => {
+		if (!isAddingTable) {
+			tableId = '';
+		}
+	});
 
 	async function handleAddTable() {
 		if (!tableId) return toast.error('Table ID is required', { id: 'table-id-req' });
@@ -51,11 +61,11 @@
 		if (isLoading) return;
 		isLoading = true;
 
-		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/knowledge`, {
+		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/knowledge`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
-				'x-project-id': $page.params.project_id
+				'x-project-id': page.params.project_id
 			},
 			body: JSON.stringify({
 				id: tableId,
@@ -90,12 +100,12 @@
 
 				try {
 					const uploadRes = await axios.post(
-						`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/knowledge/embed_file`,
+						`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/knowledge/embed_file`,
 						formData,
 						{
 							headers: {
 								'Content-Type': 'multipart/form-data',
-								'x-project-id': $page.params.project_id
+								'x-project-id': page.params.project_id
 							},
 							onUploadProgress: (progressEvent) => {
 								if (!progressEvent.total) return;
@@ -150,13 +160,13 @@
 			selectedFiles = [];
 			isLoading = false;
 		} else {
-			goto(`/project/${$page.params.project_id}/knowledge-table/${responseBody.id}`);
+			goto(`/project/${page.params.project_id}/knowledge-table/${responseBody.id}`);
 		}
 	}
 
 	async function handleFilesUpload(files: File[]) {
 		container
-			.querySelectorAll('input[type="file"]')
+			?.querySelectorAll('input[type="file"]')
 			.forEach((el) => ((el as HTMLInputElement).value = ''));
 
 		if (files.length === 0) return;
@@ -178,57 +188,59 @@
 	const handleDragLeave = () => (filesDragover = false);
 </script>
 
-<Dialog.Root closeOnEscape={!isLoading} closeOnOutsideClick={!isLoading} bind:open={isAddingTable}>
-	<Dialog.Content data-testid="new-table-dialog" class="max-h-[90vh] w-[clamp(0px,30rem,100%)]">
+<Dialog.Root bind:open={isAddingTable}>
+	<Dialog.Content
+		data-testid="new-table-dialog"
+		interactOutsideBehavior={isLoading ? 'ignore' : 'close'}
+		escapeKeydownBehavior={isLoading ? 'ignore' : 'close'}
+		class="max-h-[90vh] w-[clamp(0px,30rem,100%)]"
+	>
 		<Dialog.Header disabledClose={isLoading}>New knowledge table</Dialog.Header>
 
-		<div bind:this={container} class="grow flex flex-col gap-3 py-3 w-full overflow-auto">
-			<div class="flex flex-col gap-1 px-4 sm:px-6 w-full text-center">
-				<span class="font-medium text-left text-xs sm:text-sm text-black"> Table ID* </span>
+		<div bind:this={container} class="flex w-full grow flex-col gap-3 overflow-auto py-3">
+			<div class="flex w-full flex-col space-y-1 px-4 sm:px-6">
+				<Label required for="table_id" class="text-xs sm:text-sm">Table ID</Label>
 
 				<InputText
 					disabled={isLoading}
 					bind:value={tableId}
+					id="table_id"
 					name="table_id"
 					placeholder="Required"
 				/>
 			</div>
 
-			<div data-testid="model-select-btn" class="flex flex-col gap-1 px-4 sm:px-6">
-				<span class="font-medium text-left text-xs sm:text-sm text-black"> Embedding Model* </span>
+			<div data-testid="model-select-btn" class="flex flex-col space-y-1 px-4 sm:px-6">
+				<Label required class="text-xs sm:text-sm">Embedding Model</Label>
 
 				<ModelSelect
 					disabled={isLoading}
 					capabilityFilter="embed"
-					sameWidth={true}
 					bind:selectedModel
-					buttonText={($modelsAvailable.find((model) => model.id == selectedModel)?.name ??
-						selectedModel) ||
-						'Select model'}
 					class="{!selectedModel
 						? 'italic text-muted-foreground'
-						: ''} bg-[#F2F4F7] data-dark:bg-[#42464e] hover:bg-[#e1e2e6] border-transparent"
+						: ''} border-transparent bg-[#F2F4F7] hover:bg-[#e1e2e6] data-dark:bg-[#42464e]"
 				/>
 			</div>
 
 			{#if uploadFile}
-				<div class="flex flex-col gap-1 px-4 sm:px-6 w-full text-center">
-					<span class="font-medium text-left text-xs sm:text-sm text-black">
-						Upload document*
-					</span>
+				<div class="flex w-full flex-col space-y-1 px-4 text-center sm:px-6">
+					<Label required class="text-xs sm:text-sm">Upload document</Label>
 
 					{#if selectedFiles.length === 0}
 						<button
-							on:click={handleUploadClick}
-							on:dragover|preventDefault={(e) => {
+							onclick={handleUploadClick}
+							ondragover={(e) => {
+								e.preventDefault();
 								if (e.dataTransfer?.items) {
 									if ([...e.dataTransfer.items].some((item) => item.kind === 'file')) {
 										filesDragover = true;
 									}
 								}
 							}}
-							on:dragleave={debounce(handleDragLeave, 50)}
-							on:drop|preventDefault={(e) => {
+							ondragleave={debounce(handleDragLeave, 50)}
+							ondrop={(e) => {
+								e.preventDefault();
 								filesDragover = false;
 								if (e.dataTransfer?.items) {
 									handleFilesUpload(
@@ -251,9 +263,9 @@
 									handleFilesUpload([...(e.dataTransfer?.files ?? [])]);
 								}
 							}}
-							class="flex flex-col items-center justify-center px-3 sm:px-16 h-96 border-2 {filesDragover
+							class="flex h-96 flex-col items-center justify-center border-2 px-3 sm:px-16 {filesDragover
 								? 'border-[#BF416E]'
-								: 'border-[#D0D5DD]'} border-dashed rounded transition-colors"
+								: 'border-[#D0D5DD]'} rounded border-dashed transition-colors"
 						>
 							<svg
 								width="41"
@@ -270,24 +282,24 @@
 								/>
 							</svg>
 
-							<p class="mt-3 text-[#344054] font-medium">
+							<p class="mt-3 font-medium text-[#344054]">
 								Drag & Drop
 								<br /> or
 								<span class="text-[#BF416E]">browse</span>
 							</p>
 
-							<p class="text-[#98A2B3] text-xs">Supports: {knowledgeTableFiletypes.join(', ')}</p>
+							<p class="text-xs text-[#98A2B3]">Supports: {knowledgeTableFiletypes.join(', ')}</p>
 						</button>
 					{:else}
 						<ul
-							class="flex flex-col items-start pl-8 pr-3 py-2 mb-1 text-sm bg-[#F2F4F7] data-dark:bg-[#42464e] rounded-md list-disc"
+							class="mb-1 flex list-disc flex-col items-start rounded-md bg-[#F2F4F7] py-2 pl-8 pr-3 text-sm data-dark:bg-[#42464e]"
 						>
 							{#each selectedFiles as selectedFile, index}
-								<li class="mb-0.5 last:mb-0 w-full">
+								<li class="mb-0.5 w-full last:mb-0">
 									<div
-										class="grid grid-cols-[minmax(0,auto)_min-content] items-center gap-2 min-h-8"
+										class="grid min-h-8 grid-cols-[minmax(0,auto)_min-content] items-center gap-2"
 									>
-										<p title={selectedFile.name} class="text-start line-clamp-3 break-all">
+										<p title={selectedFile.name} class="line-clamp-3 break-all text-start">
 											{selectedFile.name}
 										</p>
 
@@ -301,21 +313,21 @@
 											<Button
 												variant="ghost"
 												title="Remove file"
-												on:click={() =>
+												onclick={() =>
 													(selectedFiles = selectedFiles.filter((_, idx) => index !== idx))}
-												class=" p-0 h-8 w-8 aspect-square rounded-full"
+												class=" aspect-square h-8 w-8 rounded-full p-0"
 											>
 												<CloseIcon class="h-5" />
 											</Button>
 										{:else if index < (activeFile?.index ?? -1)}
 											<div
-												class="flex-[0_0_auto] flex items-center justify-center p-1 bg-[#2ECC40] data-dark:bg-[#54D362] rounded-full"
+												class="flex flex-[0_0_auto] items-center justify-center rounded-full bg-[#2ECC40] p-1 data-dark:bg-[#54D362]"
 											>
-												<CheckIcon class="w-3 stroke-white data-dark:stroke-black stroke-[3]" />
+												<CheckIcon class="w-3 stroke-white stroke-[3] data-dark:stroke-black" />
 											</div>
 										{:else if index >= (activeFile?.index ?? -1)}
 											<div
-												class="flex-[0_0_auto] radial-progress text-secondary [transform:_scale(-1,_1)]"
+												class="radial-progress flex-[0_0_auto] text-secondary [transform:_scale(-1,_1)]"
 												style="--value:{Math.floor(
 													activeFile?.index === index ? activeFile?.progress : 0
 												)}; --size:20px; --thickness: 5px;"
@@ -328,10 +340,10 @@
 
 						{#if !isLoading}
 							<Button
-								on:click={handleUploadClick}
+								onclick={handleUploadClick}
 								type="button"
 								disabled={isLoading}
-								class="relative px-6 w-min rounded-full"
+								class="relative w-min rounded-full px-6"
 							>
 								Upload more
 							</Button>
@@ -342,9 +354,12 @@
 						type="file"
 						disabled={isLoading}
 						accept={knowledgeTableFiletypes.join(',')}
-						on:change|preventDefault={(e) => handleFilesUpload([...(e.currentTarget.files ?? [])])}
+						onchange={(e) => {
+							e.preventDefault();
+							handleFilesUpload([...(e.currentTarget.files ?? [])]);
+						}}
 						multiple
-						class="max-h-[0] !p-0 !border-none overflow-hidden"
+						class="max-h-[0] overflow-hidden !border-none !p-0"
 					/>
 				</div>
 			{/if}
@@ -352,23 +367,19 @@
 
 		<Dialog.Actions>
 			<div class="flex gap-2 overflow-x-auto overflow-y-hidden">
-				<DialogPrimitive.Close asChild let:builder>
-					<Button
-						builders={[builder]}
-						disabled={isLoading}
-						variant="link"
-						type="button"
-						class="grow px-6"
-					>
-						Cancel
-					</Button>
-				</DialogPrimitive.Close>
+				<Dialog.Close>
+					{#snippet child({ props })}
+						<Button {...props} disabled={isLoading} variant="link" type="button" class="grow px-6">
+							Cancel
+						</Button>
+					{/snippet}
+				</Dialog.Close>
 				<Button
-					on:click={handleAddTable}
+					onclick={handleAddTable}
 					type="button"
 					disabled={isLoading}
 					loading={isLoading}
-					class="relative grow px-6 rounded-full"
+					class="relative grow px-6"
 				>
 					Create
 				</Button>

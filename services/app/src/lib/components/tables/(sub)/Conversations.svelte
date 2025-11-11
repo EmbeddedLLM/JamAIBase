@@ -6,7 +6,7 @@
 	import { OverlayScrollbarsComponent } from 'overlayscrollbars-svelte';
 	import { browser } from '$app/environment';
 	import { beforeNavigate } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	// import { activeConversation, pastConversations, type DBConversation } from './conversationsStore';
 	import { showRightDock } from '$globalStore';
 	import logger from '$lib/logger';
@@ -33,28 +33,28 @@
 		older: 'Older'
 	};
 
-	let autoAnimateController: ReturnType<typeof autoAnimate>;
-	let pastConversations: GenTable[] = [];
+	let autoAnimateController: ReturnType<typeof autoAnimate> | undefined = $state();
+	let pastConversations: GenTable[] = $state([]);
 	let searchResults: typeof pastConversations = [];
 
-	let isEditingTitle: string | null = null;
-	let editedTitle: string;
-	let saveEditBtn: HTMLButtonElement;
+	let isEditingTitle: string | null = $state(null);
+	let editedTitle: string = $state('');
+	let saveEditBtn: HTMLButtonElement | undefined = $state();
 
-	let isDeletingConv: string | null = null;
+	let isDeletingConv: string | null = $state(null);
 
 	let fetchConvController: AbortController | null = null;
-	let isFilterByAgent = false;
-	let isLoadingMoreConversations = false;
-	let moreConversationsFinished = false; //FIXME: Bandaid fix for infinite loop caused by loading circle
-	let currentOffset = 0;
+	let isFilterByAgent = $state(false);
+	let isLoadingMoreConversations = $state(false);
+	let moreConversationsFinished = $state(false); //FIXME: Bandaid fix for infinite loop caused by loading circle
+	let currentOffset = $state(0);
 	const limit = 50;
 
-	let searchQuery: string;
+	let searchQuery: string = $state('');
 	let isNoResults = false;
 
 	async function getPastConversations() {
-		const tableData = (await $page.data.table) as
+		const tableData = (await page.data.table) as
 			| {
 					error: number;
 					message: any;
@@ -82,11 +82,11 @@
 				searchParams.append('parent_id', tableData.data.parent_id ?? '');
 			}
 
-			const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat?` + searchParams, {
+			const response = await fetch(`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/chat?` + searchParams, {
 				credentials: 'same-origin',
 				signal: fetchConvController?.signal,
 				headers: {
-					'x-project-id': $page.params.project_id
+					'x-project-id': page.params.project_id
 				}
 			});
 			currentOffset += limit;
@@ -117,7 +117,7 @@
 	}
 
 	onMount(() => {
-		$page.data.table.then(() => {
+		page.data.table.then(() => {
 			if (browser) {
 				currentOffset = 0;
 				moreConversationsFinished = false;
@@ -146,7 +146,7 @@
 		}
 	};
 
-	let timestamps: Timestamp = {
+	let timestamps: Timestamp = $state({
 		today: null,
 		yesterday: null,
 		two_days: null,
@@ -154,11 +154,11 @@
 		last_week: null,
 		last_month: null,
 		older: null
-	};
+	});
 
 	let timestampKeys = Object.keys(timestamps) as Array<keyof Timestamp>;
 
-	$: {
+	$effect(() => {
 		timestampKeys.forEach((key) => (timestamps[key] = null));
 		pastConversations.forEach((conversation, index) => {
 			const timeDiff = Date.now() - new Date(conversation.updated_at).getTime();
@@ -190,7 +190,7 @@
 				timestamps.older = index;
 			}
 		});
-	}
+	});
 
 	beforeNavigate(() => (isEditingTitle = null));
 
@@ -205,7 +205,7 @@
 	const debouncedSearchConv = () => {};
 </script>
 
-<span class="flex items-center gap-2 mt-3 text-sm text-[#999999]">Chat history</span>
+<span class="mt-3 flex items-center gap-2 text-sm text-[#999999]">Chat history</span>
 
 <div inert={!$showRightDock || null} class="relative mt-1">
 	<InputText
@@ -216,23 +216,23 @@
 		bind:value={searchQuery}
 		type="search"
 		placeholder="Search"
-		class="pl-8 h-9 placeholder:not-italic placeholder:text-[#98A2B3] bg-[#F2F4F7] rounded-full"
+		class="h-9 rounded-full bg-[#F2F4F7] pl-8 placeholder:not-italic placeholder:text-[#98A2B3]"
 	>
-		<svelte:fragment slot="leading">
+		{#snippet leading()}
 			{#if isLoadingSearch}
-				<div class="absolute top-1/2 left-3 -translate-y-1/2 pointer-events-none">
+				<div class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
 					<LoadingSpinner class="h-3" />
 				</div>
 			{:else}
 				<SearchIcon
-					class="absolute top-1/2 left-3 -translate-y-1/2 h-3 text-[#667085] pointer-events-none"
+					class="pointer-events-none absolute left-3 top-1/2 h-3 -translate-y-1/2 text-[#667085]"
 				/>
 			{/if}
-		</svelte:fragment>
+		{/snippet}
 	</InputText>
 </div>
 
-<div class="flex items-center gap-2 mt-2 text-sm">
+<div class="mt-2 flex items-center gap-2 text-sm">
 	<Switch
 		id="conv-list-filter"
 		name="conv-list-filter"
@@ -250,7 +250,7 @@
 
 {#if searchResults.length || isNoResults}
 	{#if isNoResults}
-		<div class="flex items-center justify-center h-20">
+		<div class="flex h-20 items-center justify-center">
 			<span class="text-foreground-content/60">No results found</span>
 		</div>
 	{:else}
@@ -271,14 +271,14 @@
 	on:osInitialized={(e) => {
 		autoAnimateController = autoAnimate(e.detail[0].elements().viewport);
 	}}
-	class="grow flex flex-col my-3 rounded-md overflow-auto os-dark"
+	class="os-dark my-3 flex grow flex-col overflow-auto rounded-md"
 >
 	{#each !searchResults.length && !isNoResults ? pastConversations : searchResults as conversation, index (conversation.id)}
 		{#if !searchResults.length && !isNoResults}
 			{#each timestampKeys as time (time)}
 				{#if timestamps[time] == index}
 					<div class="my-2">
-						<span class="text-sm text-[#999] font-semibold">
+						<span class="text-sm font-semibold text-[#999]">
 							{timestampsDisplayName[time]}
 						</span>
 					</div>
@@ -287,40 +287,40 @@
 		{/if}
 		{#if isEditingTitle === conversation.id}
 			<div
-				class="relative flex my-2 px-3 py-2 bg-[#F5F5F5] data-dark:bg-[#444951] text-left transition-colors duration-75 rounded-lg group/item"
+				class="group/item relative my-2 flex rounded-lg bg-[#F5F5F5] px-3 py-2 text-left transition-colors duration-75 data-dark:bg-[#444951]"
 			>
 				<!-- on:submit|preventDefault={saveTitle} -->
 				<form class="flex w-full">
-					<!-- svelte-ignore a11y-autofocus -->
+					<!-- svelte-ignore a11y_autofocus -->
 					<textarea
 						autofocus
 						rows="3"
 						name="edited-title"
 						bind:value={editedTitle}
-						on:keydown={interceptSubmit}
-						on:blur={(e) => {
+						onkeydown={interceptSubmit}
+						onblur={(e) => {
 							if (e.relatedTarget != saveEditBtn) isEditingTitle = null;
 						}}
-						class="mr-12 w-full bg-transparent resize-none outline-none text-sm"
+						class="mr-12 w-full resize-none bg-transparent text-sm outline-none"
 					></textarea>
 
 					<button
 						bind:this={saveEditBtn}
 						title="Save title"
 						type="submit"
-						class="absolute top-1.5 right-7 p-1 group/button"
+						class="group/button absolute right-7 top-1.5 p-1"
 					>
 						<CheckIcon
-							class="h-5 w-5 stroke-current group-hover/button:stroke-text/50 transition-[stroke] duration-75"
+							class="h-5 w-5 stroke-current transition-[stroke] duration-75 group-hover/button:stroke-text/50"
 						/>
 					</button>
 					<button
 						title="Cancel edit"
 						type="button"
-						class="absolute top-1.5 right-1 p-1 group/button"
+						class="group/button absolute right-1 top-1.5 p-1"
 					>
 						<CloseIcon
-							class="h-5 w-5 [&_path]:stroke-current group-hover/button:[&_path]:stroke-text/50 transition-[stroke] duration-75"
+							class="h-5 w-5 transition-[stroke] duration-75 [&_path]:stroke-current group-hover/button:[&_path]:stroke-text/50"
 						/>
 					</button>
 				</form>
@@ -329,30 +329,29 @@
 			<a
 				data-testid="conversation"
 				title={conversation.id}
-				href="/project/{$page.params.project_id}/chat-table/{conversation.id}"
-				class="relative flex items-center p-2 text-left {$page.params.table_id ===
-					conversation.id &&
-					'data-dark:text-foreground-content bg-[#F5F5F5] data-dark:bg-[#444951]'} hover:bg-[#F5F5F5] data-dark:hover:bg-[#444951] transition-colors duration-75 rounded-lg group/item"
+				href="/project/{page.params.project_id}/chat-table/{encodeURIComponent(conversation.id)}"
+				class="relative flex items-center p-2 text-left {page.params.table_id === conversation.id &&
+					'data-dark:text-foreground-content bg-[#F5F5F5] data-dark:bg-[#444951]'} group/item rounded-lg transition-colors duration-75 hover:bg-[#F5F5F5] data-dark:hover:bg-[#444951]"
 			>
-				<ChatTableIcon class="flex-[0_0_auto] h-[18px] mr-2" />
+				<ChatTableIcon class="mr-2 h-[18px] flex-[0_0_auto]" />
 
-				<div class="relative flex grow w-full overflow-hidden">
-					<span class="text-sm line-clamp-1 break-all">
+				<div class="relative flex w-full grow overflow-hidden">
+					<span class="line-clamp-1 break-all text-sm">
 						{conversation.id}
 					</span>
 					<div
-						class="absolute right-0 h-full w-10 bg-gradient-to-l from-[#F5F5F5] data-dark:from-[#444951] from-75% {$page
+						class="absolute right-0 h-full w-10 bg-gradient-to-l from-[#F5F5F5] from-75% data-dark:from-[#444951] {page
 							.params.table_id === conversation.id
 							? 'opacity-100'
-							: 'opacity-0'} group-hover/item:opacity-100 transition-opacity duration-75"
+							: 'opacity-0'} transition-opacity duration-75 group-hover/item:opacity-100"
 					></div>
 				</div>
 
 				<Button
 					variant="ghost"
-					on:click={() => {}}
+					onclick={() => {}}
 					title="Edit conversation ID"
-					class="mr-1 p-0 h-5 w-5 rounded-full {$page.params.table_id === conversation.id
+					class="mr-1 h-5 w-5 p-0 {page.params.table_id === conversation.id
 						? 'visible'
 						: 'invisible'} group-hover/item:visible"
 				>
@@ -361,12 +360,12 @@
 
 				<Button
 					variant="ghost"
-					on:click={(e) => {
+					onclick={(e) => {
 						e.preventDefault();
 						isDeletingConv = conversation.id;
 					}}
 					title="Delete conversation"
-					class="p-0 h-5 w-5 rounded-full invisible {$page.params.table_id === conversation.id
+					class="invisible h-5 w-5 rounded-full p-0 {page.params.table_id === conversation.id
 						? 'visible'
 						: 'invisible'} group-hover/item:visible"
 				>
@@ -376,7 +375,7 @@
 		{/if}
 	{/each}
 	{#if isLoadingMoreConversations}
-		<div class="flex items-center justify-center mx-auto p-4">
+		<div class="mx-auto flex items-center justify-center p-4">
 			<LoadingSpinner class="h-5 w-5 text-secondary" />
 		</div>
 	{/if}

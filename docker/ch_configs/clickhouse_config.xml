@@ -1,0 +1,35 @@
+<clickhouse>
+    <listen_host>0.0.0.0</listen_host>
+
+    <prometheus>
+        <port>9363</port>
+        <handlers>
+            <my_rule_1>
+                <url>/metrics</url>
+                <handler>
+                    <type>expose_metrics</type>
+                    <metrics>true</metrics>
+                    <asynchronous_metrics>true</asynchronous_metrics>
+                    <events>true</events>
+                    <errors>true</errors>
+                </handler>
+            </my_rule_1>
+            <my_rule_2>
+                <url>/write</url>
+                <handler>
+                    <type>remote_write</type>
+                    <database>jamaibase_owl</database>
+                    <table>jamaibase_owl_metrics</table>
+                </handler>
+            </my_rule_2>
+            <my_rule_3>
+                <url>/read</url>
+                <handler>
+                    <type>remote_read</type>
+                    <database>jamaibase_owl</database>
+                    <table>jamaibase_owl_metrics</table>
+                </handler>
+            </my_rule_3>
+        </handlers>
+    </prometheus>
+</clickhouse>

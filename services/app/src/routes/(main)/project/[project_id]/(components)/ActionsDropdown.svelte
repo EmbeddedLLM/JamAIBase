@@ -1,14 +1,14 @@
 <script lang="ts">
-	import { PUBLIC_IS_LOCAL, PUBLIC_JAMAI_URL } from '$env/static/public';
+	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import toUpper from 'lodash/toUpper';
 	import xorWith from 'lodash/xorWith';
 	import { v4 as uuidv4 } from 'uuid';
 	import axios from 'axios';
 	import Papa from 'papaparse';
 	import Fuse from 'fuse.js';
-	import { DropdownMenu as DropdownMenuPrimitive } from 'bits-ui';
+	import { Trash2 } from '@lucide/svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { showLoadingOverlay } from '$globalStore';
 	import { extendArray, textToFileDownload } from '$lib/utils';
 	import logger from '$lib/logger';
@@ -21,21 +21,22 @@
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import ImportIcon from '$lib/icons/ImportIcon.svelte';
 	import ExportIcon from '$lib/icons/ExportIcon.svelte';
-	import HamburgerIcon from '$lib/icons/HamburgerIcon.svelte';
-	import AddColumnIcon from '$lib/icons/AddColumnIcon.svelte';
-	import Trash_2 from 'lucide-svelte/icons/trash-2';
+	import FourCircles from '$lib/icons/FourCircles.svelte';
 
-	export let tableType: 'action' | 'knowledge' | 'chat';
-	export let tableData: GenTable | undefined;
-	export let isAddingColumn: { type: 'input' | 'output'; showDialog: boolean };
-	export let refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
+	interface Props {
+		tableType: 'action' | 'knowledge' | 'chat';
+		tableData: GenTable | undefined;
+		refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
+	}
+
+	let { tableType, tableData, refetchTable }: Props = $props();
 
 	let isMatchingImportCols: {
 		filename: string;
 		rows: Record<string, string>[];
 		cols: { id: string; name: string }[];
-	} | null = null;
-	let isDeletingTable: string | null = null;
+	} | null = $state(null);
+	let isDeletingTable: string | null = $state(null);
 
 	function handleImportTable() {
 		if (!tableData) return;
@@ -126,12 +127,12 @@
 
 		try {
 			const response = await axios.post(
-				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/import_data`,
+				`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/${tableType}/import_data`,
 				formData,
 				{
 					headers: {
 						'Content-Type': 'multipart/form-data',
-						'x-project-id': $page.params.project_id
+						'x-project-id': page.params.project_id
 					}
 				}
 			);
@@ -175,10 +176,12 @@
 		$showLoadingOverlay = true;
 
 		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableData.id}/export_data`,
+			`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/${tableType}/export_data?${new URLSearchParams([
+				['table_id', tableData.id]
+			])}`,
 			{
 				headers: {
-					'x-project-id': $page.params.project_id
+					'x-project-id': page.params.project_id
 				}
 			}
 		);
@@ -205,111 +208,39 @@
 </script>
 
 <DropdownMenu.Root>
-	<DropdownMenu.Trigger asChild let:builder>
-		<Button
-			builders={[builder]}
-			variant="ghost"
-			title="Table actions"
-			class="p-0 h-8 sm:h-9 w-auto aspect-square bg-[#F2F4F7] hover:bg-[#E4E7EC]"
-		>
-			<HamburgerIcon class="h-6 text-[#667085]" />
-		</Button>
+	<DropdownMenu.Trigger>
+		{#snippet child({ props })}
+			<Button
+				{...props}
+				variant="action"
+				title="Table actions"
+				class="aspect-square h-8 w-auto p-0 sm:h-9"
+			>
+				<FourCircles class="h-6 text-[#667085]" />
+			</Button>
+		{/snippet}
 	</DropdownMenu.Trigger>
 	<DropdownMenu.Content
 		data-testid="table-actions-dropdown"
-		alignOffset={-40}
-		transitionConfig={{ x: 5, y: -10 }}
-		class="p-2 text-[#344054]"
+		align="end"
+		class="max-w-[20rem] p-2 text-[#344054]"
 	>
-		<DropdownMenu.Group class="flex flex-col gap-2 py-1 text-sm">
-			<span class="ml-1 text-[#98A2B3]">
-				Order by
-				<span class="font-medium text-[#667085]">Created</span>
-			</span>
-
-			<div
-				style="grid-template-columns: repeat(2, minmax(5rem, 1fr));"
-				class="relative grid place-items-center w-full bg-[#E4E7EC] data-dark:bg-gray-700 rounded-full p-0.5 after:content-[''] after:absolute after:left-0.5 after:top-1/2 after:-translate-y-1/2 after:z-0 after:h-[calc(100%_-_4px)] after:w-1/2 after:pointer-events-none after:bg-white after:rounded-full after:transition-transform after:duration-200 {$page.url.searchParams.get(
-					'asc'
-				) === '1'
-					? 'after:translate-x-0'
-					: 'after:translate-x-[calc(100%_-_4px)]'}"
-			>
-				<DropdownMenuPrimitive.Item
-					on:click={() => {
-						const query = new URLSearchParams($page.url.searchParams.toString());
-						query.set('asc', '1');
-						goto(`?${query.toString()}`, { replaceState: true });
-					}}
-					class="z-10 transition-colors ease-in-out rounded-full px-4 py-1 w-full text-center {$page.url.searchParams.get(
-						'asc'
-					) === '1'
-						? 'text-[#667085]'
-						: 'text-[#98A2B3]'} cursor-pointer"
-				>
-					Ascending
-				</DropdownMenuPrimitive.Item>
-
-				<DropdownMenuPrimitive.Item
-					on:click={() => {
-						const query = new URLSearchParams($page.url.searchParams.toString());
-						query.delete('asc');
-						goto(`?${query.toString()}`, { replaceState: true });
-					}}
-					class="z-10 transition-colors ease-in-out rounded-full px-4 py-1 w-full text-center {$page.url.searchParams.get(
-						'asc'
-					) !== '1'
-						? 'text-[#667085]'
-						: 'text-[#98A2B3]'} cursor-pointer"
-				>
-					Descending
-				</DropdownMenuPrimitive.Item>
-			</div>
-		</DropdownMenu.Group>
-
-		<DropdownMenu.Separator class="-mx-2 my-2" />
-
-		{#if tableType !== 'chat' || !tableData?.parent_id}
-			<DropdownMenu.Group
-				class="grid grid-cols-2 gap-2 py-1 [&>*]:border [&>*]:border-[#E4E7EC] [&>*]:flex-col [&>*]:px-5 [&>*]:py-3"
-			>
-				<DropdownMenu.Item on:click={() => (isAddingColumn = { type: 'input', showDialog: true })}>
-					<AddColumnIcon class="mb-1" />
-					<span class="text-center">
-						Add
-						<span class="text-[#3A73B6] data-dark:text-[#4B91E4]">input</span>
-						<br />
-						column
-					</span>
-				</DropdownMenu.Item>
-				<DropdownMenu.Item on:click={() => (isAddingColumn = { type: 'output', showDialog: true })}>
-					<AddColumnIcon class="mb-1" />
-					<span class="text-center">
-						Add
-						<span class="text-[#950048] data-dark:text-[#950048]">output</span>
-						<br />
-						column
-					</span>
-				</DropdownMenu.Item>
-			</DropdownMenu.Group>
-
-			<DropdownMenu.Separator class="-mx-2 my-2" />
-		{/if}
-
 		<DropdownMenu.Group class="flex flex-col gap-1 py-1 [&>*]:border [&>*]:border-[#E4E7EC]">
-			<DropdownMenu.Item on:click={handleImportTable}>
-				<ImportIcon class="h-4 w-4 mr-2 mb-[2px]" />
+			<DropdownMenu.Item onclick={handleImportTable}>
+				<ImportIcon class="mb-[2px] mr-2 h-4 w-4" />
 				<span class="grow text-center"> Import rows </span>
 			</DropdownMenu.Item>
-			<DropdownMenu.Item on:click={handleExportRows}>
-				<ExportIcon class="h-4 w-4 mr-2 mb-[2px]" />
+			<DropdownMenu.Item onclick={handleExportRows}>
+				<ExportIcon class="mb-[2px] mr-2 h-4 w-4" />
 				<span class="grow text-center"> Export rows (.csv) </span>
 			</DropdownMenu.Item>
-			<ExportTableButton let:handleExportTable tableId={tableData?.id} {tableType}>
-				<DropdownMenu.Item on:click={handleExportTable}>
-					<ExportIcon class="h-4 w-4 mr-2 mb-[2px]" />
-					<span class="grow text-center"> Export table </span>
-				</DropdownMenu.Item>
+			<ExportTableButton tableId={tableData?.id} {tableType}>
+				{#snippet children({ handleExportTable })}
+					<DropdownMenu.Item onclick={handleExportTable}>
+						<ExportIcon class="mb-[2px] mr-2 h-4 w-4" />
+						<span class="grow text-center"> Export table </span>
+					</DropdownMenu.Item>
+				{/snippet}
 			</ExportTableButton>
 		</DropdownMenu.Group>
 
@@ -317,10 +248,10 @@
 
 		<DropdownMenu.Group class="flex flex-col gap-1 py-1 [&>*]:border [&>*]:border-[#E4E7EC]">
 			<DropdownMenu.Item
-				on:click={() => (isDeletingTable = $page.params.table_id)}
-				class="text-[#D92D20] hover:!text-[#D92D20] data-[highlighted]:text-[#D92D20] hover:!bg-[#FEF3F2] data-[highlighted]:bg-[#FEF3F2]"
+				onclick={() => (isDeletingTable = page.params.table_id)}
+				class="text-[#D92D20] hover:!bg-[#FEF3F2] hover:!text-[#D92D20] data-[highlighted]:bg-[#FEF3F2] data-[highlighted]:text-[#D92D20]"
 			>
-				<Trash_2 class="h-4 w-4 mr-2 mb-[2px]" />
+				<Trash2 class="mb-[2px] mr-2 h-4 w-4" />
 				<span class="grow text-center"> Delete table </span>
 			</DropdownMenu.Item>
 		</DropdownMenu.Group>
@@ -333,7 +264,7 @@
 	bind:isDeletingTable
 	deletedCb={(success) => {
 		if (success) {
-			goto(`/project/${$page.params.project_id}/${tableType}-table`);
+			goto(`/project/${page.params.project_id}/${tableType}-table`);
 		}
 	}}
 />

@@ -2,42 +2,50 @@
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import toUpper from 'lodash/toUpper';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
-	import { Dialog as DialogPrimitive } from 'bits-ui';
+	import { page } from '$app/state';
 	import {
 		pastActionTables,
 		pastChatAgents,
 		pastKnowledgeTables
-	} from '$lib/components/tables/tablesStore';
+	} from '$lib/components/tables/tablesState.svelte';
 	import logger from '$lib/logger';
 
 	import InputText from '$lib/components/InputText.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
+	import { Label } from '$lib/components/ui/label';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 
-	export let tableType: 'action' | 'knowledge' | 'chat';
-	export let isEditingTableID: string | null;
-	export let editedCb: ((success: boolean, tableID?: string) => any) | undefined = undefined;
+	interface Props {
+		tableType: 'action' | 'knowledge' | 'chat';
+		isEditingTableID: string | null;
+		editedCb?: ((success: boolean, tableID?: string) => any) | undefined;
+	}
 
-	let form: HTMLFormElement;
-	let isLoadingSaveEdit = false;
+	let { tableType, isEditingTableID = $bindable(), editedCb = undefined }: Props = $props();
+
+	let isLoadingSaveEdit = $state(false);
 
 	async function handleSaveTableID(
 		e: SubmitEvent & { currentTarget: EventTarget & HTMLFormElement }
 	) {
-		const editedTableID = e.currentTarget.getElementsByTagName('input')[0].value.trim();
+		e.preventDefault();
+		if (!isEditingTableID) return;
 
+		const editedTableID = e.currentTarget.getElementsByTagName('input')[0].value.trim();
 		if (isEditingTableID === editedTableID) return;
 
 		isLoadingSaveEdit = true;
 
 		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/rename/${isEditingTableID}/${editedTableID}`,
+			`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/${tableType}/rename?${new URLSearchParams([
+				['table_id_src', isEditingTableID],
+				['table_id_dst', editedTableID]
+			])}`,
 			{
 				method: 'POST',
 				headers: {
-					'x-project-id': $page.params.project_id
+					'x-project-id': page.params.project_id
 				}
 			}
 		);
@@ -85,8 +93,8 @@
 						$pastActionTables = $pastActionTables;
 					}
 
-					if ($page.params.table_id === isEditingTableID) {
-						goto(`/project/${$page.params.project_id}/action-table/${editedTableID}`);
+					if (page.params.table_id === isEditingTableID) {
+						goto(`/project/${page.params.project_id}/action-table/${editedTableID}`);
 					}
 					break;
 				}
@@ -101,8 +109,8 @@
 						$pastKnowledgeTables = $pastKnowledgeTables;
 					}
 
-					if ($page.params.table_id === isEditingTableID) {
-						goto(`/project/${$page.params.project_id}/knowledge-table/${editedTableID}`);
+					if (page.params.table_id === isEditingTableID) {
+						goto(`/project/${page.params.project_id}/knowledge-table/${editedTableID}`);
 					}
 					break;
 				}
@@ -117,8 +125,8 @@
 						$pastChatAgents = $pastChatAgents;
 					}
 
-					if ($page.params.table_id === isEditingTableID) {
-						goto(`/project/${$page.params.project_id}/chat-table/${editedTableID}`);
+					if (page.params.table_id === isEditingTableID) {
+						goto(`/project/${page.params.project_id}/chat-table/${editedTableID}`);
 					}
 					break;
 				}
@@ -135,45 +143,32 @@
 	}
 </script>
 
-<Dialog.Root
-	open={!!isEditingTableID}
-	onOpenChange={(e) => {
-		if (!e) {
-			isEditingTableID = null;
-		}
-	}}
->
+<Dialog.Root bind:open={() => !!isEditingTableID, () => (isEditingTableID = null)}>
 	<Dialog.Content data-testid="rename-table-dialog" class="max-h-[90vh] w-[clamp(0px,35rem,100%)]">
 		<Dialog.Header>Edit table ID</Dialog.Header>
 
-		<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-		<form
-			bind:this={form}
-			on:submit|preventDefault={handleSaveTableID}
-			class="grow w-full overflow-auto"
-		>
-			<div class="flex flex-col gap-1 px-4 sm:px-6 py-3 h-full w-full text-center">
-				<span class="font-medium text-left text-xs sm:text-sm text-black"> Table ID* </span>
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+		<form id="renameTable" onsubmit={handleSaveTableID} class="w-full grow overflow-auto">
+			<div class="flex h-full w-full flex-col gap-1 px-4 py-3 text-center sm:px-6">
+				<Label required for="table_id" class="text-xs sm:text-sm">Table ID</Label>
 
-				<InputText value={isEditingTableID} name="table_id" placeholder="Required" />
+				<InputText value={isEditingTableID} id="table_id" name="table_id" placeholder="Required" />
 			</div>
-
-			<!-- hidden submit -->
-			<Button type="submit" disabled={isLoadingSaveEdit} class="hidden">Save</Button>
 		</form>
 
 		<Dialog.Actions>
 			<div class="flex gap-2 overflow-x-auto overflow-y-hidden">
-				<DialogPrimitive.Close asChild let:builder>
-					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
-						Cancel
-					</Button>
-				</DialogPrimitive.Close>
+				<Dialog.Close>
+					{#snippet child({ props })}
+						<Button {...props} variant="link" type="button" class="grow px-6">Cancel</Button>
+					{/snippet}
+				</Dialog.Close>
 				<Button
-					on:click={() => form.requestSubmit()}
+					type="submit"
+					form="renameTable"
 					loading={isLoadingSaveEdit}
 					disabled={isLoadingSaveEdit}
-					class="relative grow px-6 rounded-full"
+					class="relative grow px-6"
 				>
 					Save
 				</Button>

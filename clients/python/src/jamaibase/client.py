@@ -1,79 +1,112 @@
 import platform
-from mimetypes import guess_type
-from os.path import split
+import warnings
+from contextlib import contextmanager
+from datetime import datetime
+from os.path import basename, split
+from time import perf_counter
 from typing import Any, AsyncGenerator, BinaryIO, Generator, Literal, Type
 from urllib.parse import quote
 from warnings import warn
 
-import filetype
 import httpx
+import orjson
+from loguru import logger
 from pydantic import BaseModel, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import deprecated
 
-from jamaibase.exceptions import ResourceNotFoundError
-from jamaibase.protocol import (
+from jamaibase.types import (
     ActionTableSchemaCreate,
     AddActionColumnSchema,
     AddChatColumnSchema,
     AddKnowledgeColumnSchema,
-    AdminOrderBy,
-    ApiKeyCreate,
-    ApiKeyRead,
-    ChatCompletionChunk,
+    AgentMetaResponse,
+    CellCompletionResponse,
+    CellReferencesResponse,
+    ChatCompletionChunkResponse,
+    ChatCompletionResponse,
     ChatRequest,
     ChatTableSchemaCreate,
-    ChatThread,
+    ChatThreadResponse,
+    ChatThreadsResponse,
     ColumnDropRequest,
     ColumnRenameRequest,
     ColumnReorderRequest,
+    ConversationCreateRequest,
+    ConversationMetaResponse,
+    ConversationThreadsResponse,
+    DeploymentCreate,
+    DeploymentRead,
+    DeploymentUpdate,
     EmbeddingRequest,
     EmbeddingResponse,
-    EventCreate,
-    EventRead,
-    FileUploadRequest,
     FileUploadResponse,
     GenConfigUpdateRequest,
-    GenTableOrderBy,
-    GenTableRowsChatCompletionChunks,
-    GenTableStreamChatCompletionChunk,
-    GenTableStreamReferences,
     GetURLRequest,
     GetURLResponse,
     KnowledgeTableSchemaCreate,
-    ModelInfoResponse,
-    ModelListConfig,
+    MessageAddRequest,
+    MessagesRegenRequest,
+    MessageUpdateRequest,
+    ModelConfigCreate,
+    ModelConfigRead,
+    ModelConfigUpdate,
+    ModelInfoListResponse,
     ModelPrice,
+    MultiRowAddRequest,
+    MultiRowCompletionResponse,
+    MultiRowDeleteRequest,
+    MultiRowRegenRequest,
+    MultiRowUpdateRequest,
     OkResponse,
     OrganizationCreate,
     OrganizationRead,
     OrganizationUpdate,
-    OrgMemberCreate,
     OrgMemberRead,
     Page,
-    PATCreate,
-    PATRead,
-    Price,
+    PasswordChangeRequest,
+    PasswordLoginRequest,
+    PricePlanCreate,
+    PricePlanRead,
+    PricePlanUpdate,
+    ProgressState,
     ProjectCreate,
+    ProjectKeyCreate,
+    ProjectKeyRead,
+    ProjectKeyUpdate,
+    ProjectMemberRead,
     ProjectRead,
     ProjectUpdate,
     References,
-    RowAddRequest,
-    RowDeleteRequest,
-    RowRegenRequest,
+    RerankingRequest,
+    RerankingResponse,
+    Role,
     RowUpdateRequest,
     SearchRequest,
-    StringResponse,
+    StripePaymentInfo,
     TableDataImportRequest,
     TableImportRequest,
     TableMetaResponse,
-    TableType,
-    Template,
+    UsageResponse,
     UserCreate,
     UserRead,
     UserUpdate,
+    VerificationCodeRead,
 )
-from jamaibase.utils.io import json_loads
+from jamaibase.utils import uuid7_str
+from jamaibase.utils.background_loop import LOOP
+from jamaibase.utils.exceptions import (
+    AuthorizationError,
+    BadInputError,
+    ForbiddenError,
+    JamaiException,
+    RateLimitExceedError,
+    ResourceExistsError,
+    ResourceNotFoundError,
+    ServerBusyError,
+    UnexpectedError,
+)
+from jamaibase.utils.io import guess_mime, json_loads
 from jamaibase.version import __version__
 
 USER_AGENT = f"SDK/{__version__} (Python/{platform.python_version()}; {platform.system()} {platform.release()}; {platform.machine()})"
@@ -82,54 +115,64 @@ TABLE_METHOD_DEPRECATE = "This method is deprecated, use `client.table.<method>`
 
 
 class EnvConfig(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-    jamai_token: SecretStr = ""
-    jamai_api_key: SecretStr = ""
-    jamai_api_base: str = "https://api.jamaibase.com/api"
-    jamai_project_id: str = "default"
-    jamai_timeout_sec: float = 5 * 60.0
-    jamai_file_upload_timeout_sec: float = 60 * 60.0
+    model_config = SettingsConfigDict(
+        env_prefix="jamai_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+    token: SecretStr = ""
+    api_base: str = "https://api.jamaibase.com/api"
+    project_id: str = "default"
+    timeout_sec: float = 60.0 * 5  # Default to 5 minutes
+    file_upload_timeout_sec: float = 60.0 * 15  # Default to 15 minutes
 
     @property
-    def jamai_token_plain(self):
-        api_key = self.jamai_api_key.get_secret_value().strip()
-        return self.jamai_token.get_secret_value().strip() or api_key
+    def token_plain(self):
+        return self.token.get_secret_value().strip()
 
 
 ENV_CONFIG = EnvConfig()
 GenTableChatResponseType = (
-    GenTableRowsChatCompletionChunks
-    | Generator[GenTableStreamReferences | GenTableStreamChatCompletionChunk, None, None]
+    MultiRowCompletionResponse
+    | Generator[CellReferencesResponse | CellCompletionResponse, None, None]
 )
 
 
-class _Client:
+class _ClientAsync:
     def __init__(
         self,
+        user_id: str,
         project_id: str,
         token: str,
         api_base: str,
         headers: dict | None,
         http_client: httpx.Client | httpx.AsyncClient,
-        file_upload_timeout: float | None,
+        timeout: float | None,
+        file_upload_timeout: float | None = None,
     ) -> None:
         """
         Base client.
 
         Args:
-            project_id (str): The project ID.
+            user_id (str): User ID.
+            project_id (str): Project ID.
             token (str): Personal Access Token or organization API key (deprecated) for authentication.
             api_base (str): The base URL for the API.
             headers (dict | None): Additional headers to include in requests.
             http_client (httpx.Client | httpx.AsyncClient): The HTTPX client.
-            file_upload_timeout (float | None, optional): The timeout to use when sending file upload requests.
         """
         if api_base.endswith("/"):
             api_base = api_base[:-1]
+        self.user_id = user_id
         self.project_id = project_id
         self.token = token
         self.api_base = api_base
-        self.headers = {"X-PROJECT-ID": project_id, "User-Agent": USER_AGENT}
+        self.headers = {
+            "X-USER-ID": user_id,
+            "X-PROJECT-ID": project_id,
+            "User-Agent": USER_AGENT,
+        }
         if token != "":
             self.headers["Authorization"] = f"Bearer {token}"
         if headers is not None:
@@ -137,2827 +180,9 @@ class _Client:
                 raise TypeError("`headers` must be None or a dict.")
             self.headers.update(headers)
         self.http_client = http_client
+        self.timeout = timeout
         self.file_upload_timeout = file_upload_timeout
 
-    @property
-    def api_key(self) -> str:
-        return self.token
-
-    def close(self) -> None:
-        """
-        Close the HTTP client.
-        """
-        self.http_client.close()
-
-    @staticmethod
-    def raise_exception(
-        response: httpx.Response,
-        *,
-        ignore_code: int | None = None,
-    ) -> httpx.Response:
-        """
-        Raise an exception if the response status code is not 200.
-
-        Args:
-            response (httpx.Response): The HTTP response.
-            ignore_code (int | None, optional): HTTP code to ignore.
-
-        Raises:
-            RuntimeError: If the response status code is not 200 and is not ignored by `ignore_code`.
-
-        Returns:
-            response (httpx.Response): The HTTP response.
-        """
-        if "warning" in response.headers:
-            warn(response.headers["warning"], stacklevel=2)
-        code = response.status_code
-        if (200 <= code < 300) or code == ignore_code:
-            return response
-        try:
-            error = response.text
-        except httpx.ResponseNotRead:
-            error = response.read().decode()
-        error = json_loads(error)
-        err_mssg = error.get("message", error.get("detail", str(error)))
-        if code == 404:
-            exc = ResourceNotFoundError
-        else:
-            exc = RuntimeError
-        raise exc(err_mssg)
-
-    @staticmethod
-    def _filter_params(params: dict[str, Any] | None):
-        """
-        Filter out None values from the parameters dictionary.
-
-        Args:
-            params (dict[str, Any] | None): The parameters dictionary.
-
-        Returns:
-            params (dict[str, Any] | None): The filtered parameters dictionary.
-        """
-        if params is not None:
-            params = {k: v for k, v in params.items() if v is not None}
-        return params
-
-    def _get(
-        self,
-        address: str,
-        endpoint: str,
-        *,
-        params: dict[str, Any] | None = None,
-        response_model: Type[BaseModel] | None = None,
-        **kwargs,
-    ) -> httpx.Response | BaseModel:
-        """
-        Make a GET request to the specified endpoint.
-
-        Args:
-            address (str): The base address of the API.
-            endpoint (str): The API endpoint.
-            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
-            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return.
-            **kwargs (Any): Keyword arguments for `httpx.get`.
-
-        Returns:
-            response (httpx.Response | BaseModel): The response text or Pydantic response object.
-        """
-        response = self.http_client.get(
-            f"{address}{endpoint}",
-            params=self._filter_params(params),
-            headers=self.headers,
-            **kwargs,
-        )
-        response = self.raise_exception(response)
-        if response_model is None:
-            return response
-        else:
-            return response_model.model_validate_json(response.text)
-
-    def _post(
-        self,
-        address: str,
-        endpoint: str,
-        *,
-        body: BaseModel | None,
-        params: dict[str, Any] | None = None,
-        response_model: Type[BaseModel] | None = None,
-        **kwargs,
-    ) -> httpx.Response | BaseModel:
-        """
-        Make a POST request to the specified endpoint.
-
-        Args:
-            address (str): The base address of the API.
-            endpoint (str): The API endpoint.
-            body (BaseModel | None): The request body.
-            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
-            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
-            **kwargs (Any): Keyword arguments for `httpx.post`.
-
-        Returns:
-            response (httpx.Response | BaseModel): The response text or Pydantic response object.
-        """
-        if body is not None:
-            body = body.model_dump()
-        response = self.http_client.post(
-            f"{address}{endpoint}",
-            json=body,
-            headers=self.headers,
-            params=self._filter_params(params),
-            **kwargs,
-        )
-        response = self.raise_exception(response)
-        if response_model is None:
-            return response
-        else:
-            return response_model.model_validate_json(response.text)
-
-    def _options(
-        self,
-        address: str,
-        endpoint: str,
-        *,
-        params: dict[str, Any] | None = None,
-        response_model: Type[BaseModel] | None = None,
-        **kwargs,
-    ) -> httpx.Response | BaseModel:
-        """
-        Make an OPTIONS request to the specified endpoint.
-
-        Args:
-            address (str): The base address of the API.
-            endpoint (str): The API endpoint.
-            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
-            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return.
-            **kwargs (Any): Keyword arguments for `httpx.options`.
-
-        Returns:
-            response (httpx.Response | BaseModel): The response or Pydantic response object.
-        """
-        response = self.http_client.options(
-            f"{address}{endpoint}",
-            params=self._filter_params(params),
-            headers=self.headers,
-            **kwargs,
-        )
-        response = self.raise_exception(response)
-        if response_model is None:
-            return response
-        else:
-            return response_model.model_validate_json(response.text)
-
-    def _patch(
-        self,
-        address: str,
-        endpoint: str,
-        *,
-        body: BaseModel | None,
-        params: dict[str, Any] | None = None,
-        response_model: Type[BaseModel] | None = None,
-        **kwargs,
-    ) -> httpx.Response | BaseModel:
-        """
-        Make a PATCH request to the specified endpoint.
-
-        Args:
-            address (str): The base address of the API.
-            endpoint (str): The API endpoint.
-            body (BaseModel | None): The request body.
-            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
-            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
-            **kwargs (Any): Keyword arguments for `httpx.patch`.
-
-        Returns:
-            response (httpx.Response | BaseModel): The response text or Pydantic response object.
-        """
-        if body is not None:
-            body = body.model_dump()
-        response = self.http_client.patch(
-            f"{address}{endpoint}",
-            json=body,
-            headers=self.headers,
-            params=self._filter_params(params),
-            **kwargs,
-        )
-        response = self.raise_exception(response)
-        if response_model is None:
-            return response
-        else:
-            return response_model.model_validate_json(response.text)
-
-    def _stream(
-        self,
-        address: str,
-        endpoint: str,
-        *,
-        body: BaseModel | None,
-        params: dict[str, Any] | None = None,
-        **kwargs,
-    ) -> Generator[str, None, None]:
-        """
-        Make a streaming POST request to the specified endpoint.
-
-        Args:
-            address (str): The base address of the API.
-            endpoint (str): The API endpoint.
-            body (BaseModel | None): The request body.
-            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
-            **kwargs (Any): Keyword arguments for `httpx.stream`.
-
-        Yields:
-            str: The response chunks.
-        """
-        if body is not None:
-            body = body.model_dump()
-        with self.http_client.stream(
-            "POST",
-            f"{address}{endpoint}",
-            json=body,
-            headers=self.headers,
-            params=self._filter_params(params),
-            **kwargs,
-        ) as response:
-            response = self.raise_exception(response)
-            for chunk in response.iter_lines():
-                chunk = chunk.strip()
-                if chunk == "" or chunk == "data: [DONE]":
-                    continue
-                yield chunk
-
-    def _delete(
-        self,
-        address: str,
-        endpoint: str,
-        *,
-        params: dict[str, Any] | None = None,
-        response_model: Type[BaseModel] | None = None,
-        ignore_code: int | None = None,
-        **kwargs,
-    ) -> httpx.Response | BaseModel:
-        """
-        Make a DELETE request to the specified endpoint.
-
-        Args:
-            address (str): The base address of the API.
-            endpoint (str): The API endpoint.
-            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
-            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return.
-            ignore_code (int | None, optional): HTTP code to ignore.
-            **kwargs (Any): Keyword arguments for `httpx.delete`.
-
-        Returns:
-            response (httpx.Response | BaseModel): The response text or Pydantic response object.
-        """
-        response = self.http_client.delete(
-            f"{address}{endpoint}",
-            params=self._filter_params(params),
-            headers=self.headers,
-            **kwargs,
-        )
-        response = self.raise_exception(response, ignore_code=ignore_code)
-        if response_model is None:
-            return response
-        else:
-            return response_model.model_validate_json(response.text)
-
-
-class _BackendAdminClient(_Client):
-    """Backend administration methods."""
-
-    def create_user(self, request: UserCreate) -> UserRead:
-        return self._post(
-            self.api_base,
-            "/admin/backend/v1/users",
-            body=request,
-            response_model=UserRead,
-        )
-
-    def update_user(self, request: UserUpdate) -> UserRead:
-        return self._patch(
-            self.api_base,
-            "/admin/backend/v1/users",
-            body=request,
-            response_model=UserRead,
-        )
-
-    def list_users(
-        self,
-        offset: int = 0,
-        limit: int = 100,
-        order_by: str = AdminOrderBy.UPDATED_AT,
-        order_descending: bool = True,
-    ) -> Page[UserRead]:
-        """
-        List users.
-
-        Args:
-            offset (int, optional): Item offset. Defaults to 0.
-            limit (int, optional): Number of users to return (min 1, max 100). Defaults to 100.
-            order_by (str, optional): Sort users by this attribute. Defaults to "updated_at".
-            order_descending (bool, optional): Whether to sort by descending order. Defaults to True.
-
-        Returns:
-            response (Page[UserRead]): The paginated user metadata response.
-        """
-        return self._get(
-            self.api_base,
-            "/admin/backend/v1/users",
-            params=dict(
-                offset=offset,
-                limit=limit,
-                order_by=order_by,
-                order_descending=order_descending,
-            ),
-            response_model=Page[UserRead],
-        )
-
-    def get_user(self, user_id: str) -> UserRead:
-        return self._get(
-            self.api_base,
-            f"/admin/backend/v1/users/{quote(user_id)}",
-            params=None,
-            response_model=UserRead,
-        )
-
-    def delete_user(
-        self,
-        user_id: str,
-        *,
-        missing_ok: bool = True,
-    ) -> OkResponse:
-        response = self._delete(
-            self.api_base,
-            f"/admin/backend/v1/users/{quote(user_id)}",
-            params=None,
-            response_model=None,
-            ignore_code=404 if missing_ok else None,
-        )
-        if response.status_code == 404 and missing_ok:
-            return OkResponse()
-        else:
-            return OkResponse.model_validate_json(response.text)
-
-    def create_pat(self, request: PATCreate) -> PATRead:
-        return self._post(
-            self.api_base,
-            "/admin/backend/v1/pats",
-            body=request,
-            response_model=PATRead,
-        )
-
-    def get_pat(self, pat: str) -> PATRead:
-        return self._get(
-            self.api_base,
-            f"/admin/backend/v1/pats/{quote(pat)}",
-            params=None,
-            response_model=PATRead,
-        )
-
-    def delete_pat(
-        self,
-        pat: str,
-        *,
-        missing_ok: bool = True,
-    ) -> OkResponse:
-        response = self._delete(
-            self.api_base,
-            f"/admin/backend/v1/pats/{quote(pat)}",
-            params=None,
-            response_model=None,
-            ignore_code=404 if missing_ok else None,
-        )
-        if response.status_code == 404 and missing_ok:
-            return OkResponse()
-        else:
-            return OkResponse.model_validate_json(response.text)
-
-    def create_organization(self, request: OrganizationCreate) -> OrganizationRead:
-        return self._post(
-            self.api_base,
-            "/admin/backend/v1/organizations",
-            body=request,
-            response_model=OrganizationRead,
-        )
-
-    def update_organization(self, request: OrganizationUpdate) -> OrganizationRead:
-        return self._patch(
-            self.api_base,
-            "/admin/backend/v1/organizations",
-            body=request,
-            response_model=OrganizationRead,
-        )
-
-    def list_organizations(
-        self,
-        offset: int = 0,
-        limit: int = 100,
-        order_by: str = AdminOrderBy.UPDATED_AT,
-        order_descending: bool = True,
-    ) -> Page[OrganizationRead]:
-        return self._get(
-            self.api_base,
-            "/admin/backend/v1/organizations",
-            params=dict(
-                offset=offset,
-                limit=limit,
-                order_by=order_by,
-                order_descending=order_descending,
-            ),
-            response_model=Page[OrganizationRead],
-        )
-
-    def get_organization(self, organization_id: str) -> OrganizationRead:
-        return self._get(
-            self.api_base,
-            f"/admin/backend/v1/organizations/{quote(organization_id)}",
-            params=None,
-            response_model=OrganizationRead,
-        )
-
-    def delete_organization(
-        self,
-        organization_id: str,
-        *,
-        missing_ok: bool = True,
-    ) -> OkResponse:
-        response = self._delete(
-            self.api_base,
-            f"/admin/backend/v1/organizations/{quote(organization_id)}",
-            params=None,
-            response_model=None,
-            ignore_code=404 if missing_ok else None,
-        )
-        if response.status_code == 404 and missing_ok:
-            return OkResponse()
-        else:
-            return OkResponse.model_validate_json(response.text)
-
-    def generate_invite_token(
-        self,
-        organization_id: str,
-        user_email: str = "",
-        user_role: str = "",
-        valid_days: int = 7,
-    ) -> str:
-        """
-        Generates an invite token to join an organization.
-
-        Args:
-            organization_id (str): Organization ID.
-            user_email (str, optional): User email.
-                Leave blank to disable email check and generate a public invite. Defaults to "".
-            user_role (str, optional): User role.
-                Leave blank to default to guest. Defaults to "".
-            valid_days (int, optional): How many days should this link be valid for. Defaults to 7.
-
-        Returns:
-            token (str): _description_
-        """
-        response = self._get(
-            self.api_base,
-            "/admin/backend/v1/invite_tokens",
-            params=dict(
-                organization_id=organization_id,
-                user_email=user_email,
-                user_role=user_role,
-                valid_days=valid_days,
-            ),
-            response_model=None,
-        )
-        return response.text
-
-    def join_organization(self, request: OrgMemberCreate) -> OrgMemberRead:
-        return self._post(
-            self.api_base,
-            "/admin/backend/v1/organizations/link",
-            body=request,
-            response_model=OrgMemberRead,
-        )
-
-    def leave_organization(self, user_id: str, organization_id: str) -> OkResponse:
-        return self._delete(
-            self.api_base,
-            f"/admin/backend/v1/organizations/link/{quote(user_id)}/{quote(organization_id)}",
-            params=None,
-            response_model=OkResponse,
-        )
-
-    def create_api_key(self, request: ApiKeyCreate) -> ApiKeyRead:
-        warn(ORG_API_KEY_DEPRECATE, FutureWarning, stacklevel=2)
-        return self._post(
-            self.api_base,
-            "/admin/backend/v1/api_keys",
-            body=request,
-            response_model=ApiKeyRead,
-        )
-
-    def get_api_key(self, api_key: str) -> ApiKeyRead:
-        warn(ORG_API_KEY_DEPRECATE, FutureWarning, stacklevel=2)
-        return self._get(
-            self.api_base,
-            f"/admin/backend/v1/api_keys/{quote(api_key)}",
-            params=None,
-            response_model=ApiKeyRead,
-        )
-
-    def delete_api_key(
-        self,
-        api_key: str,
-        *,
-        missing_ok: bool = True,
-    ) -> OkResponse:
-        warn(ORG_API_KEY_DEPRECATE, FutureWarning, stacklevel=2)
-        response = self._delete(
-            self.api_base,
-            f"/admin/backend/v1/api_keys/{quote(api_key)}",
-            params=None,
-            response_model=None,
-            ignore_code=404 if missing_ok else None,
-        )
-        if response.status_code == 404 and missing_ok:
-            return OkResponse()
-        else:
-            return OkResponse.model_validate_json(response.text)
-
-    def refresh_quota(
-        self,
-        organization_id: str,
-        reset_usage: bool = True,
-    ) -> OrganizationRead:
-        return self._post(
-            self.api_base,
-            f"/admin/backend/v1/quotas/refresh/{quote(organization_id)}",
-            body=None,
-            params=dict(reset_usage=reset_usage),
-            response_model=OrganizationRead,
-        )
-
-    def get_event(self, event_id: str) -> EventRead:
-        return self._get(
-            self.api_base,
-            f"/admin/backend/v1/events/{quote(event_id)}",
-            params=None,
-            response_model=EventRead,
-        )
-
-    def add_event(self, request: EventCreate) -> OkResponse:
-        return self._post(
-            self.api_base,
-            "/admin/backend/v1/events",
-            body=request,
-            response_model=OkResponse,
-        )
-
-    def mark_event_as_done(self, event_id: str) -> OkResponse:
-        return self._patch(
-            self.api_base,
-            f"/admin/backend/v1/events/done/{quote(event_id)}",
-            body=None,
-            response_model=OkResponse,
-        )
-
-    def get_internal_organization_id(self) -> StringResponse:
-        return self._get(
-            self.api_base,
-            "/admin/backend/v1/internal_organization_id",
-            params=None,
-            response_model=StringResponse,
-        )
-
-    def set_internal_organization_id(self, organization_id: str) -> OkResponse:
-        return self._patch(
-            self.api_base,
-            f"/admin/backend/v1/internal_organization_id/{quote(organization_id)}",
-            body=None,
-            response_model=OkResponse,
-        )
-
-    def get_pricing(self) -> Price:
-        return self._get(
-            self.api_base,
-            "/public/v1/prices/plans",
-            params=None,
-            response_model=Price,
-        )
-
-    def set_pricing(self, request: Price) -> OkResponse:
-        return self._patch(
-            self.api_base,
-            "/admin/backend/v1/prices/plans",
-            body=request,
-            response_model=OkResponse,
-        )
-
-    def get_model_pricing(self) -> ModelPrice:
-        return self._get(
-            self.api_base,
-            "/public/v1/prices/models",
-            params=None,
-            response_model=ModelPrice,
-        )
-
-    def get_model_config(self) -> ModelListConfig:
-        return self._get(
-            self.api_base,
-            "/admin/backend/v1/models",
-            params=None,
-            response_model=ModelListConfig,
-        )
-
-    def set_model_config(self, request: ModelListConfig) -> OkResponse:
-        return self._patch(
-            self.api_base,
-            "/admin/backend/v1/models",
-            body=request,
-            response_model=OkResponse,
-        )
-
-    def add_template(
-        self,
-        source: str | BinaryIO,
-        template_id_dst: str,
-        exist_ok: bool = False,
-    ) -> OkResponse:
-        """
-        Upload a template Parquet file to add a new template into gallery.
-
-        Args:
-            source (str | BinaryIO): The path to the template Parquet file or a file-like object.
-            template_id_dst (str): The ID of the new template.
-            exist_ok (bool, optional): Whether to overwrite existing template. Defaults to False.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        kwargs = dict(
-            address=self.api_base,
-            endpoint="/admin/backend/v1/templates/import",
-            body=None,
-            response_model=OkResponse,
-            data={"template_id_dst": template_id_dst, "exist_ok": exist_ok},
-            timeout=self.file_upload_timeout,
-        )
-        mime_type = "application/octet-stream"
-        if isinstance(source, str):
-            filename = split(source)[-1]
-            # Open the file in binary mode
-            with open(source, "rb") as f:
-                return self._post(files={"file": (filename, f, mime_type)}, **kwargs)
-        else:
-            filename = "import.parquet"
-            return self._post(files={"file": (filename, source, mime_type)}, **kwargs)
-
-    def populate_templates(self, timeout: float = 30.0) -> OkResponse:
-        """
-        Re-populates the template gallery.
-
-        Args:
-            timeout (float, optional): Timeout in seconds, must be >= 0. Defaults to 30.0.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return self._post(
-            self.api_base,
-            "/admin/backend/v1/templates/populate",
-            body=None,
-            params=dict(timeout=timeout),
-            response_model=OkResponse,
-        )
-
-
-class _OrgAdminClient(_Client):
-    """Organization administration methods."""
-
-    def get_org_model_config(self, organization_id: str) -> ModelListConfig:
-        return self._get(
-            self.api_base,
-            f"/admin/org/v1/models/{quote(organization_id)}",
-            params=None,
-            response_model=ModelListConfig,
-        )
-
-    def set_org_model_config(
-        self,
-        organization_id: str,
-        config: ModelListConfig,
-    ) -> OkResponse:
-        return self._patch(
-            self.api_base,
-            f"/admin/org/v1/models/{quote(organization_id)}",
-            body=config,
-            response_model=OkResponse,
-        )
-
-    def create_project(self, request: ProjectCreate) -> ProjectRead:
-        return self._post(
-            self.api_base,
-            "/admin/org/v1/projects",
-            body=request,
-            response_model=ProjectRead,
-        )
-
-    def update_project(self, request: ProjectUpdate) -> ProjectRead:
-        return self._patch(
-            self.api_base,
-            "/admin/org/v1/projects",
-            body=request,
-            response_model=ProjectRead,
-        )
-
-    def set_project_updated_at(
-        self,
-        project_id: str,
-        updated_at: str | None = None,
-    ) -> OkResponse:
-        return self._patch(
-            self.api_base,
-            f"/admin/org/v1/projects/{quote(project_id)}",
-            body=None,
-            params=dict(updated_at=updated_at),
-            response_model=OkResponse,
-        )
-
-    def list_projects(
-        self,
-        organization_id: str = "default",
-        search_query: str = "",
-        offset: int = 0,
-        limit: int = 100,
-        order_by: str = AdminOrderBy.UPDATED_AT,
-        order_descending: bool = True,
-    ) -> Page[ProjectRead]:
-        return self._get(
-            self.api_base,
-            "/admin/org/v1/projects",
-            params=dict(
-                organization_id=organization_id,
-                search_query=search_query,
-                offset=offset,
-                limit=limit,
-                order_by=order_by,
-                order_descending=order_descending,
-            ),
-            response_model=Page[ProjectRead],
-        )
-
-    def get_project(self, project_id: str) -> ProjectRead:
-        return self._get(
-            self.api_base,
-            f"/admin/org/v1/projects/{quote(project_id)}",
-            params=None,
-            response_model=ProjectRead,
-        )
-
-    def delete_project(
-        self,
-        project_id: str,
-        *,
-        missing_ok: bool = True,
-    ) -> OkResponse:
-        response = self._delete(
-            self.api_base,
-            f"/admin/org/v1/projects/{quote(project_id)}",
-            params=None,
-            response_model=None,
-            ignore_code=404 if missing_ok else None,
-        )
-        if response.status_code == 404 and missing_ok:
-            return OkResponse()
-        else:
-            return OkResponse.model_validate_json(response.text)
-
-    def import_project(
-        self,
-        source: str | BinaryIO,
-        organization_id: str,
-        project_id_dst: str = "",
-    ) -> ProjectRead:
-        """
-        Imports a project.
-
-        Args:
-            source (str | BinaryIO): The parquet file path or file-like object.
-                It can be a Project or Template file.
-            organization_id (str): Organization ID "org_xxx".
-            project_id_dst (str, optional): ID of the project to import tables into.
-                Defaults to creating new project.
-
-        Returns:
-            response (ProjectRead): The imported project.
-        """
-        kwargs = dict(
-            address=self.api_base,
-            endpoint=f"/admin/org/v1/projects/import/{quote(organization_id)}",
-            body=None,
-            response_model=ProjectRead,
-            data={"project_id_dst": project_id_dst},
-            timeout=self.file_upload_timeout,
-        )
-        mime_type = "application/octet-stream"
-        if isinstance(source, str):
-            filename = split(source)[-1]
-            # Open the file in binary mode
-            with open(source, "rb") as f:
-                return self._post(files={"file": (filename, f, mime_type)}, **kwargs)
-        else:
-            filename = "import.parquet"
-            return self._post(files={"file": (filename, source, mime_type)}, **kwargs)
-
-    def export_project(
-        self,
-        project_id: str,
-        compression: Literal["NONE", "ZSTD", "LZ4", "SNAPPY"] = "ZSTD",
-    ) -> bytes:
-        """
-        Exports a project as a Project Parquet file.
-
-        Args:
-            project_id (str): Project ID "proj_xxx".
-            compression (str, optional): Parquet compression codec. Defaults to "ZSTD".
-
-        Returns:
-            response (bytes): The Parquet file.
-        """
-        response = self._get(
-            self.api_base,
-            f"/admin/org/v1/projects/{quote(project_id)}/export",
-            params=dict(compression=compression),
-            response_model=None,
-        )
-        return response.content
-
-    def import_project_from_template(
-        self,
-        organization_id: str,
-        template_id: str,
-        project_id_dst: str = "",
-    ) -> ProjectRead:
-        """
-        Imports a project from a template.
-
-        Args:
-            organization_id (str): Organization ID "org_xxx".
-            template_id (str): ID of the template to import from.
-            project_id_dst (str, optional): ID of the project to import tables into.
-                Defaults to creating new project.
-
-        Returns:
-            response (ProjectRead): The imported project.
-        """
-        return self._post(
-            self.api_base,
-            f"/admin/org/v1/projects/import/{quote(organization_id)}/templates/{quote(template_id)}",
-            body=None,
-            params=dict(project_id_dst=project_id_dst),
-            response_model=ProjectRead,
-        )
-
-    def export_project_as_template(
-        self,
-        project_id: str,
-        *,
-        name: str,
-        tags: list[str],
-        description: str,
-        compression: Literal["NONE", "ZSTD", "LZ4", "SNAPPY"] = "ZSTD",
-    ) -> bytes:
-        """
-        Exports a project as a template Parquet file.
-
-        Args:
-            project_id (str): Project ID "proj_xxx".
-            name (str): Template name.
-            tags (list[str]): Template tags.
-            description (str): Template description.
-            compression (str, optional): Parquet compression codec. Defaults to "ZSTD".
-
-        Returns:
-            response (bytes): The template Parquet file.
-        """
-        response = self._get(
-            self.api_base,
-            f"/admin/org/v1/projects/{quote(project_id)}/export/template",
-            params=dict(
-                name=name,
-                tags=tags,
-                description=description,
-                compression=compression,
-            ),
-            response_model=None,
-        )
-        return response.content
-
-
-class _AdminClient(_Client):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.backend = _BackendAdminClient(*args, **kwargs)
-        self.organization = _OrgAdminClient(*args, **kwargs)
-
-
-class _TemplateClient(_Client):
-    """Template methods."""
-
-    def list_templates(self, search_query: str = "") -> Page[Template]:
-        """
-        List all templates.
-
-        Args:
-            search_query (str, optional): A string to search for within template names.
-
-        Returns:
-            templates (Page[Template]): A page of templates.
-        """
-        return self._get(
-            self.api_base,
-            "/public/v1/templates",
-            params=dict(search_query=search_query),
-            response_model=Page[Template],
-        )
-
-    def get_template(self, template_id: str) -> Template:
-        """
-        Get a template by its ID.
-
-        Args:
-            template_id (str): Template ID.
-
-        Returns:
-            template (Template): The template.
-        """
-        return self._get(
-            self.api_base,
-            f"/public/v1/templates/{quote(template_id)}",
-            params=None,
-            response_model=Template,
-        )
-
-    def list_tables(
-        self,
-        template_id: str,
-        table_type: str,
-        *,
-        offset: int = 0,
-        limit: int = 100,
-        search_query: str = "",
-        order_by: str = GenTableOrderBy.UPDATED_AT,
-        order_descending: bool = True,
-    ) -> Page[TableMetaResponse]:
-        """
-        List all tables in a template.
-
-        Args:
-            template_id (str): Template ID.
-            table_type (str): Table type.
-            offset (int, optional): Item offset. Defaults to 0.
-            limit (int, optional): Number of tables to return (min 1, max 100). Defaults to 100.
-            search_query (str, optional): A string to search for within table IDs as a filter.
-                Defaults to "" (no filter).
-            order_by (str, optional): Sort tables by this attribute. Defaults to "updated_at".
-            order_descending (bool, optional): Whether to sort by descending order. Defaults to True.
-
-        Returns:
-            tables (Page[TableMetaResponse]): A page of tables.
-        """
-        return self._get(
-            self.api_base,
-            f"/public/v1/templates/{quote(template_id)}/gen_tables/{quote(table_type)}",
-            params=dict(
-                offset=offset,
-                limit=limit,
-                search_query=search_query,
-                order_by=order_by,
-                order_descending=order_descending,
-            ),
-            response_model=Page[TableMetaResponse],
-        )
-
-    def get_table(self, template_id: str, table_type: str, table_id: str) -> TableMetaResponse:
-        """
-        Get a table in a template.
-
-        Args:
-            template_id (str): Template ID.
-            table_type (str): Table type.
-            table_id (str): Table ID.
-
-        Returns:
-            table (TableMetaResponse): The table.
-        """
-        return self._get(
-            self.api_base,
-            f"/public/v1/templates/{quote(template_id)}/gen_tables/{quote(table_type)}/{quote(table_id)}",
-            params=None,
-            response_model=TableMetaResponse,
-        )
-
-    def list_table_rows(
-        self,
-        template_id: str,
-        table_type: str,
-        table_id: str,
-        *,
-        starting_after: str | None = None,
-        offset: int = 0,
-        limit: int = 100,
-        order_by: str = "Updated at",
-        order_descending: bool = True,
-        float_decimals: int = 0,
-        vec_decimals: int = 0,
-    ) -> Page[dict[str, Any]]:
-        """
-        List rows in a template table.
-
-        Args:
-            template_id (str): Template ID.
-            table_type (str): Table type.
-            table_id (str): Table ID.
-            starting_after (str | None, optional): A cursor for use in pagination.
-                Only rows with ID > `starting_after` will be returned.
-                For instance, if your call receives 100 rows ending with ID "x",
-                your subsequent call can include `starting_after="x"` in order to fetch the next page of the list.
-                Defaults to None.
-            offset (int, optional): Item offset. Defaults to 0.
-            limit (int, optional): Number of rows to return (min 1, max 100). Defaults to 100.
-            order_by (str, optional): Sort rows by this column. Defaults to "Updated at".
-            order_descending (bool, optional): Whether to sort by descending order. Defaults to True.
-            float_decimals (int, optional): Number of decimals for float values.
-                Defaults to 0 (no rounding).
-            vec_decimals (int, optional): Number of decimals for vectors.
-                If its negative, exclude vector columns. Defaults to 0 (no rounding).
-
-        Returns:
-            rows (Page[dict[str, Any]]): The rows.
-        """
-        return self._get(
-            self.api_base,
-            f"/public/v1/templates/{quote(template_id)}/gen_tables/{quote(table_type)}/{quote(table_id)}/rows",
-            params=dict(
-                starting_after=starting_after,
-                offset=offset,
-                limit=limit,
-                order_by=order_by,
-                order_descending=order_descending,
-                float_decimals=float_decimals,
-                vec_decimals=vec_decimals,
-            ),
-            response_model=Page[dict[str, Any]],
-        )
-
-
-class _FileClient(_Client):
-    """File methods."""
-
-    def upload_file(self, file_path: str) -> FileUploadResponse:
-        """
-        Uploads a file to the server.
-
-        Args:
-            file_path (str): Path to the file to be uploaded.
-
-        Returns:
-            response (FileUploadResponse): The response containing the file URI.
-        """
-        filename = split(file_path)[-1]
-        mime_type = filetype.guess(file_path).mime
-        if mime_type is None:
-            mime_type = "application/octet-stream"  # Default MIME type
-
-        with open(file_path, "rb") as f:
-            return self._post(
-                self.api_base,
-                "/v1/files/upload",
-                body=None,
-                response_model=FileUploadResponse,
-                files={
-                    "file": (filename, f, mime_type),
-                },
-                timeout=self.file_upload_timeout,
-            )
-
-    def get_raw_urls(self, uris: list[str]) -> GetURLResponse:
-        """
-        Get download URLs for raw files.
-
-        Args:
-            uris (List[str]): List of file URIs to download.
-
-        Returns:
-            response (GetURLResponse): The response containing download information for the files.
-        """
-        return self._post(
-            self.api_base,
-            "/v1/files/url/raw",
-            body=GetURLRequest(uris=uris),
-            response_model=GetURLResponse,
-        )
-
-    def get_thumbnail_urls(self, uris: list[str]) -> GetURLResponse:
-        """
-        Get download URLs for file thumbnails.
-
-        Args:
-            uris (List[str]): List of file URIs to get thumbnails for.
-
-        Returns:
-            response (GetURLResponse): The response containing download information for the thumbnails.
-        """
-        return self._post(
-            self.api_base,
-            "/v1/files/url/thumb",
-            body=GetURLRequest(uris=uris),
-            response_model=GetURLResponse,
-        )
-
-
-class _GenTableClient(_Client):
-    """Generative Table methods."""
-
-    def create_action_table(self, request: ActionTableSchemaCreate) -> TableMetaResponse:
-        """
-        Create an Action Table.
-
-        Args:
-            request (ActionTableSchemaCreate): The action table schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self._post(
-            self.api_base,
-            "/v1/gen_tables/action",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    def create_knowledge_table(self, request: KnowledgeTableSchemaCreate) -> TableMetaResponse:
-        """
-        Create a Knowledge Table.
-
-        Args:
-            request (KnowledgeTableSchemaCreate): The knowledge table schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self._post(
-            self.api_base,
-            "/v1/gen_tables/knowledge",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    def create_chat_table(self, request: ChatTableSchemaCreate) -> TableMetaResponse:
-        """
-        Create a Chat Table.
-
-        Args:
-            request (ChatTableSchemaCreate): The chat table schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self._post(
-            self.api_base,
-            "/v1/gen_tables/chat",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    def get_table(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-    ) -> TableMetaResponse:
-        """
-        Get metadata for a specific Generative Table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}",
-            params=None,
-            response_model=TableMetaResponse,
-        )
-
-    def list_tables(
-        self,
-        table_type: str | TableType,
-        *,
-        offset: int = 0,
-        limit: int = 100,
-        parent_id: str | None = None,
-        search_query: str = "",
-        order_by: str = GenTableOrderBy.UPDATED_AT,
-        order_descending: bool = True,
-        count_rows: bool = False,
-    ) -> Page[TableMetaResponse]:
-        """
-        List Generative Tables of a specific type.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            offset (int, optional): Item offset. Defaults to 0.
-            limit (int, optional): Number of tables to return (min 1, max 100). Defaults to 100.
-            parent_id (str | None, optional): Parent ID of tables to return.
-                Additionally for Chat Table, you can list:
-                (1) all chat agents by passing in "_agent_"; or
-                (2) all chats by passing in "_chat_".
-                Defaults to None (return all tables).
-            search_query (str, optional): A string to search for within table IDs as a filter.
-                Defaults to "" (no filter).
-            order_by (str, optional): Sort tables by this attribute. Defaults to "updated_at".
-            order_descending (bool, optional): Whether to sort by descending order. Defaults to True.
-            count_rows (bool, optional): Whether to count the rows of the tables. Defaults to False.
-
-        Returns:
-            response (Page[TableMetaResponse]): The paginated table metadata response.
-        """
-        return self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}",
-            params=dict(
-                offset=offset,
-                limit=limit,
-                parent_id=parent_id,
-                search_query=search_query,
-                order_by=order_by,
-                order_descending=order_descending,
-                count_rows=count_rows,
-            ),
-            response_model=Page[TableMetaResponse],
-        )
-
-    def delete_table(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        *,
-        missing_ok: bool = True,
-    ) -> OkResponse:
-        """
-        Delete a specific table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-            missing_ok (bool, optional): Ignore resource not found error.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        response = self._delete(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}",
-            params=None,
-            response_model=None,
-            ignore_code=404 if missing_ok else None,
-        )
-        if response.status_code == 404 and missing_ok:
-            return OkResponse()
-        else:
-            return OkResponse.model_validate_json(response.text)
-
-    def duplicate_table(
-        self,
-        table_type: str | TableType,
-        table_id_src: str,
-        table_id_dst: str | None = None,
-        *,
-        include_data: bool = True,
-        create_as_child: bool = False,
-        **kwargs,
-    ) -> TableMetaResponse:
-        """
-        Duplicate a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id_src (str): The source table ID.
-            table_id_dst (str | None, optional): The destination / new table ID.
-                Defaults to None (create a new table ID automatically).
-            include_data (bool, optional): Whether to include data in the duplicated table. Defaults to True.
-            create_as_child (bool, optional): Whether the new table is a child table.
-                If this is True, then `include_data` will be set to True. Defaults to False.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        if "deploy" in kwargs:
-            warn(
-                'The "deploy" argument is deprecated, use "create_as_child" instead.',
-                FutureWarning,
-                stacklevel=2,
-            )
-            create_as_child = create_as_child or kwargs.pop("deploy")
-        return self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/duplicate/{quote(table_id_src)}",
-            body=None,
-            params=dict(
-                table_id_dst=table_id_dst,
-                include_data=include_data,
-                create_as_child=create_as_child,
-            ),
-            response_model=TableMetaResponse,
-        )
-
-    def rename_table(
-        self,
-        table_type: str | TableType,
-        table_id_src: str,
-        table_id_dst: str,
-    ) -> TableMetaResponse:
-        """
-        Rename a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id_src (str): The source table ID.
-            table_id_dst (str): The destination / new table ID.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/rename/{quote(table_id_src)}/{quote(table_id_dst)}",
-            body=None,
-            response_model=TableMetaResponse,
-        )
-
-    def update_gen_config(
-        self,
-        table_type: str | TableType,
-        request: GenConfigUpdateRequest,
-    ) -> TableMetaResponse:
-        """
-        Update the generation configuration for a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (GenConfigUpdateRequest): The generation configuration update request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/gen_config/update",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    def add_action_columns(self, request: AddActionColumnSchema) -> TableMetaResponse:
-        """
-        Add columns to an Action Table.
-
-        Args:
-            request (AddActionColumnSchema): The action column schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self._post(
-            self.api_base,
-            "/v1/gen_tables/action/columns/add",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    def add_knowledge_columns(self, request: AddKnowledgeColumnSchema) -> TableMetaResponse:
-        """
-        Add columns to a Knowledge Table.
-
-        Args:
-            request (AddKnowledgeColumnSchema): The knowledge column schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self._post(
-            self.api_base,
-            "/v1/gen_tables/knowledge/columns/add",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    def add_chat_columns(self, request: AddChatColumnSchema) -> TableMetaResponse:
-        """
-        Add columns to a Chat Table.
-
-        Args:
-            request (AddChatColumnSchema): The chat column schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self._post(
-            self.api_base,
-            "/v1/gen_tables/chat/columns/add",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    def drop_columns(
-        self,
-        table_type: str | TableType,
-        request: ColumnDropRequest,
-    ) -> TableMetaResponse:
-        """
-        Drop columns from a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (ColumnDropRequest): The column drop request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/columns/drop",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    def rename_columns(
-        self,
-        table_type: str | TableType,
-        request: ColumnRenameRequest,
-    ) -> TableMetaResponse:
-        """
-        Rename columns in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (ColumnRenameRequest): The column rename request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/columns/rename",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    def reorder_columns(
-        self,
-        table_type: str | TableType,
-        request: ColumnReorderRequest,
-    ) -> TableMetaResponse:
-        """
-        Reorder columns in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (ColumnReorderRequest): The column reorder request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/columns/reorder",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    def list_table_rows(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        *,
-        offset: int = 0,
-        limit: int = 100,
-        search_query: str = "",
-        columns: list[str] | None = None,
-        float_decimals: int = 0,
-        vec_decimals: int = 0,
-        order_descending: bool = True,
-    ) -> Page[dict[str, Any]]:
-        """
-        List rows in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-            offset (int, optional): Item offset. Defaults to 0.
-            limit (int, optional): Number of rows to return (min 1, max 100). Defaults to 100.
-            search_query (str, optional): A string to search for within the rows as a filter.
-                Defaults to "" (no filter).
-            columns (list[str] | None, optional): List of column names to include in the response.
-                Defaults to None (all columns).
-            float_decimals (int, optional): Number of decimals for float values.
-                Defaults to 0 (no rounding).
-            vec_decimals (int, optional): Number of decimals for vectors.
-                If its negative, exclude vector columns. Defaults to 0 (no rounding).
-            order_descending (bool, optional): Whether to sort by descending order. Defaults to True.
-
-        Returns:
-            response (Page[dict[str, Any]]): The paginated rows response.
-        """
-        return self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}/rows",
-            params=dict(
-                offset=offset,
-                limit=limit,
-                search_query=search_query,
-                columns=columns,
-                float_decimals=float_decimals,
-                vec_decimals=vec_decimals,
-                order_descending=order_descending,
-            ),
-            response_model=Page[dict[str, Any]],
-        )
-
-    def get_table_row(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        row_id: str,
-        *,
-        columns: list[str] | None = None,
-        float_decimals: int = 0,
-        vec_decimals: int = 0,
-    ) -> dict[str, Any]:
-        """
-        Get a specific row in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-            row_id (str): The ID of the row.
-            columns (list[str] | None, optional): List of column names to include in the response.
-                Defaults to None (all columns).
-            float_decimals (int, optional): Number of decimals for float values.
-                Defaults to 0 (no rounding).
-            vec_decimals (int, optional): Number of decimals for vectors.
-                If its negative, exclude vector columns. Defaults to 0 (no rounding).
-
-        Returns:
-            response (dict[str, Any]): The row data.
-        """
-        response = self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}/rows/{quote(row_id)}",
-            params=dict(
-                columns=columns,
-                float_decimals=float_decimals,
-                vec_decimals=vec_decimals,
-            ),
-            response_model=None,
-        )
-        return json_loads(response.text)
-
-    def add_table_rows(
-        self,
-        table_type: str | TableType,
-        request: RowAddRequest,
-    ) -> GenTableChatResponseType:
-        """
-        Add rows to a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowAddRequest): The row add request.
-
-        Returns:
-            response (GenTableChatResponseType): The row completion.
-                In streaming mode, it is a generator that yields a `GenTableStreamReferences` object
-                followed by zero or more `GenTableStreamChatCompletionChunk` objects.
-                In non-streaming mode, it is a `GenTableRowsChatCompletionChunks` object.
-        """
-        if request.stream:
-
-            def gen():
-                for chunk in self._stream(
-                    self.api_base,
-                    f"/v1/gen_tables/{table_type}/rows/add",
-                    body=request,
-                ):
-                    chunk = json_loads(chunk[5:])
-                    if chunk["object"] == "gen_table.references":
-                        yield GenTableStreamReferences.model_validate(chunk)
-                    elif chunk["object"] == "gen_table.completion.chunk":
-                        yield GenTableStreamChatCompletionChunk.model_validate(chunk)
-                    else:
-                        raise RuntimeError(f"Unexpected SSE chunk: {chunk}")
-
-            return gen()
-        else:
-            return self._post(
-                self.api_base,
-                f"/v1/gen_tables/{table_type}/rows/add",
-                body=request,
-                response_model=GenTableRowsChatCompletionChunks,
-            )
-
-    def regen_table_rows(
-        self,
-        table_type: str | TableType,
-        request: RowRegenRequest,
-    ) -> GenTableChatResponseType:
-        """
-        Regenerate rows in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowRegenRequest): The row regenerate request.
-
-        Returns:
-            response (GenTableChatResponseType): The row completion.
-                In streaming mode, it is a generator that yields a `GenTableStreamReferences` object
-                followed by zero or more `GenTableStreamChatCompletionChunk` objects.
-                In non-streaming mode, it is a `GenTableRowsChatCompletionChunks` object.
-        """
-        if request.stream:
-
-            def gen():
-                for chunk in self._stream(
-                    self.api_base,
-                    f"/v1/gen_tables/{table_type}/rows/regen",
-                    body=request,
-                ):
-                    chunk = json_loads(chunk[5:])
-                    if chunk["object"] == "gen_table.references":
-                        yield GenTableStreamReferences.model_validate(chunk)
-                    elif chunk["object"] == "gen_table.completion.chunk":
-                        yield GenTableStreamChatCompletionChunk.model_validate(chunk)
-                    else:
-                        raise RuntimeError(f"Unexpected SSE chunk: {chunk}")
-
-            return gen()
-        else:
-            return self._post(
-                self.api_base,
-                f"/v1/gen_tables/{table_type}/rows/regen",
-                body=request,
-                response_model=GenTableRowsChatCompletionChunks,
-            )
-
-    def update_table_row(
-        self,
-        table_type: str | TableType,
-        request: RowUpdateRequest,
-    ) -> OkResponse:
-        """
-        Update a specific row in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowUpdateRequest): The row update request.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/rows/update",
-            body=request,
-            response_model=OkResponse,
-        )
-
-    def delete_table_rows(
-        self,
-        table_type: str | TableType,
-        request: RowDeleteRequest,
-    ) -> OkResponse:
-        """
-        Delete rows from a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowDeleteRequest): The row delete request.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/rows/delete",
-            body=request,
-            response_model=OkResponse,
-        )
-
-    def delete_table_row(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        row_id: str,
-    ) -> OkResponse:
-        """
-        Delete a specific row from a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-            row_id (str): The ID of the row.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return self._delete(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}/rows/{quote(row_id)}",
-            params=None,
-            response_model=OkResponse,
-        )
-
-    def get_conversation_thread(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        column_id: str,
-        *,
-        row_id: str = "",
-        include: bool = True,
-    ) -> ChatThread:
-        """
-        Get the conversation thread for a chat table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): ID / name of the chat table.
-            column_id (str): ID / name of the column to fetch.
-            row_id (str, optional): ID / name of the last row in the thread.
-                Defaults to "" (export all rows).
-            include (bool, optional): Whether to include the row specified by `row_id`.
-                Defaults to True.
-
-        Returns:
-            response (ChatThread): The conversation thread.
-        """
-        return self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}/thread",
-            params=dict(column_id=column_id, row_id=row_id, include=include),
-            response_model=ChatThread,
-        )
-
-    def hybrid_search(
-        self,
-        table_type: str | TableType,
-        request: SearchRequest,
-    ) -> list[dict[str, Any]]:
-        """
-        Perform a hybrid search on a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (SearchRequest): The search request.
-
-        Returns:
-            response (list[dict[str, Any]]): The search results.
-        """
-        response = self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/hybrid_search",
-            body=request,
-            response_model=None,
-        )
-        return json_loads(response.text)
-
-    def embed_file_options(self) -> httpx.Response:
-        """
-        Get options for embedding a file to a Knowledge Table.
-
-        Returns:
-            response (httpx.Response): The response containing options information.
-        """
-        response = self._options(
-            self.api_base,
-            "/v1/gen_tables/knowledge/embed_file",
-        )
-        return response
-
-    def embed_file(
-        self,
-        file_path: str,
-        table_id: str,
-        *,
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200,
-    ) -> OkResponse:
-        """
-        Embed a file into a Knowledge Table.
-
-        Args:
-            file_path (str): File path of the document to be embedded.
-            table_id (str): Knowledge Table ID / name.
-            chunk_size (int, optional): Maximum chunk size (number of characters). Must be > 0.
-                Defaults to 1000.
-            chunk_overlap (int, optional): Overlap in characters between chunks. Must be >= 0.
-                Defaults to 200.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        # Guess the MIME type of the file based on its extension
-        mime_type, _ = guess_type(file_path)
-        if mime_type is None:
-            mime_type = (
-                "application/jsonl" if file_path.endswith(".jsonl") else "application/octet-stream"
-            )  # Default MIME type
-        # Extract the filename from the file path
-        filename = split(file_path)[-1]
-        # Open the file in binary mode
-        with open(file_path, "rb") as f:
-            response = self._post(
-                self.api_base,
-                "/v1/gen_tables/knowledge/embed_file",
-                body=None,
-                response_model=OkResponse,
-                files={
-                    "file": (filename, f, mime_type),
-                },
-                data={
-                    "table_id": table_id,
-                    "chunk_size": chunk_size,
-                    "chunk_overlap": chunk_overlap,
-                    # "overwrite": request.overwrite,
-                },
-                timeout=self.file_upload_timeout,
-            )
-        return response
-
-    def import_table_data(
-        self,
-        table_type: str | TableType,
-        request: TableDataImportRequest,
-    ) -> GenTableChatResponseType:
-        """
-        Imports CSV or TSV data into a table.
-
-        Args:
-            file_path (str): CSV or TSV file path.
-            table_type (str | TableType): Table type.
-            request (TableDataImportRequest): Data import request.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        # Guess the MIME type of the file based on its extension
-        mime_type, _ = guess_type(request.file_path)
-        if mime_type is None:
-            mime_type = "application/octet-stream"  # Default MIME type
-        # Extract the filename from the file path
-        filename = split(request.file_path)[-1]
-        data = {
-            "table_id": request.table_id,
-            "stream": request.stream,
-            # "column_names": request.column_names,
-            # "columns": request.columns,
-            "delimiter": request.delimiter,
-        }
-        if request.stream:
-
-            def gen():
-                # Open the file in binary mode
-                with open(request.file_path, "rb") as f:
-                    for chunk in self._stream(
-                        self.api_base,
-                        f"/v1/gen_tables/{table_type}/import_data",
-                        body=None,
-                        files={
-                            "file": (filename, f, mime_type),
-                        },
-                        data=data,
-                        timeout=self.file_upload_timeout,
-                    ):
-                        chunk = json_loads(chunk[5:])
-                        if chunk["object"] == "gen_table.references":
-                            yield GenTableStreamReferences.model_validate(chunk)
-                        elif chunk["object"] == "gen_table.completion.chunk":
-                            yield GenTableStreamChatCompletionChunk.model_validate(chunk)
-                        else:
-                            raise RuntimeError(f"Unexpected SSE chunk: {chunk}")
-
-            return gen()
-        else:
-            # Open the file in binary mode
-            with open(request.file_path, "rb") as f:
-                return self._post(
-                    self.api_base,
-                    f"/v1/gen_tables/{table_type}/import_data",
-                    body=None,
-                    response_model=GenTableRowsChatCompletionChunks,
-                    files={
-                        "file": (filename, f, mime_type),
-                    },
-                    data=data,
-                    timeout=self.file_upload_timeout,
-                )
-
-    def export_table_data(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        *,
-        columns: list[str] | None = None,
-        delimiter: Literal[",", "\t"] = ",",
-    ) -> bytes:
-        """
-        Exports the row data of a table as a CSV or TSV file.
-
-        Args:
-            table_type (str | TableType): Table type.
-            table_id (str): ID or name of the table to be exported.
-            delimiter (str, optional): The delimiter of the file: can be "," or "\\t". Defaults to ",".
-            columns (list[str], optional): A list of columns to be exported. Defaults to None (export all columns).
-
-        Returns:
-            response (list[dict[str, Any]]): The search results.
-        """
-        response = self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}/export_data",
-            params=dict(delimiter=delimiter, columns=columns),
-            response_model=None,
-        )
-        return response.content
-
-    def import_table(
-        self,
-        table_type: str | TableType,
-        request: TableImportRequest,
-    ) -> TableMetaResponse:
-        """
-        Imports a table (data and schema) from a parquet file.
-
-        Args:
-            file_path (str): The parquet file path.
-            table_type (str | TableType): Table type.
-            request (TableImportRequest): Table import request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        mime_type = "application/octet-stream"
-        filename = split(request.file_path)[-1]
-        data = {"table_id_dst": request.table_id_dst}
-        # Open the file in binary mode
-        with open(request.file_path, "rb") as f:
-            return self._post(
-                self.api_base,
-                f"/v1/gen_tables/{table_type}/import",
-                body=None,
-                response_model=TableMetaResponse,
-                files={
-                    "file": (filename, f, mime_type),
-                },
-                data=data,
-                timeout=self.file_upload_timeout,
-            )
-
-    def export_table(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-    ) -> bytes:
-        """
-        Exports a table (data and schema) as a parquet file.
-
-        Args:
-            table_type (str | TableType): Table type.
-            table_id (str): ID or name of the table to be exported.
-
-        Returns:
-            response (list[dict[str, Any]]): The search results.
-        """
-        response = self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}/export",
-            params=None,
-            response_model=None,
-        )
-        return response.content
-
-
-class JamAI(_Client):
-    def __init__(
-        self,
-        project_id: str = ENV_CONFIG.jamai_project_id,
-        token: str = ENV_CONFIG.jamai_token_plain,
-        api_base: str = ENV_CONFIG.jamai_api_base,
-        headers: dict | None = None,
-        timeout: float | None = ENV_CONFIG.jamai_timeout_sec,
-        file_upload_timeout: float | None = ENV_CONFIG.jamai_file_upload_timeout_sec,
-        *,
-        api_key: str = "",
-    ) -> None:
-        """
-        Initialize the JamAI client.
-
-        Args:
-            project_id (str, optional): The project ID.
-                Defaults to "default", but can be overridden via
-                `JAMAI_PROJECT_ID` var in environment or `.env` file.
-            token (str, optional): Your Personal Access Token or organization API key (deprecated) for authentication.
-                Defaults to "", but can be overridden via
-                `JAMAI_TOKEN` var in environment or `.env` file.
-            api_base (str, optional): The base URL for the API.
-                Defaults to "https://api.jamaibase.com/api", but can be overridden via
-                `JAMAI_API_BASE` var in environment or `.env` file.
-            headers (dict | None, optional): Additional headers to include in requests.
-                Defaults to None.
-            timeout (float | None, optional): The timeout to use when sending requests.
-                Defaults to 15 minutes, but can be overridden via
-                `JAMAI_TIMEOUT_SEC` var in environment or `.env` file.
-            file_upload_timeout (float | None, optional): The timeout to use when sending file upload requests.
-                Defaults to 60 minutes, but can be overridden via
-                `JAMAI_FILE_UPLOAD_TIMEOUT_SEC` var in environment or `.env` file.
-            api_key (str, optional): (Deprecated) Organization API key for authentication.
-        """
-        if api_key:
-            warn(ORG_API_KEY_DEPRECATE, FutureWarning, stacklevel=2)
-        http_client = httpx.Client(
-            timeout=timeout,
-            transport=httpx.HTTPTransport(retries=3),
-        )
-        kwargs = dict(
-            project_id=project_id,
-            token=token or api_key,
-            api_base=api_base,
-            headers=headers,
-            http_client=http_client,
-            file_upload_timeout=file_upload_timeout,
-        )
-        super().__init__(**kwargs)
-        self.admin = _AdminClient(**kwargs)
-        self.template = _TemplateClient(**kwargs)
-        self.file = _FileClient(**kwargs)
-        self.table = _GenTableClient(**kwargs)
-
-    def health(self) -> dict[str, Any]:
-        """
-        Get health status.
-
-        Returns:
-            response (dict[str, Any]): Health status.
-        """
-        response = self._get(self.api_base, "/health", response_model=None)
-        return json_loads(response.text)
-
-    # --- Models and chat --- #
-
-    def model_info(
-        self,
-        name: str = "",
-        capabilities: list[
-            Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]
-        ]
-        | None = None,
-    ) -> ModelInfoResponse:
-        """
-        Get information about available models.
-
-        Args:
-            name (str, optional): The model name. Defaults to "".
-            capabilities (list[Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]] | None, optional):
-                List of model capabilities to filter by. Defaults to None.
-
-        Returns:
-            response (ModelInfoResponse): The model information response.
-        """
-        params = {"model": name, "capabilities": capabilities}
-        return self._get(
-            self.api_base,
-            "/v1/models",
-            params=params,
-            response_model=ModelInfoResponse,
-        )
-
-    def model_names(
-        self,
-        prefer: str = "",
-        capabilities: list[
-            Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]
-        ]
-        | None = None,
-    ) -> list[str]:
-        """
-        Get the names of available models.
-
-        Args:
-            prefer (str, optional): Preferred model name. Defaults to "".
-            capabilities (list[Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]] | None, optional):
-                List of model capabilities to filter by. Defaults to None.
-
-        Returns:
-            response (list[str]): List of model names.
-        """
-        params = {"prefer": prefer, "capabilities": capabilities}
-        response = self._get(
-            self.api_base,
-            "/v1/model_names",
-            params=params,
-            response_model=None,
-        )
-        return json_loads(response.text)
-
-    def generate_chat_completions(
-        self, request: ChatRequest
-    ) -> ChatCompletionChunk | Generator[References | ChatCompletionChunk, None, None]:
-        """
-        Generates chat completions.
-
-        Args:
-            request (ChatRequest): The request.
-
-        Returns:
-            completion (ChatCompletionChunk | Generator): The chat completion.
-                In streaming mode, it is a generator that yields a `References` object
-                followed by zero or more `ChatCompletionChunk` objects.
-                In non-streaming mode, it is a `ChatCompletionChunk` object.
-        """
-        if request.stream:
-
-            def gen():
-                for chunk in self._stream(
-                    self.api_base,
-                    "/v1/chat/completions",
-                    body=request,
-                ):
-                    chunk = json_loads(chunk[5:])
-                    if chunk["object"] == "chat.references":
-                        yield References.model_validate(chunk)
-                    elif chunk["object"] == "chat.completion.chunk":
-                        yield ChatCompletionChunk.model_validate(chunk)
-                    else:
-                        raise RuntimeError(f"Unexpected SSE chunk: {chunk}")
-
-            return gen()
-        else:
-            return self._post(
-                self.api_base,
-                "/v1/chat/completions",
-                body=request,
-                response_model=ChatCompletionChunk,
-            )
-
-    def generate_embeddings(self, request: EmbeddingRequest) -> EmbeddingResponse:
-        """
-        Generate embeddings for the given input.
-
-        Args:
-            request (EmbeddingRequest): The embedding request.
-
-        Returns:
-            response (EmbeddingResponse): The embedding response.
-        """
-        return self._post(
-            self.api_base,
-            "/v1/embeddings",
-            body=request,
-            response_model=EmbeddingResponse,
-        )
-
-    # --- Gen Table --- #
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def create_action_table(self, request: ActionTableSchemaCreate) -> TableMetaResponse:
-        """
-        Create an Action Table.
-
-        Args:
-            request (ActionTableSchemaCreate): The action table schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.create_action_table(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def create_knowledge_table(self, request: KnowledgeTableSchemaCreate) -> TableMetaResponse:
-        """
-        Create a Knowledge Table.
-
-        Args:
-            request (KnowledgeTableSchemaCreate): The knowledge table schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.create_knowledge_table(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def create_chat_table(self, request: ChatTableSchemaCreate) -> TableMetaResponse:
-        """
-        Create a Chat Table.
-
-        Args:
-            request (ChatTableSchemaCreate): The chat table schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.create_chat_table(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def get_table(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-    ) -> TableMetaResponse:
-        """
-        Get metadata for a specific Generative Table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.get_table(table_type, table_id)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def list_tables(
-        self,
-        table_type: str | TableType,
-        offset: int = 0,
-        limit: int = 100,
-        parent_id: str | None = None,
-        search_query: str = "",
-        order_by: str = GenTableOrderBy.UPDATED_AT,
-        order_descending: bool = True,
-        count_rows: bool = False,
-    ) -> Page[TableMetaResponse]:
-        """
-        List Generative Tables of a specific type.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            offset (int, optional): Item offset. Defaults to 0.
-            limit (int, optional): Number of tables to return (min 1, max 100). Defaults to 100.
-            parent_id (str | None, optional): Parent ID of tables to return.
-                Additionally for Chat Table, you can list:
-                (1) all chat agents by passing in "_agent_"; or
-                (2) all chats by passing in "_chat_".
-                Defaults to None (return all tables).
-            search_query (str, optional): A string to search for within table IDs as a filter.
-                Defaults to "" (no filter).
-            order_by (str, optional): Sort tables by this attribute. Defaults to "updated_at".
-            order_descending (bool, optional): Whether to sort by descending order. Defaults to True.
-            count_rows (bool, optional): Whether to count the rows of the tables. Defaults to False.
-
-        Returns:
-            response (Page[TableMetaResponse]): The paginated table metadata response.
-        """
-        return self.table.list_tables(
-            table_type,
-            offset=offset,
-            limit=limit,
-            parent_id=parent_id,
-            search_query=search_query,
-            order_by=order_by,
-            order_descending=order_descending,
-            count_rows=count_rows,
-        )
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def delete_table(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        *,
-        missing_ok: bool = True,
-    ) -> OkResponse:
-        """
-        Delete a specific table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-            missing_ok (bool, optional): Ignore resource not found error.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return self.table.delete_table(table_type, table_id, missing_ok=missing_ok)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def duplicate_table(
-        self,
-        table_type: str | TableType,
-        table_id_src: str,
-        table_id_dst: str | None = None,
-        *,
-        include_data: bool = True,
-        create_as_child: bool = False,
-        **kwargs,
-    ) -> TableMetaResponse:
-        """
-        Duplicate a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id_src (str): The source table ID.
-            table_id_dst (str | None, optional): The destination / new table ID.
-                Defaults to None (create a new table ID automatically).
-            include_data (bool, optional): Whether to include data in the duplicated table. Defaults to True.
-            create_as_child (bool, optional): Whether the new table is a child table.
-                If this is True, then `include_data` will be set to True. Defaults to False.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.duplicate_table(
-            table_type,
-            table_id_src,
-            table_id_dst,
-            include_data=include_data,
-            create_as_child=create_as_child,
-            **kwargs,
-        )
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def rename_table(
-        self,
-        table_type: str | TableType,
-        table_id_src: str,
-        table_id_dst: str,
-    ) -> TableMetaResponse:
-        """
-        Rename a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id_src (str): The source table ID.
-            table_id_dst (str): The destination / new table ID.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.rename_table(table_type, table_id_src, table_id_dst)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def update_gen_config(
-        self,
-        table_type: str | TableType,
-        request: GenConfigUpdateRequest,
-    ) -> TableMetaResponse:
-        """
-        Update the generation configuration for a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (GenConfigUpdateRequest): The generation configuration update request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.update_gen_config(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def add_action_columns(self, request: AddActionColumnSchema) -> TableMetaResponse:
-        """
-        Add columns to an Action Table.
-
-        Args:
-            request (AddActionColumnSchema): The action column schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.add_action_columns(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def add_knowledge_columns(self, request: AddKnowledgeColumnSchema) -> TableMetaResponse:
-        """
-        Add columns to a Knowledge Table.
-
-        Args:
-            request (AddKnowledgeColumnSchema): The knowledge column schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.add_knowledge_columns(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def add_chat_columns(self, request: AddChatColumnSchema) -> TableMetaResponse:
-        """
-        Add columns to a Chat Table.
-
-        Args:
-            request (AddChatColumnSchema): The chat column schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.add_chat_columns(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def drop_columns(
-        self,
-        table_type: str | TableType,
-        request: ColumnDropRequest,
-    ) -> TableMetaResponse:
-        """
-        Drop columns from a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (ColumnDropRequest): The column drop request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.drop_columns(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def rename_columns(
-        self,
-        table_type: str | TableType,
-        request: ColumnRenameRequest,
-    ) -> TableMetaResponse:
-        """
-        Rename columns in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (ColumnRenameRequest): The column rename request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.rename_columns(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def reorder_columns(
-        self,
-        table_type: str | TableType,
-        request: ColumnReorderRequest,
-    ) -> TableMetaResponse:
-        """
-        Reorder columns in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (ColumnReorderRequest): The column reorder request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.reorder_columns(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def list_table_rows(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        *,
-        offset: int = 0,
-        limit: int = 100,
-        search_query: str = "",
-        columns: list[str] | None = None,
-        float_decimals: int = 0,
-        vec_decimals: int = 0,
-        order_descending: bool = True,
-    ) -> Page[dict[str, Any]]:
-        """
-        List rows in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-            offset (int, optional): Item offset. Defaults to 0.
-            limit (int, optional): Number of rows to return (min 1, max 100). Defaults to 100.
-            search_query (str, optional): A string to search for within the rows as a filter.
-                Defaults to "" (no filter).
-            columns (list[str] | None, optional): List of column names to include in the response.
-                Defaults to None (all columns).
-            float_decimals (int, optional): Number of decimals for float values.
-                Defaults to 0 (no rounding).
-            vec_decimals (int, optional): Number of decimals for vectors.
-                If its negative, exclude vector columns. Defaults to 0 (no rounding).
-            order_descending (bool, optional): Whether to sort by descending order. Defaults to True.
-        """
-        return self.table.list_table_rows(
-            table_type,
-            table_id,
-            offset=offset,
-            limit=limit,
-            search_query=search_query,
-            columns=columns,
-            float_decimals=float_decimals,
-            vec_decimals=vec_decimals,
-            order_descending=order_descending,
-        )
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def get_table_row(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        row_id: str,
-        *,
-        columns: list[str] | None = None,
-        float_decimals: int = 0,
-        vec_decimals: int = 0,
-    ) -> dict[str, Any]:
-        """
-        Get a specific row in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-            row_id (str): The ID of the row.
-            columns (list[str] | None, optional): List of column names to include in the response.
-                Defaults to None (all columns).
-            float_decimals (int, optional): Number of decimals for float values.
-                Defaults to 0 (no rounding).
-            vec_decimals (int, optional): Number of decimals for vectors.
-                If its negative, exclude vector columns. Defaults to 0 (no rounding).
-
-        Returns:
-            response (dict[str, Any]): The row data.
-        """
-        return self.table.get_table_row(
-            table_type,
-            table_id,
-            row_id,
-            columns=columns,
-            float_decimals=float_decimals,
-            vec_decimals=vec_decimals,
-        )
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def add_table_rows(
-        self,
-        table_type: str | TableType,
-        request: RowAddRequest,
-    ) -> (
-        GenTableRowsChatCompletionChunks
-        | AsyncGenerator[GenTableStreamReferences | GenTableStreamChatCompletionChunk, None]
-    ):
-        """
-        Add rows to a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowAddRequest): The row add request.
-
-        Returns:
-            response (GenTableRowsChatCompletionChunks | AsyncGenerator): The row completion.
-                In streaming mode, it is a generator that yields a `GenTableStreamReferences` object
-                followed by zero or more `GenTableStreamChatCompletionChunk` objects.
-                In non-streaming mode, it is a `GenTableRowsChatCompletionChunks` object.
-        """
-        return self.table.add_table_rows(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def regen_table_rows(
-        self,
-        table_type: str | TableType,
-        request: RowRegenRequest,
-    ) -> (
-        GenTableRowsChatCompletionChunks
-        | AsyncGenerator[GenTableStreamReferences | GenTableStreamChatCompletionChunk, None]
-    ):
-        """
-        Regenerate rows in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowRegenRequest): The row regenerate request.
-
-        Returns:
-            response (GenTableRowsChatCompletionChunks | AsyncGenerator): The row completion.
-                In streaming mode, it is a generator that yields a `GenTableStreamReferences` object
-                followed by zero or more `GenTableStreamChatCompletionChunk` objects.
-                In non-streaming mode, it is a `GenTableRowsChatCompletionChunks` object.
-        """
-        return self.table.regen_table_rows(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def update_table_row(
-        self,
-        table_type: str | TableType,
-        request: RowUpdateRequest,
-    ) -> OkResponse:
-        """
-        Update a specific row in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowUpdateRequest): The row update request.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return self.table.update_table_row(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def delete_table_rows(
-        self,
-        table_type: str | TableType,
-        request: RowDeleteRequest,
-    ) -> OkResponse:
-        """
-        Delete rows from a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowDeleteRequest): The row delete request.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return self.table.delete_table_rows(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def delete_table_row(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        row_id: str,
-    ) -> OkResponse:
-        """
-        Delete a specific row from a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-            row_id (str): The ID of the row.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return self.table.delete_table_row(table_type, table_id, row_id)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def get_conversation_thread(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        column_id: str,
-        row_id: str = "",
-        include: bool = True,
-    ) -> ChatThread:
-        """
-        Get the conversation thread for a chat table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): ID / name of the chat table.
-            column_id (str): ID / name of the column to fetch.
-            row_id (str, optional): ID / name of the last row in the thread.
-                Defaults to "" (export all rows).
-            include (bool, optional): Whether to include the row specified by `row_id`.
-                Defaults to True.
-
-        Returns:
-            response (ChatThread): The conversation thread.
-        """
-        return self.table.get_conversation_thread(
-            table_type, table_id, column_id, row_id=row_id, include=include
-        )
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def hybrid_search(
-        self,
-        table_type: str | TableType,
-        request: SearchRequest,
-    ) -> list[dict[str, Any]]:
-        """
-        Perform a hybrid search on a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (SearchRequest): The search request.
-
-        Returns:
-            response (list[dict[str, Any]]): The search results.
-        """
-        return self.table.hybrid_search(table_type, request)
-
-    @deprecated(
-        "This method is deprecated, use `client.table.embed_file_options` instead.",
-        category=FutureWarning,
-        stacklevel=1,
-    )
-    def upload_file_options(self) -> httpx.Response:
-        """
-        Get options for uploading a file to a Knowledge Table.
-
-        Returns:
-            response (httpx.Response): The response containing options information.
-        """
-        return self.table.embed_file_options()
-
-    @deprecated(
-        "This method is deprecated, use `client.table.embed_file` instead.",
-        category=FutureWarning,
-        stacklevel=1,
-    )
-    def upload_file(self, request: FileUploadRequest) -> OkResponse:
-        """
-        Upload a file to a Knowledge Table.
-
-        Args:
-            request (FileUploadRequest): The file upload request.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return self.table.embed_file(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def import_table_data(
-        self,
-        table_type: str | TableType,
-        request: TableDataImportRequest,
-    ) -> GenTableChatResponseType:
-        """
-        Imports CSV or TSV data into a table.
-
-        Args:
-            file_path (str): CSV or TSV file path.
-            table_type (str | TableType): Table type.
-            request (TableDataImportRequest): Data import request.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return self.table.import_table_data(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def export_table_data(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        columns: list[str] | None = None,
-        delimiter: Literal[",", "\t"] = ",",
-    ) -> bytes:
-        """
-        Exports the row data of a table as a CSV or TSV file.
-
-        Args:
-            table_type (str | TableType): Table type.
-            table_id (str): ID or name of the table to be exported.
-            delimiter (str, optional): The delimiter of the file: can be "," or "\\t". Defaults to ",".
-            columns (list[str], optional): A list of columns to be exported. Defaults to None (export all columns).
-
-        Returns:
-            response (list[dict[str, Any]]): The search results.
-        """
-        return self.table.export_table_data(
-            table_type, table_id, columns=columns, delimiter=delimiter
-        )
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def import_table(
-        self,
-        table_type: str | TableType,
-        request: TableImportRequest,
-    ) -> TableMetaResponse:
-        """
-        Imports a table (data and schema) from a parquet file.
-
-        Args:
-            file_path (str): The parquet file path.
-            table_type (str | TableType): Table type.
-            request (TableImportRequest): Table import request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return self.table.import_table(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    def export_table(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-    ) -> bytes:
-        """
-        Exports a table (data and schema) as a parquet file.
-
-        Args:
-            table_type (str | TableType): Table type.
-            table_id (str): ID or name of the table to be exported.
-
-        Returns:
-            response (list[dict[str, Any]]): The search results.
-        """
-        return self.table.export_table(table_type, table_id)
-
-
-class _ClientAsync(_Client):
     async def close(self) -> None:
         """
         Close the HTTP async client.
@@ -2965,7 +190,54 @@ class _ClientAsync(_Client):
         await self.http_client.aclose()
 
     @staticmethod
-    async def raise_exception(
+    def _filter_params(params: dict[str, Any] | BaseModel | None) -> dict[str, Any] | None:
+        """
+        Filter out None values from query parameters dictionary or Pydantic model.
+
+        Args:
+            params (dict[str, Any] | BaseModel | None): Query parameters dictionary or Pydantic model.
+
+        Returns:
+            params (dict[str, Any] | None): Filtered query parameters dictionary.
+        """
+        if isinstance(params, BaseModel):
+            params = params.model_dump()
+        if params is not None:
+            params = {k: v for k, v in params.items() if v is not None}
+        return params
+
+    @staticmethod
+    def _process_body(
+        body: dict[str, Any] | BaseModel | None,
+        **kwargs,
+    ) -> dict[str, Any] | None:
+        """
+        Create a dictionary from request body.
+
+        Args:
+            body (dict[str, Any] | BaseModel | None): JSON body dictionary or Pydantic model.
+            **kwargs: Keyword arguments to be pass into `model_dump`.
+
+        Returns:
+            params (dict[str, Any] | None): JSON body dictionary.
+        """
+        if body is not None:
+            body = body if isinstance(body, dict) else body.model_dump(mode="json", **kwargs)
+        return body
+
+    @contextmanager
+    def _log_call(self):
+        request_id = uuid7_str()
+        self.headers["X-REQUEST-ID"] = request_id
+        try:
+            yield
+        except JamaiException:
+            raise
+        except Exception as e:
+            raise JamaiException(f"Request {request_id} failed. {repr(e)}") from e
+
+    @staticmethod
+    async def _raise_exception(
         response: httpx.Response,
         *,
         ignore_code: int | None = None,
@@ -2992,375 +264,1015 @@ class _ClientAsync(_Client):
             error = response.text
         except httpx.ResponseNotRead:
             error = (await response.aread()).decode()
-        error = json_loads(error)
-        err_mssg = error.get("message", error.get("detail", str(error)))
-        if code == 404:
-            exc = ResourceNotFoundError
+        try:
+            error = json_loads(error)
+            err_mssg = error.get("message", error.get("detail", str(error)))
+        except Exception:
+            err_mssg = error
+        request_id = response.headers.get("x-request-id", "<no-request-id>")
+        err_mssg = f"Request {request_id} failed. {err_mssg}"
+        if code == 401:
+            exc_class = AuthorizationError
+        elif code == 403:
+            exc_class = ForbiddenError
+        elif code == 404:
+            exc_class = ResourceNotFoundError
+        elif code == 409:
+            exc_class = ResourceExistsError
+        elif code == 422:
+            exc_class = BadInputError
+        elif code == 429:
+            _headers = response.headers
+            used = _headers.get("x-ratelimit-used", None)
+            retry_after = _headers.get("retry-after", None)
+            meta = _headers.get("x-ratelimit-meta", None)
+            raise RateLimitExceedError(
+                err_mssg,
+                limit=int(_headers.get("x-ratelimit-limit", 0)),
+                remaining=int(_headers.get("x-ratelimit-remaining", 0)),
+                reset_at=int(_headers.get("x-ratelimit-reset", 0)),
+                used=None if used is None else int(used),
+                retry_after=None if retry_after is None else int(retry_after),
+                meta=None if meta is None else orjson.loads(meta),
+            )
+        elif code == 500:
+            exc_class = UnexpectedError
+        elif code == 503:
+            exc_class = ServerBusyError
         else:
-            exc = RuntimeError
-        raise exc(err_mssg)
+            exc_class = JamaiException
+        raise exc_class(err_mssg)
 
-    async def _get(
+    async def _request(
         self,
+        method: str,
         address: str,
         endpoint: str,
         *,
-        params: dict[str, Any] | None = None,
+        headers: dict[str, Any] | None = None,
+        params: dict[str, Any] | BaseModel | None = None,
+        body: BaseModel | dict[str, Any] | None = None,
         response_model: Type[BaseModel] | None = None,
+        timeout: float | None = None,
+        ignore_code: int | None = None,
+        process_body_kwargs: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> httpx.Response | BaseModel:
+        """
+        Make an asynchronous request to the specified endpoint.
+
+        Args:
+            method (str): The HTTP method to use (e.g., "GET", "POST").
+            address (str): The base address of the API.
+            endpoint (str): The API endpoint.
+            headers (dict[str, Any] | None, optional): Headers to include in the request. Defaults to None.
+            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
+            body (BaseModel | dict[str, Any] | None, optional): The body to send in the request. Defaults to None.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
+            timeout (float | None, optional): Timeout for the request. Defaults to None.
+            ignore_code (int | None, optional): HTTP error code to ignore.
+            process_body_kwargs (dict[str, Any] | None, optional): Additional keyword arguments for processing the body.
+            **kwargs (Any): Keyword arguments for `httpx.request`.
+
+        Returns:
+            response (httpx.Response | BaseModel): The response text or Pydantic response object.
+        """
+        with self._log_call():
+            if process_body_kwargs is None:
+                process_body_kwargs = {}
+            response = await self.http_client.request(
+                method,
+                f"{address}{endpoint}",
+                headers=headers,
+                params=self._filter_params(params),
+                json=self._process_body(body, **process_body_kwargs),
+                timeout=timeout or self.timeout,
+                **kwargs,
+            )
+            response = await self._raise_exception(response, ignore_code=ignore_code)
+        if response_model is None:
+            return response
+        try:
+            return response_model.model_validate_json(response.text)
+        except Exception as e:
+            raise JamaiException(
+                f"Failed to parse response (code={response.status_code}): {response.text}"
+            ) from e
+
+    async def _get(
+        self,
+        endpoint: str,
+        *,
+        params: dict[str, Any] | BaseModel | None = None,
+        response_model: Type[BaseModel] | None = None,
+        timeout: float | None = None,
         **kwargs,
     ) -> httpx.Response | BaseModel:
         """
         Make an asynchronous GET request to the specified endpoint.
 
         Args:
-            address (str): The base address of the API.
             endpoint (str): The API endpoint.
-            params (dict[str, Any] | None, optional): Query parameters.
-            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return.
-            **kwargs (Any): Keyword arguments for `httpx.get`.
+            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
+            timeout (float | None, optional): Timeout for the request. Defaults to None.
+            **kwargs (Any): Keyword arguments for `httpx.request`.
 
         Returns:
             response (httpx.Response | BaseModel): The response text or Pydantic response object.
         """
-        response = await self.http_client.get(
-            f"{address}{endpoint}",
-            params=self._filter_params(params),
+        return await self._request(
+            "GET",
+            self.api_base,
+            endpoint,
             headers=self.headers,
+            params=params,
+            body=None,
+            response_model=response_model,
+            timeout=timeout,
             **kwargs,
         )
-        response = await self.raise_exception(response)
-        if response_model is None:
-            return response
-        else:
-            return response_model.model_validate_json(response.text)
 
     async def _post(
         self,
-        address: str,
         endpoint: str,
         *,
-        body: BaseModel | None,
+        params: dict[str, Any] | BaseModel | None = None,
+        body: BaseModel | None = None,
         response_model: Type[BaseModel] | None = None,
-        params: dict[str, Any] | None = None,
+        timeout: float | None = None,
         **kwargs,
     ) -> httpx.Response | BaseModel:
         """
         Make an asynchronous POST request to the specified endpoint.
 
         Args:
-            address (str): The base address of the API.
             endpoint (str): The API endpoint.
-            body (BaseModel | None): The request body.
-            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
             params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
-            **kwargs (Any): Keyword arguments for `httpx.post`.
+            body (BaseModel | None, optional): The body to send in the request. Defaults to None.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
+            timeout (float | None, optional): Timeout for the request. Defaults to None.
+            **kwargs (Any): Keyword arguments for `httpx.request`.
 
         Returns:
             response (httpx.Response | BaseModel): The response text or Pydantic response object.
         """
-        if body is not None:
-            body = body.model_dump()
-        response = await self.http_client.post(
-            f"{address}{endpoint}",
-            json=body,
+        return await self._request(
+            "POST",
+            self.api_base,
+            endpoint,
             headers=self.headers,
-            params=self._filter_params(params),
+            params=params,
+            body=body,
+            response_model=response_model,
+            timeout=timeout,
             **kwargs,
         )
-        response = await self.raise_exception(response)
-        if response_model is None:
-            return response
-        else:
-            return response_model.model_validate_json(response.text)
 
     async def _options(
         self,
-        address: str,
         endpoint: str,
         *,
-        params: dict[str, Any] | None = None,
+        params: dict[str, Any] | BaseModel | None = None,
         response_model: Type[BaseModel] | None = None,
+        timeout: float | None = None,
         **kwargs,
     ) -> httpx.Response | BaseModel:
         """
         Make an asynchronous OPTIONS request to the specified endpoint.
 
         Args:
-            address (str): The base address of the API.
             endpoint (str): The API endpoint.
             params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
-            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return.
-            **kwargs (Any): Keyword arguments for `httpx.options`.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
+            timeout (float | None, optional): Timeout for the request. Defaults to None.
+            **kwargs (Any): Keyword arguments for `httpx.request`.
 
         Returns:
             response (httpx.Response | BaseModel): The response or Pydantic response object.
         """
-        response = await self.http_client.options(
-            f"{address}{endpoint}",
-            params=await self._filter_params(params),
+        return await self._request(
+            "OPTIONS",
+            self.api_base,
+            endpoint,
             headers=self.headers,
+            params=params,
+            body=None,
+            response_model=response_model,
+            timeout=timeout,
             **kwargs,
         )
-        response = await self.raise_exception(response)
-        if response_model is None:
-            return response
-        else:
-            return response_model.model_validate_json(response.text)
 
     async def _patch(
         self,
-        address: str,
         endpoint: str,
         *,
-        body: BaseModel | None,
+        params: dict[str, Any] | BaseModel | None = None,
+        body: BaseModel | None = None,
         response_model: Type[BaseModel] | None = None,
-        params: dict[str, Any] | None = None,
+        timeout: float | None = None,
         **kwargs,
     ) -> httpx.Response | BaseModel:
         """
         Make an asynchronous PATCH request to the specified endpoint.
 
         Args:
-            address (str): The base address of the API.
             endpoint (str): The API endpoint.
-            body (BaseModel | None): The request body.
-            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
             params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
-            **kwargs (Any): Keyword arguments for `httpx.patch`.
+            body (BaseModel | None, optional): The body to send in the request. Defaults to None.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
+            timeout (float | None, optional): Timeout for the request. Defaults to None.
+            **kwargs (Any): Keyword arguments for `httpx.request`.
 
         Returns:
             response (httpx.Response | BaseModel): The response text or Pydantic response object.
         """
-        if body is not None:
-            body = body.model_dump()
-        response = await self.http_client.patch(
-            f"{address}{endpoint}",
-            json=body,
+        return await self._request(
+            "PATCH",
+            self.api_base,
+            endpoint,
             headers=self.headers,
-            params=self._filter_params(params),
+            params=params,
+            body=body,
+            response_model=response_model,
+            timeout=timeout,
+            process_body_kwargs={"exclude_unset": True},
             **kwargs,
         )
-        response = await self.raise_exception(response)
-        if response_model is None:
-            return response
-        else:
-            return response_model.model_validate_json(response.text)
+
+    async def _put(
+        self,
+        endpoint: str,
+        *,
+        params: dict[str, Any] | BaseModel | None = None,
+        body: BaseModel | None = None,
+        response_model: Type[BaseModel] | None = None,
+        timeout: float | None = None,
+        **kwargs,
+    ) -> httpx.Response | BaseModel:
+        """
+        Make an asynchronous PUT request to the specified endpoint.
+
+        Args:
+            endpoint (str): The API endpoint.
+            params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
+            body (BaseModel | None, optional): The body to send in the request. Defaults to None.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
+            timeout (float | None, optional): Timeout for the request. Defaults to None.
+            **kwargs (Any): Keyword arguments for `httpx.request`.
+
+        Returns:
+            response (httpx.Response | BaseModel): The response text or Pydantic response object.
+        """
+        return await self._request(
+            "PUT",
+            self.api_base,
+            endpoint,
+            headers=self.headers,
+            params=params,
+            body=body,
+            response_model=response_model,
+            timeout=timeout,
+            process_body_kwargs={"exclude_unset": True},
+            **kwargs,
+        )
 
     async def _stream(
         self,
-        address: str,
         endpoint: str,
         *,
         body: BaseModel | None,
-        params: dict[str, Any] | None = None,
+        params: dict[str, Any] | BaseModel | None = None,
+        timeout: float | None = None,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
         """
         Make an asynchronous streaming POST request to the specified endpoint.
 
         Args:
-            address (str): The base address of the API.
             endpoint (str): The API endpoint.
-            body (BaseModel | None): The request body.
+            body (BaseModel | None): The body body.
             params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
             **kwargs (Any): Keyword arguments for `httpx.stream`.
 
         Yields:
             str: The response chunks.
         """
-        if body is not None:
-            body = body.model_dump()
-        async with self.http_client.stream(
-            "POST",
-            f"{address}{endpoint}",
-            json=body,
-            headers=self.headers,
-            params=self._filter_params(params),
-            **kwargs,
-        ) as response:
-            response = await self.raise_exception(response)
-            async for chunk in response.aiter_lines():
-                chunk = chunk.strip()
-                if chunk == "" or chunk == "data: [DONE]":
-                    continue
-                yield chunk
+        with self._log_call():
+            async with self.http_client.stream(
+                "POST",
+                f"{self.api_base}{endpoint}",
+                headers=self.headers,
+                params=self._filter_params(params),
+                json=self._process_body(body),
+                timeout=timeout or self.timeout,
+                **kwargs,
+            ) as response:
+                response = await self._raise_exception(response)
+                async for chunk in response.aiter_lines():
+                    chunk = chunk.strip()
+                    if chunk == "" or chunk == "data: [DONE]":
+                        continue
+                    yield chunk
 
     async def _delete(
         self,
-        address: str,
         endpoint: str,
         *,
-        params: dict[str, Any] | None = None,
+        params: dict[str, Any] | BaseModel | None = None,
         response_model: Type[BaseModel] | None = None,
+        timeout: float | None = None,
         ignore_code: int | None = None,
         **kwargs,
     ) -> httpx.Response | BaseModel:
         """
-        Make a DELETE request to the specified endpoint.
+        Make an asynchronous DELETE request to the specified endpoint.
 
         Args:
-            address (str): The base address of the API.
             endpoint (str): The API endpoint.
             params (dict[str, Any] | None, optional): Query parameters. Defaults to None.
-            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return.
-            ignore_code (int | None, optional): HTTP code to ignore.
-            **kwargs (Any): Keyword arguments for `httpx.delete`.
+            response_model (Type[pydantic.BaseModel] | None, optional): The response model to return. Defaults to None.
+            timeout (float | None, optional): Timeout for the request. Defaults to None.
+            ignore_code (int | None, optional): HTTP error code to ignore.
+            **kwargs (Any): Keyword arguments for `httpx.request`.
 
         Returns:
             response (httpx.Response | BaseModel): The response text or Pydantic response object.
         """
-        response = await self.http_client.delete(
-            f"{address}{endpoint}",
-            params=self._filter_params(params),
+        return await self._request(
+            "DELETE",
+            self.api_base,
+            endpoint,
             headers=self.headers,
+            params=params,
+            body=None,
+            response_model=response_model,
+            timeout=timeout,
+            ignore_code=ignore_code,
             **kwargs,
         )
-        response = await self.raise_exception(response, ignore_code=ignore_code)
-        if response_model is None:
-            return response
+
+    @staticmethod
+    async def _empty_async_generator():
+        """Returns an empty asynchronous generator."""
+        return
+        # This line is never reached, but makes it an async generator
+        yield
+
+    @staticmethod
+    def _empty_sync_generator():
+        """Returns an empty synchronous generator."""
+        return
+        # This line is never reached, but makes it a sync generator
+        yield
+
+    async def _return_async_iterator(
+        self,
+        agen: AsyncGenerator[Any, None],
+        stream_models: list[Type[BaseModel]] | None = None,
+    ) -> AsyncGenerator[Any, None]:
+        # Get the first chunk outside of the loop so that errors can be raised immediately
+        try:
+            chunk = await anext(agen)
+        except StopAsyncIteration:
+            # Return empty async generator
+            return self._empty_async_generator()
+
+        def _process(_chunk: str) -> BaseModel | str:
+            if stream_models is None:
+                return _chunk
+            for m in stream_models:
+                try:
+                    return m.model_validate_json(_chunk[5:])
+                except Exception:
+                    pass
+            raise RuntimeError(f"Unexpected SSE chunk: {chunk}")
+
+        # For streaming responses, return an asynchronous generator
+        async def gen():
+            nonlocal chunk
+            yield _process(chunk)
+            async for chunk in agen:
+                yield _process(chunk)
+
+        # Directly return the asynchronous generator
+        return gen()
+
+    def _return_iterator(
+        self,
+        agen: AsyncGenerator[Any, None] | Any,
+        stream: bool,
+    ) -> Generator[Any, None, None] | Any:
+        if stream:
+            # Get the first chunk outside of the loop so that errors can be raised immediately
+            try:
+                chunk = LOOP.run(anext(agen))
+            except StopAsyncIteration:
+                # Return empty sync generator
+                return self._empty_sync_generator()
+
+            def gen():
+                nonlocal chunk
+                yield chunk
+                while True:
+                    try:
+                        yield LOOP.run(anext(agen))
+                    except StopAsyncIteration:
+                        break
+
+            return gen()
         else:
-            return response_model.model_validate_json(response.text)
+            return agen
 
 
-class _BackendAdminClientAsync(_ClientAsync):
-    """Backend administration methods."""
+class _AuthAsync(_ClientAsync):
+    """Auth methods."""
 
-    async def create_user(self, request: UserCreate) -> UserRead:
+    async def register_password(self, body: UserCreate, **kwargs) -> UserRead:
         return await self._post(
-            self.api_base,
-            "/admin/backend/v1/users",
-            body=request,
+            "/v2/auth/register/password",
+            body=body,
             response_model=UserRead,
+            **kwargs,
         )
 
-    async def update_user(self, request: UserUpdate) -> UserRead:
-        return await self._patch(
-            self.api_base,
-            "/admin/backend/v1/users",
-            body=request,
+    async def login_password(self, body: PasswordLoginRequest, **kwargs) -> UserRead:
+        return await self._post(
+            "/v2/auth/login/password",
+            body=body,
             response_model=UserRead,
+            **kwargs,
+        )
+
+    async def change_password(self, body: PasswordChangeRequest, **kwargs) -> UserRead:
+        return await self._patch(
+            "/v2/auth/login/password",
+            body=body,
+            response_model=UserRead,
+            **kwargs,
+        )
+
+
+class _PricesAsync(_ClientAsync):
+    """Prices methods."""
+
+    async def create_price_plan(self, body: PricePlanCreate, **kwargs) -> PricePlanRead:
+        return await self._post(
+            "/v2/prices/plans",
+            body=body,
+            response_model=PricePlanRead,
+            **kwargs,
+        )
+
+    async def list_price_plans(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[PricePlanRead]:
+        return await self._get(
+            "/v2/prices/plans/list",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+            ),
+            response_model=Page[PricePlanRead],
+            **kwargs,
+        )
+
+    async def get_price_plan(
+        self,
+        plan_id: str,
+        **kwargs,
+    ) -> PricePlanRead:
+        return await self._get(
+            "/v2/prices/plans",
+            params=dict(price_plan_id=plan_id),
+            response_model=PricePlanRead,
+            **kwargs,
+        )
+
+    async def update_price_plan(
+        self,
+        plan_id: str,
+        body: PricePlanUpdate,
+        **kwargs,
+    ) -> PricePlanRead:
+        return await self._patch(
+            "/v2/prices/plans",
+            params=dict(price_plan_id=plan_id),
+            body=body,
+            response_model=PricePlanRead,
+            **kwargs,
+        )
+
+    async def delete_price_plan(
+        self,
+        price_plan_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        response = await self._delete(
+            "/v2/prices/plans",
+            params=dict(price_plan_id=price_plan_id),
+            response_model=None,
+            ignore_code=404 if missing_ok else None,
+            **kwargs,
+        )
+        if response.status_code == 404 and missing_ok:
+            return OkResponse()
+        else:
+            return OkResponse.model_validate_json(response.text)
+
+    async def list_model_prices(self, **kwargs) -> ModelPrice:
+        return await self._get(
+            "/v2/prices/models/list",
+            response_model=ModelPrice,
+            **kwargs,
+        )
+
+
+class _UsersAsync(_ClientAsync):
+    """Users methods."""
+
+    async def create_user(self, body: UserCreate, **kwargs) -> UserRead:
+        return await self._post(
+            "/v2/users",
+            body=body,
+            response_model=UserRead,
+            process_body_kwargs={"exclude_unset": True},
+            **kwargs,
         )
 
     async def list_users(
         self,
+        *,
         offset: int = 0,
         limit: int = 100,
-        order_by: str = AdminOrderBy.UPDATED_AT,
-        order_descending: bool = True,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        search_query: str = "",
+        search_columns: list[str] | None = None,
+        after: str | None = None,
+        **kwargs,
     ) -> Page[UserRead]:
+        params = dict(
+            offset=offset,
+            limit=limit,
+            order_by=order_by,
+            order_ascending=order_ascending,
+            search_query=search_query,
+            after=after,
+        )
+        if search_columns:
+            params["search_columns"] = search_columns
         return await self._get(
-            self.api_base,
-            "/admin/backend/v1/users",
-            params=dict(
-                offset=offset,
-                limit=limit,
-                order_by=order_by,
-                order_descending=order_descending,
-            ),
+            "/v2/users/list",
+            params=params,
             response_model=Page[UserRead],
+            **kwargs,
         )
 
-    async def get_user(self, user_id: str) -> UserRead:
+    async def get_user(
+        self,
+        user_id: str | None = None,
+        **kwargs,
+    ) -> UserRead:
         return await self._get(
-            self.api_base,
-            f"/admin/backend/v1/users/{quote(user_id)}",
-            params=None,
+            "/v2/users",
+            params=dict(user_id=user_id),
             response_model=UserRead,
+            **kwargs,
+        )
+
+    async def update_user(
+        self,
+        body: UserUpdate,
+        **kwargs,
+    ) -> UserRead:
+        return await self._patch(
+            "/v2/users",
+            body=body,
+            response_model=UserRead,
+            **kwargs,
         )
 
     async def delete_user(
         self,
-        user_id: str,
         *,
         missing_ok: bool = True,
+        **kwargs,
     ) -> OkResponse:
         response = await self._delete(
-            self.api_base,
-            f"/admin/backend/v1/users/{quote(user_id)}",
-            params=None,
+            "/v2/users",
             response_model=None,
             ignore_code=404 if missing_ok else None,
+            **kwargs,
         )
         if response.status_code == 404 and missing_ok:
             return OkResponse()
         else:
             return OkResponse.model_validate_json(response.text)
 
-    async def create_pat(self, request: PATCreate) -> PATRead:
+    async def create_pat(self, body: ProjectKeyCreate, **kwargs) -> ProjectKeyRead:
         return await self._post(
-            self.api_base,
-            "/admin/backend/v1/pats",
-            body=request,
-            response_model=PATRead,
+            "/v2/pats",
+            body=body,
+            response_model=ProjectKeyRead,
+            **kwargs,
         )
 
-    async def get_pat(self, pat: str) -> PATRead:
-        return await self._get(
-            self.api_base,
-            f"/admin/backend/v1/pats/{quote(pat)}",
-            params=None,
-            response_model=PATRead,
-        )
-
-    async def delete_pat(
+    async def list_pats(
         self,
-        pat: str,
         *,
-        missing_ok: bool = True,
-    ) -> OkResponse:
-        response = await self._delete(
-            self.api_base,
-            f"/admin/backend/v1/pats/{quote(pat)}",
-            params=None,
-            response_model=None,
-            ignore_code=404 if missing_ok else None,
-        )
-        if response.status_code == 404 and missing_ok:
-            return OkResponse()
-        else:
-            return OkResponse.model_validate_json(response.text)
-
-    async def create_organization(self, request: OrganizationCreate) -> OrganizationRead:
-        return await self._post(
-            self.api_base,
-            "/admin/backend/v1/organizations",
-            body=request,
-            response_model=OrganizationRead,
-        )
-
-    async def update_organization(self, request: OrganizationUpdate) -> OrganizationRead:
-        return await self._patch(
-            self.api_base,
-            "/admin/backend/v1/organizations",
-            body=request,
-            response_model=OrganizationRead,
-        )
-
-    async def list_organizations(
-        self,
         offset: int = 0,
         limit: int = 100,
-        order_by: str = AdminOrderBy.UPDATED_AT,
-        order_descending: bool = True,
-    ) -> Page[OrganizationRead]:
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[ProjectKeyRead]:
         return await self._get(
-            self.api_base,
-            "/admin/backend/v1/organizations",
+            "/v2/pats/list",
             params=dict(
                 offset=offset,
                 limit=limit,
                 order_by=order_by,
-                order_descending=order_descending,
+                order_ascending=order_ascending,
             ),
-            response_model=Page[OrganizationRead],
+            response_model=Page[ProjectKeyRead],
+            **kwargs,
         )
 
-    async def get_organization(self, organization_id: str) -> OrganizationRead:
+    async def update_pat(
+        self,
+        pat_id: str,
+        body: ProjectKeyUpdate,
+        **kwargs,
+    ) -> ProjectKeyRead:
+        return await self._patch(
+            "/v2/pats",
+            params=dict(pat_id=pat_id),
+            body=body,
+            response_model=ProjectKeyRead,
+            **kwargs,
+        )
+
+    async def delete_pat(
+        self,
+        pat_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        response = await self._delete(
+            "/v2/pats",
+            params=dict(pat_id=pat_id),
+            response_model=None,
+            ignore_code=404 if missing_ok else None,
+            **kwargs,
+        )
+        if response.status_code == 404 and missing_ok:
+            return OkResponse()
+        else:
+            return OkResponse.model_validate_json(response.text)
+
+    async def create_email_verification_code(
+        self,
+        *,
+        valid_days: int = 7,
+        **kwargs,
+    ) -> VerificationCodeRead:
+        """
+        Generates an email verification code.
+
+        Args:
+            valid_days (int, optional): Code validity in days. Defaults to 7.
+
+        Returns:
+            code (InviteCodeRead): Verification code.
+        """
+        return await self._post(
+            "/v2/users/verify/email/code",
+            params=dict(valid_days=valid_days),
+            body=None,
+            response_model=VerificationCodeRead,
+            **kwargs,
+        )
+
+    async def list_email_verification_codes(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        search_query: str = "",
+        search_columns: list[str] | None = None,
+        after: str | None = None,
+        **kwargs,
+    ) -> Page[VerificationCodeRead]:
+        params = dict(
+            offset=offset,
+            limit=limit,
+            order_by=order_by,
+            order_ascending=order_ascending,
+            search_query=search_query,
+            after=after,
+        )
+        if search_columns:
+            params["search_columns"] = search_columns
         return await self._get(
-            self.api_base,
-            f"/admin/backend/v1/organizations/{quote(organization_id)}",
-            params=None,
+            "/v2/users/verify/email/code/list",
+            params=params,
+            response_model=Page[VerificationCodeRead],
+            **kwargs,
+        )
+
+    async def get_email_verification_code(
+        self,
+        verification_code: str,
+        **kwargs,
+    ) -> VerificationCodeRead:
+        return await self._get(
+            "/v2/users/verify/email/code",
+            params=dict(verification_code=verification_code),
+            response_model=VerificationCodeRead,
+            **kwargs,
+        )
+
+    async def revoke_email_verification_code(
+        self,
+        verification_code: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        response = await self._delete(
+            "/v2/users/verify/email/code",
+            params=dict(verification_code=verification_code),
+            response_model=None,
+            ignore_code=404 if missing_ok else None,
+            **kwargs,
+        )
+        if response.status_code == 404 and missing_ok:
+            return OkResponse()
+        else:
+            return OkResponse.model_validate_json(response.text)
+
+    @deprecated(
+        "`delete_email_verification_code` is deprecated, use `revoke_email_verification_code` instead.",
+        category=FutureWarning,
+        stacklevel=1,
+    )
+    async def delete_email_verification_code(
+        self,
+        verification_code: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        return await self.revoke_email_verification_code(
+            verification_code=verification_code,
+            missing_ok=missing_ok,
+            **kwargs,
+        )
+
+    async def verify_email(
+        self,
+        verification_code: str,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Verify and update user email.
+
+        Args:
+            verification_code (str): Verification code.
+
+        Returns:
+            ok (OkResponse): Success.
+        """
+        return await self._post(
+            "/v2/users/verify/email",
+            params=dict(verification_code=verification_code),
+            response_model=OkResponse,
+            **kwargs,
+        )
+
+
+class _ModelsAsync(_ClientAsync):
+    """Models methods."""
+
+    async def create_model_config(self, body: ModelConfigCreate, **kwargs) -> ModelConfigRead:
+        return await self._post(
+            "/v2/models/configs",
+            body=body,
+            response_model=ModelConfigRead,
+            **kwargs,
+        )
+
+    async def list_model_configs(
+        self,
+        *,
+        organization_id: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[ModelConfigRead]:
+        return await self._get(
+            "/v2/models/configs/list",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                organization_id=organization_id,
+            ),
+            response_model=Page[ModelConfigRead],
+            **kwargs,
+        )
+
+    async def get_model_config(
+        self,
+        model_id: str,
+        **kwargs,
+    ) -> ModelConfigRead:
+        return await self._get(
+            "/v2/models/configs",
+            params=dict(model_id=model_id),
+            response_model=ModelConfigRead,
+            **kwargs,
+        )
+
+    async def update_model_config(
+        self,
+        model_id: str,
+        body: ModelConfigUpdate,
+        **kwargs,
+    ) -> ModelConfigRead:
+        return await self._patch(
+            "/v2/models/configs",
+            params=dict(model_id=model_id),
+            body=body,
+            response_model=ModelConfigRead,
+            **kwargs,
+        )
+
+    async def delete_model_config(
+        self,
+        model_id: str,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        response = await self._delete(
+            "/v2/models/configs",
+            params=dict(model_id=model_id),
+            response_model=None,
+            ignore_code=404 if missing_ok else None,
+            **kwargs,
+        )
+        if response.status_code == 404 and missing_ok:
+            return OkResponse()
+        else:
+            return OkResponse.model_validate_json(response.text)
+
+    async def create_deployment(
+        self,
+        body: DeploymentCreate,
+        timeout: float | None = 300.0,
+        **kwargs,
+    ) -> DeploymentRead:
+        return await self._post(
+            "/v2/models/deployments/cloud",
+            body=body,
+            response_model=DeploymentRead,
+            timeout=self.timeout if timeout is None else timeout,
+            **kwargs,
+        )
+
+    async def list_deployments(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[DeploymentRead]:
+        return await self._get(
+            "/v2/models/deployments/list",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+            ),
+            response_model=Page[DeploymentRead],
+            **kwargs,
+        )
+
+    async def get_deployment(
+        self,
+        deployment_id: str,
+        **kwargs,
+    ) -> DeploymentRead:
+        return await self._get(
+            "/v2/models/deployments",
+            params=dict(deployment_id=deployment_id),
+            response_model=DeploymentRead,
+            **kwargs,
+        )
+
+    async def update_deployment(
+        self,
+        deployment_id: str,
+        body: DeploymentUpdate,
+        **kwargs,
+    ) -> DeploymentRead:
+        return await self._patch(
+            "/v2/models/deployments",
+            params=dict(deployment_id=deployment_id),
+            body=body,
+            response_model=DeploymentRead,
+            **kwargs,
+        )
+
+    async def delete_deployment(self, deployment_id: str, **kwargs) -> OkResponse:
+        return await self._delete(
+            "/v2/models/deployments",
+            params=dict(deployment_id=deployment_id),
+            response_model=OkResponse,
+            **kwargs,
+        )
+
+
+class _OrganizationsAsync(_ClientAsync):
+    """Organization methods."""
+
+    async def create_organization(
+        self,
+        body: OrganizationCreate,
+        **kwargs,
+    ) -> OrganizationRead:
+        return await self._post(
+            "/v2/organizations",
+            body=body,
             response_model=OrganizationRead,
+            **kwargs,
+        )
+
+    async def list_organizations(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[OrganizationRead]:
+        return await self._get(
+            "/v2/organizations/list",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+            ),
+            response_model=Page[OrganizationRead],
+            **kwargs,
+        )
+
+    async def get_organization(
+        self,
+        organization_id: str,
+        **kwargs,
+    ) -> OrganizationRead:
+        return await self._get(
+            "/v2/organizations",
+            params=dict(organization_id=organization_id),
+            response_model=OrganizationRead,
+            **kwargs,
+        )
+
+    async def update_organization(
+        self,
+        organization_id: str,
+        body: OrganizationUpdate,
+        **kwargs,
+    ) -> OrganizationRead:
+        return await self._patch(
+            "/v2/organizations",
+            body=body,
+            params=dict(organization_id=organization_id),
+            response_model=OrganizationRead,
+            **kwargs,
         )
 
     async def delete_organization(
@@ -3368,328 +1280,418 @@ class _BackendAdminClientAsync(_ClientAsync):
         organization_id: str,
         *,
         missing_ok: bool = True,
+        **kwargs,
     ) -> OkResponse:
         response = await self._delete(
-            self.api_base,
-            f"/admin/backend/v1/organizations/{quote(organization_id)}",
-            params=None,
+            "/v2/organizations",
+            params=dict(organization_id=organization_id),
             response_model=None,
             ignore_code=404 if missing_ok else None,
+            **kwargs,
         )
         if response.status_code == 404 and missing_ok:
             return OkResponse()
         else:
             return OkResponse.model_validate_json(response.text)
 
-    async def generate_invite_token(
+    async def join_organization(
+        self,
+        user_id: str,
+        *,
+        invite_code: str | None = None,
+        organization_id: str | None = None,
+        role: str | None = None,
+        **kwargs,
+    ) -> OrgMemberRead:
+        return await self._post(
+            "/v2/organizations/members",
+            params=dict(
+                user_id=user_id,
+                organization_id=organization_id,
+                role=role,
+                invite_code=invite_code,
+            ),
+            body=None,
+            response_model=OrgMemberRead,
+            **kwargs,
+        )
+
+    async def list_members(
         self,
         organization_id: str,
-        user_email: str = "",
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[OrgMemberRead]:
+        return await self._get(
+            "/v2/organizations/members/list",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                organization_id=organization_id,
+            ),
+            response_model=Page[OrgMemberRead],
+            **kwargs,
+        )
+
+    async def get_member(
+        self,
+        *,
+        user_id: str,
+        organization_id: str,
+        **kwargs,
+    ) -> OrgMemberRead:
+        return await self._get(
+            "/v2/organizations/members",
+            params=dict(user_id=user_id, organization_id=organization_id),
+            response_model=OrgMemberRead,
+            **kwargs,
+        )
+
+    async def update_member_role(
+        self,
+        *,
+        user_id: str,
+        organization_id: str,
+        role: Role,
+        **kwargs,
+    ) -> OrgMemberRead:
+        return await self._patch(
+            "/v2/organizations/members/role",
+            params=dict(user_id=user_id, organization_id=organization_id, role=role),
+            response_model=OrgMemberRead,
+            **kwargs,
+        )
+
+    async def leave_organization(
+        self,
+        user_id: str,
+        organization_id: str,
+        **kwargs,
+    ) -> OkResponse:
+        return await self._delete(
+            "/v2/organizations/members",
+            params=dict(
+                user_id=user_id,
+                organization_id=organization_id,
+            ),
+            response_model=OkResponse,
+            **kwargs,
+        )
+
+    async def model_catalogue(
+        self,
+        *,
+        organization_id: str,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[ModelConfigRead]:
+        return await self._get(
+            "/v2/organizations/models/catalogue",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                organization_id=organization_id,
+            ),
+            response_model=Page[ModelConfigRead],
+            **kwargs,
+        )
+
+    async def create_invite(
+        self,
+        *,
+        user_email: str,
+        organization_id: str,
+        role: str,
         valid_days: int = 7,
-    ) -> str:
+        **kwargs,
+    ) -> VerificationCodeRead:
         """
         Generates an invite token to join an organization.
 
         Args:
+            user_email (str): User email.
             organization_id (str): Organization ID.
-            user_email (str, optional): User email.
-                Leave blank to disable email check and generate a public invite. Defaults to "".
-            valid_days (int, optional): How many days should this link be valid for. Defaults to 7.
+            role (str): Organization role.
+            valid_days (int, optional): Code validity in days. Defaults to 7.
 
         Returns:
-            token (str): _description_
+            code (InviteCodeRead): Invite code.
         """
-        response = await self._get(
-            self.api_base,
-            "/admin/backend/v1/invite_tokens",
+        return await self._post(
+            "/v2/organizations/invites",
             params=dict(
-                organization_id=organization_id, user_email=user_email, valid_days=valid_days
+                user_email=user_email,
+                organization_id=organization_id,
+                role=role,
+                valid_days=valid_days,
             ),
-            response_model=None,
-        )
-        return response.text
-
-    async def join_organization(self, request: OrgMemberCreate) -> OrgMemberRead:
-        return await self._post(
-            self.api_base,
-            "/admin/backend/v1/organizations/link",
-            body=request,
-            response_model=OrgMemberRead,
+            body=None,
+            response_model=VerificationCodeRead,
+            **kwargs,
         )
 
-    async def leave_organization(self, user_id: str, organization_id: str) -> OkResponse:
-        return await self._delete(
-            self.api_base,
-            f"/admin/backend/v1/organizations/link/{quote(user_id)}/{quote(organization_id)}",
-            params=None,
-            response_model=OkResponse,
-        )
+    async def generate_invite_token(self, *_, **__):
+        raise NotImplementedError("This method is deprecated, use `create_invite` instead.")
 
-    async def create_api_key(self, request: ApiKeyCreate) -> ApiKeyRead:
-        warn(ORG_API_KEY_DEPRECATE, FutureWarning, stacklevel=2)
-        return await self._post(
-            self.api_base,
-            "/admin/backend/v1/api_keys",
-            body=request,
-            response_model=ApiKeyRead,
-        )
-
-    async def get_api_key(self, api_key: str) -> ApiKeyRead:
-        warn(ORG_API_KEY_DEPRECATE, FutureWarning, stacklevel=2)
-        return await self._get(
-            self.api_base,
-            f"/admin/backend/v1/api_keys/{quote(api_key)}",
-            params=None,
-            response_model=ApiKeyRead,
-        )
-
-    async def delete_api_key(
+    async def list_invites(
         self,
-        api_key: str,
+        organization_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[VerificationCodeRead]:
+        return await self._get(
+            "/v2/organizations/invites/list",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                organization_id=organization_id,
+            ),
+            response_model=Page[VerificationCodeRead],
+            **kwargs,
+        )
+
+    async def revoke_invite(
+        self,
+        invite_id: str,
         *,
         missing_ok: bool = True,
+        **kwargs,
     ) -> OkResponse:
-        warn(ORG_API_KEY_DEPRECATE, FutureWarning, stacklevel=2)
         response = await self._delete(
-            self.api_base,
-            f"/admin/backend/v1/api_keys/{quote(api_key)}",
-            params=None,
+            "/v2/organizations/invites",
+            params=dict(invite_id=invite_id),
             response_model=None,
             ignore_code=404 if missing_ok else None,
+            **kwargs,
         )
         if response.status_code == 404 and missing_ok:
             return OkResponse()
         else:
             return OkResponse.model_validate_json(response.text)
 
+    @deprecated(
+        "`delete_invite` is deprecated, use `revoke_invite` instead.",
+        category=FutureWarning,
+        stacklevel=1,
+    )
+    async def delete_invite(
+        self,
+        invite_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        return await self.revoke_invite(invite_id=invite_id, missing_ok=missing_ok, **kwargs)
+
+    async def subscribe_plan(
+        self,
+        organization_id: str,
+        price_plan_id: str,
+        **kwargs,
+    ) -> StripePaymentInfo:
+        return await self._patch(
+            "/v2/organizations/plan",
+            params=dict(organization_id=organization_id, price_plan_id=price_plan_id),
+            body=None,
+            response_model=StripePaymentInfo,
+            **kwargs,
+        )
+
     async def refresh_quota(
         self,
         organization_id: str,
-        reset_usage: bool = True,
+        **kwargs,
     ) -> OrganizationRead:
         return await self._post(
-            self.api_base,
-            f"/admin/backend/v1/quotas/refresh/{quote(organization_id)}",
+            "/v2/organizations/plan/refresh",
+            params=dict(organization_id=organization_id),
             body=None,
-            params=dict(reset_usage=reset_usage),
             response_model=OrganizationRead,
+            **kwargs,
         )
 
-    async def get_event(self, event_id: str) -> EventRead:
-        return await self._get(
-            self.api_base,
-            f"/admin/backend/v1/events/{quote(event_id)}",
-            params=None,
-            response_model=EventRead,
-        )
-
-    async def add_event(self, request: EventCreate) -> OkResponse:
-        return await self._post(
-            self.api_base,
-            "/admin/backend/v1/events",
-            body=request,
-            response_model=OkResponse,
-        )
-
-    async def mark_event_as_done(self, event_id: str) -> OkResponse:
-        return await self._patch(
-            self.api_base,
-            f"/admin/backend/v1/events/done/{quote(event_id)}",
-            body=None,
-            response_model=OkResponse,
-        )
-
-    async def get_internal_organization_id(self) -> StringResponse:
-        return await self._get(
-            self.api_base,
-            "/admin/backend/v1/internal_organization_id",
-            params=None,
-            response_model=StringResponse,
-        )
-
-    async def set_internal_organization_id(self, organization_id: str) -> OkResponse:
-        return await self._patch(
-            self.api_base,
-            f"/admin/backend/v1/internal_organization_id/{quote(organization_id)}",
-            body=None,
-            response_model=OkResponse,
-        )
-
-    async def get_pricing(self) -> Price:
-        return await self._get(
-            self.api_base,
-            "/public/v1/prices/plans",
-            params=None,
-            response_model=Price,
-        )
-
-    async def set_pricing(self, request: Price) -> OkResponse:
-        return await self._patch(
-            self.api_base,
-            "/admin/backend/v1/prices/plans",
-            body=request,
-            response_model=OkResponse,
-        )
-
-    async def get_model_pricing(self) -> ModelPrice:
-        return await self._get(
-            self.api_base,
-            "/public/v1/prices/models",
-            params=None,
-            response_model=ModelPrice,
-        )
-
-    async def get_model_config(self) -> ModelListConfig:
-        return await self._get(
-            self.api_base,
-            "/admin/backend/v1/models",
-            params=None,
-            response_model=ModelListConfig,
-        )
-
-    async def set_model_config(self, request: ModelListConfig) -> OkResponse:
-        return await self._patch(
-            self.api_base,
-            "/admin/backend/v1/models",
-            body=request,
-            response_model=OkResponse,
-        )
-
-    async def add_template(
-        self,
-        source: str | BinaryIO,
-        template_id_dst: str,
-        exist_ok: bool = False,
-    ) -> OkResponse:
-        """
-        Upload a template Parquet file to add a new template into gallery.
-
-        Args:
-            source (str | BinaryIO): The path to the template Parquet file or a file-like object.
-            template_id_dst (str): The ID of the new template.
-            exist_ok (bool, optional): Whether to overwrite existing template. Defaults to False.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        kwargs = dict(
-            address=self.api_base,
-            endpoint="/admin/backend/v1/templates/import",
-            body=None,
-            response_model=OkResponse,
-            data={"template_id_dst": template_id_dst, "exist_ok": exist_ok},
-            timeout=self.file_upload_timeout,
-        )
-        mime_type = "application/octet-stream"
-        if isinstance(source, str):
-            filename = split(source)[-1]
-            # Open the file in binary mode
-            with open(source, "rb") as f:
-                return await self._post(files={"file": (filename, f, mime_type)}, **kwargs)
-        else:
-            filename = "import.parquet"
-            return await self._post(files={"file": (filename, source, mime_type)}, **kwargs)
-
-    async def populate_templates(self, timeout: float = 30.0) -> OkResponse:
-        """
-        Re-populates the template gallery.
-
-        Args:
-            timeout (float, optional): Timeout in seconds, must be >= 0. Defaults to 30.0.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return await self._post(
-            self.api_base,
-            "/admin/backend/v1/templates/populate",
-            body=None,
-            params=dict(timeout=timeout),
-            response_model=OkResponse,
-        )
-
-
-class _OrgAdminClientAsync(_ClientAsync):
-    """Organization administration methods."""
-
-    async def get_org_model_config(self, organization_id: str) -> ModelListConfig:
-        return await self._get(
-            self.api_base,
-            f"/admin/org/v1/models/{quote(organization_id)}",
-            params=None,
-            response_model=ModelListConfig,
-        )
-
-    async def set_org_model_config(
+    async def purchase_credits(
         self,
         organization_id: str,
-        config: ModelListConfig,
-    ) -> OkResponse:
-        return await self._patch(
-            self.api_base,
-            f"/admin/org/v1/models/{quote(organization_id)}",
-            body=config,
-            response_model=OkResponse,
-        )
-
-    async def create_project(self, request: ProjectCreate) -> ProjectRead:
+        amount: float,
+        *,
+        confirm: bool = False,
+        off_session: bool = False,
+        **kwargs,
+    ) -> StripePaymentInfo:
         return await self._post(
-            self.api_base,
-            "/admin/org/v1/projects",
-            body=request,
-            response_model=ProjectRead,
+            "/v2/organizations/credits",
+            params=dict(
+                organization_id=organization_id,
+                amount=amount,
+                confirm=confirm,
+                off_session=off_session,
+            ),
+            body=None,
+            response_model=StripePaymentInfo,
+            **kwargs,
         )
 
-    async def update_project(self, request: ProjectUpdate) -> ProjectRead:
-        return await self._patch(
-            self.api_base,
-            "/admin/org/v1/projects",
-            body=request,
-            response_model=ProjectRead,
-        )
-
-    async def set_project_updated_at(
+    async def set_credit_grant(
         self,
-        project_id: str,
-        updated_at: str | None = None,
+        organization_id: str,
+        amount: float,
+        **kwargs,
+    ) -> OkResponse:
+        return await self._put(
+            "/v2/organizations/credit_grant",
+            params=dict(organization_id=organization_id, amount=amount),
+            body=None,
+            response_model=OkResponse,
+            **kwargs,
+        )
+
+    async def add_credit_grant(
+        self,
+        organization_id: str,
+        amount: float,
+        **kwargs,
     ) -> OkResponse:
         return await self._patch(
-            self.api_base,
-            f"/admin/org/v1/projects/{quote(project_id)}",
+            "/v2/organizations/credit_grant",
+            params=dict(organization_id=organization_id, amount=amount),
             body=None,
-            params=dict(updated_at=updated_at),
             response_model=OkResponse,
+            **kwargs,
+        )
+
+    async def get_organization_metrics(
+        self,
+        metric_id: str,
+        from_: datetime,
+        org_id: str,
+        window_size: str | None = None,
+        proj_ids: list[str] | None = None,
+        to: datetime | None = None,
+        group_by: list[str] | None = None,
+        data_source: Literal["clickhouse", "victoriametrics"] = "clickhouse",
+        **kwargs,
+    ) -> UsageResponse:
+        params = {
+            "metricId": metric_id,
+            "from": from_.isoformat(),  # Use string key to avoid keyword conflict
+            "orgId": org_id,
+            "windowSize": window_size,
+            "projIds": proj_ids,
+            "to": to.isoformat() if to else None,
+            "groupBy": group_by,
+            "dataSource": data_source,
+        }
+        return await self._get(
+            "/v2/organizations/meters/query",
+            params=params,
+            response_model=UsageResponse,
+        )
+
+    # async def get_billing_metrics(
+    #     self,
+    #     from_: datetime,
+    #     window_size: str,
+    #     org_id: str,
+    #     proj_ids: list[str] | None = None,
+    #     to: datetime | None = None,
+    #     group_by: list[str] | None = None,
+    #     **kwargs,
+    # ) -> dict:
+    #     params = {
+    #         "from": from_.isoformat(),
+    #         "window_size": window_size,
+    #         "org_id": org_id,
+    #         "proj_ids": proj_ids,
+    #         "to": to,
+    #         "group_by": group_by,
+    #     }
+    #     return await self._get(
+    #         "/v2/organizations/meters/billings",
+    #         params=params,
+    #         **kwargs,
+    #     )
+
+
+class _ProjectsAsync(_ClientAsync):
+    """Project methods."""
+
+    async def create_project(self, body: ProjectCreate, **kwargs) -> ProjectRead:
+        return await self._post(
+            "/v2/projects",
+            body=body,
+            response_model=ProjectRead,
+            **kwargs,
         )
 
     async def list_projects(
         self,
-        organization_id: str = "default",
-        search_query: str = "",
+        organization_id: str,
+        *,
         offset: int = 0,
         limit: int = 100,
-        order_by: str = AdminOrderBy.UPDATED_AT,
-        order_descending: bool = True,
+        search_query: str = "",
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        list_chat_agents: bool = False,
+        **kwargs,
     ) -> Page[ProjectRead]:
         return await self._get(
-            self.api_base,
-            "/admin/org/v1/projects",
+            "/v2/projects/list",
             params=dict(
-                organization_id=organization_id,
-                search_query=search_query,
                 offset=offset,
                 limit=limit,
+                search_query=search_query,
                 order_by=order_by,
-                order_descending=order_descending,
+                order_ascending=order_ascending,
+                organization_id=organization_id,
+                list_chat_agents=list_chat_agents,
             ),
             response_model=Page[ProjectRead],
+            **kwargs,
         )
 
-    async def get_project(self, project_id: str) -> ProjectRead:
+    async def get_project(
+        self,
+        project_id: str,
+        **kwargs,
+    ) -> ProjectRead:
         return await self._get(
-            self.api_base,
-            f"/admin/org/v1/projects/{quote(project_id)}",
-            params=None,
+            "/v2/projects",
+            params=dict(project_id=project_id),
             response_model=ProjectRead,
+            **kwargs,
+        )
+
+    async def update_project(
+        self,
+        project_id: str,
+        body: ProjectUpdate,
+        **kwargs,
+    ) -> ProjectRead:
+        return await self._patch(
+            "/v2/projects",
+            body=body,
+            params=dict(project_id=project_id),
+            response_model=ProjectRead,
+            **kwargs,
         )
 
     async def delete_project(
@@ -3697,788 +1699,509 @@ class _OrgAdminClientAsync(_ClientAsync):
         project_id: str,
         *,
         missing_ok: bool = True,
+        **kwargs,
     ) -> OkResponse:
         response = await self._delete(
-            self.api_base,
-            f"/admin/org/v1/projects/{quote(project_id)}",
-            params=None,
+            "/v2/projects",
+            params=dict(project_id=project_id),
             response_model=None,
             ignore_code=404 if missing_ok else None,
+            **kwargs,
         )
         if response.status_code == 404 and missing_ok:
             return OkResponse()
         else:
             return OkResponse.model_validate_json(response.text)
 
+    async def create_invite(
+        self,
+        *,
+        user_email: str,
+        project_id: str,
+        role: str,
+        valid_days: int = 7,
+        **kwargs,
+    ) -> VerificationCodeRead:
+        """
+        Generates an invite token to join a project.
+
+        Args:
+            user_email (str): User email.
+            project_id (str): Project ID.
+            role (str): Project role.
+            valid_days (int, optional): Code validity in days. Defaults to 7.
+
+        Returns:
+            code (InviteCodeRead): Invite code.
+        """
+        return await self._post(
+            "/v2/projects/invites",
+            params=dict(
+                user_email=user_email,
+                project_id=project_id,
+                role=role,
+                valid_days=valid_days,
+            ),
+            body=None,
+            response_model=VerificationCodeRead,
+            **kwargs,
+        )
+
+    async def list_invites(
+        self,
+        project_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[VerificationCodeRead]:
+        return await self._get(
+            "/v2/projects/invites/list",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                project_id=project_id,
+            ),
+            response_model=Page[VerificationCodeRead],
+            **kwargs,
+        )
+
+    async def revoke_invite(
+        self,
+        invite_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        response = await self._delete(
+            "/v2/projects/invites",
+            params=dict(invite_id=invite_id),
+            response_model=None,
+            ignore_code=404 if missing_ok else None,
+            **kwargs,
+        )
+        if response.status_code == 404 and missing_ok:
+            return OkResponse()
+        else:
+            return OkResponse.model_validate_json(response.text)
+
+    @deprecated(
+        "`delete_invite` is deprecated, use `revoke_invite` instead.",
+        category=FutureWarning,
+        stacklevel=1,
+    )
+    async def delete_invite(
+        self,
+        invite_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        return await self.revoke_invite(invite_id, missing_ok=missing_ok, **kwargs)
+
+    async def join_project(
+        self,
+        user_id: str,
+        *,
+        invite_code: str | None = None,
+        project_id: str | None = None,
+        role: str | None = None,
+        **kwargs,
+    ) -> ProjectMemberRead:
+        return await self._post(
+            "/v2/projects/members",
+            params=dict(
+                user_id=user_id,
+                project_id=project_id,
+                role=role,
+                invite_code=invite_code,
+            ),
+            body=None,
+            response_model=ProjectMemberRead,
+            **kwargs,
+        )
+
+    async def list_members(
+        self,
+        project_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[ProjectMemberRead]:
+        return await self._get(
+            "/v2/projects/members/list",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                project_id=project_id,
+            ),
+            response_model=Page[ProjectMemberRead],
+            **kwargs,
+        )
+
+    async def get_member(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        **kwargs,
+    ) -> ProjectMemberRead:
+        return await self._get(
+            "/v2/projects/members",
+            params=dict(user_id=user_id, project_id=project_id),
+            response_model=ProjectMemberRead,
+            **kwargs,
+        )
+
+    async def update_member_role(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        role: Role,
+        **kwargs,
+    ) -> ProjectMemberRead:
+        return await self._patch(
+            "/v2/projects/members/role",
+            params=dict(user_id=user_id, project_id=project_id, role=role),
+            response_model=ProjectMemberRead,
+            **kwargs,
+        )
+
+    async def leave_project(
+        self,
+        user_id: str,
+        project_id: str,
+        **kwargs,
+    ) -> OkResponse:
+        return await self._delete(
+            "/v2/projects/members",
+            params=dict(
+                user_id=user_id,
+                project_id=project_id,
+            ),
+            response_model=OkResponse,
+            **kwargs,
+        )
+
     async def import_project(
         self,
         source: str | BinaryIO,
-        organization_id: str,
-        project_id_dst: str = "",
+        *,
+        project_id: str = "",
+        organization_id: str = "",
+        **kwargs,
     ) -> ProjectRead:
         """
-        Imports a project.
+        Import a project.
 
         Args:
             source (str | BinaryIO): The parquet file path or file-like object.
                 It can be a Project or Template file.
-            organization_id (str): Organization ID "org_xxx".
-            project_id_dst (str, optional): ID of the project to import tables into.
-                Defaults to creating new project.
+            project_id (str, optional): If given, import tables into this project.
+                Defaults to "" (create new project).
+            organization_id (str): Organization ID of the new project.
+                Only required if creating a new project.
 
         Returns:
             response (ProjectRead): The imported project.
         """
-        kwargs = dict(
-            address=self.api_base,
-            endpoint=f"/admin/org/v1/projects/import/{quote(organization_id)}",
+        migrate = kwargs.pop("migrate", False)  # Temporary, may be removed anytime
+        timeout = None if migrate else (kwargs.pop("timeout", None) or self.file_upload_timeout)
+        kw = dict(
+            endpoint=f"/v2/projects/import/parquet{'/migration' if migrate else ''}",
             body=None,
             response_model=ProjectRead,
-            data={"project_id_dst": project_id_dst},
-            timeout=self.file_upload_timeout,
+            data=dict(project_id=project_id, organization_id=organization_id),
+            timeout=timeout,
+            **kwargs,
         )
         mime_type = "application/octet-stream"
         if isinstance(source, str):
             filename = split(source)[-1]
             # Open the file in binary mode
             with open(source, "rb") as f:
-                return await self._post(files={"file": (filename, f, mime_type)}, **kwargs)
+                return await self._post(
+                    files={"file": (filename, f, mime_type)},
+                    **kw,
+                )
         else:
             filename = "import.parquet"
-            return await self._post(files={"file": (filename, source, mime_type)}, **kwargs)
+            return await self._post(
+                files={"file": (filename, source, mime_type)},
+                **kw,
+            )
 
     async def export_project(
         self,
         project_id: str,
-        compression: Literal["NONE", "ZSTD", "LZ4", "SNAPPY"] = "ZSTD",
+        **kwargs,
     ) -> bytes:
         """
-        Exports a project as a Project Parquet file.
+        Export a project as a Project Parquet file.
 
         Args:
             project_id (str): Project ID "proj_xxx".
-            compression (str, optional): Parquet compression codec. Defaults to "ZSTD".
 
         Returns:
             response (bytes): The Parquet file.
         """
         response = await self._get(
-            self.api_base,
-            f"/admin/org/v1/projects/{quote(project_id)}/export",
-            params=dict(compression=compression),
+            "/v2/projects/export",
+            params=dict(project_id=project_id),
             response_model=None,
+            **kwargs,
         )
         return response.content
 
-    async def import_project_from_template(
+    async def import_template(
         self,
-        organization_id: str,
         template_id: str,
-        project_id_dst: str = "",
+        *,
+        project_id: str = "",
+        organization_id: str = "",
+        **kwargs,
     ) -> ProjectRead:
         """
-        Imports a project from a template.
+        Import a Template.
 
         Args:
-            organization_id (str): Organization ID "org_xxx".
-            template_id (str): ID of the template to import from.
-            project_id_dst (str, optional): ID of the project to import tables into.
-                Defaults to creating new project.
+            template_id (str): Template ID "proj_xxx".
+            project_id (str, optional): If given, import tables into this project.
+                Defaults to "" (create new project).
+            organization_id (str): Organization ID of the new project.
+                Only required if creating a new project.
 
         Returns:
             response (ProjectRead): The imported project.
         """
         return await self._post(
-            self.api_base,
-            f"/admin/org/v1/projects/import/{quote(organization_id)}/templates/{quote(template_id)}",
+            "/v2/projects/import/template",
             body=None,
-            params=dict(project_id_dst=project_id_dst),
-            response_model=ProjectRead,
-        )
-
-    async def export_project_as_template(
-        self,
-        project_id: str,
-        *,
-        name: str,
-        tags: list[str],
-        description: str,
-        compression: Literal["NONE", "ZSTD", "LZ4", "SNAPPY"] = "ZSTD",
-    ) -> bytes:
-        """
-        Exports a project as a template Parquet file.
-
-        Args:
-            project_id (str): Project ID "proj_xxx".
-            name (str): Template name.
-            tags (list[str]): Template tags.
-            description (str): Template description.
-            compression (str, optional): Parquet compression codec. Defaults to "ZSTD".
-
-        Returns:
-            response (bytes): The template Parquet file.
-        """
-        response = await self._get(
-            self.api_base,
-            f"/admin/org/v1/projects/{quote(project_id)}/export/template",
             params=dict(
-                name=name,
-                tags=tags,
-                description=description,
-                compression=compression,
+                template_id=template_id,
+                project_id=project_id,
+                organization_id=organization_id,
             ),
-            response_model=None,
+            response_model=ProjectRead,
+            **kwargs,
         )
-        return response.content
+
+    # async def get_usage_metrics(
+    #     self,
+    #     type: str,
+    #     from_: datetime,
+    #     window_size: str,
+    #     proj_id: str,
+    #     to: datetime | None = None,
+    #     group_by: list[str] | None = None,
+    #     **kwargs,
+    # ) -> dict:
+    #     params = {
+    #         "type": type,
+    #         "from": from_.isoformat(),
+    #         "window_size": window_size,
+    #         "proj_id": proj_id,
+    #         "to": to,
+    #         "group_by": group_by,
+    #     }
+    #     return await self._get(
+    #         "/v2/projects/meters/usages",
+    #         params=params,
+    #         **kwargs,
+    #     )
+
+    # async def get_billing_metrics(
+    #     self,
+    #     from_: datetime,
+    #     window_size: str,
+    #     proj_id: str,
+    #     to: datetime | None = None,
+    #     group_by: list[str] | None = None,
+    #     **kwargs,
+    # ) -> dict:
+    #     params = {
+    #         "from": from_.isoformat(),
+    #         "window_size": window_size,
+    #         "proj_id": proj_id,
+    #         "to": to,
+    #         "group_by": group_by,
+    #     }
+    #     return await self._get(
+    #         "/v2/projects/meters/billings",
+    #         params=params,
+    #         **kwargs,
+    #     )
 
 
-class _AdminClientAsync(_ClientAsync):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.backend = _BackendAdminClientAsync(*args, **kwargs)
-        self.organization = _OrgAdminClientAsync(*args, **kwargs)
-
-
-class _TemplateClientAsync(_ClientAsync):
+class _TemplatesAsync(_ClientAsync):
     """Template methods."""
 
-    async def list_templates(self, search_query: str = "") -> Page[Template]:
-        """
-        List all templates.
-
-        Args:
-            search_query (str, optional): A string to search for within template names.
-
-        Returns:
-            templates (Page[Template]): A page of templates.
-        """
-        return await self._get(
-            self.api_base,
-            "/public/v1/templates",
-            params=dict(search_query=search_query),
-            response_model=Page[Template],
-        )
-
-    async def get_template(self, template_id: str) -> Template:
-        """
-        Get a template by its ID.
-
-        Args:
-            template_id (str): Template ID.
-
-        Returns:
-            template (Template): The template.
-        """
-        return await self._get(
-            self.api_base,
-            f"/public/v1/templates/{quote(template_id)}",
-            params=None,
-            response_model=Template,
-        )
-
-    async def list_tables(
+    async def list_templates(
         self,
-        template_id: str,
-        table_type: str,
         *,
         offset: int = 0,
         limit: int = 100,
         search_query: str = "",
-        order_by: str = GenTableOrderBy.UPDATED_AT,
-        order_descending: bool = True,
-    ) -> Page[TableMetaResponse]:
-        """
-        List all tables in a template.
-
-        Args:
-            template_id (str): Template ID.
-            table_type (str): Table type.
-            offset (int, optional): Item offset. Defaults to 0.
-            limit (int, optional): Number of tables to return (min 1, max 100). Defaults to 100.
-            search_query (str, optional): A string to search for within table IDs as a filter.
-                Defaults to "" (no filter).
-            order_by (str, optional): Sort tables by this attribute. Defaults to "updated_at".
-            order_descending (bool, optional): Whether to sort by descending order. Defaults to True.
-
-        Returns:
-            tables (Page[TableMetaResponse]): A page of tables.
-        """
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[ProjectRead]:
         return await self._get(
-            self.api_base,
-            f"/public/v1/templates/{quote(template_id)}/gen_tables/{quote(table_type)}",
+            "/v2/templates/list",
             params=dict(
                 offset=offset,
                 limit=limit,
                 search_query=search_query,
                 order_by=order_by,
-                order_descending=order_descending,
+                order_ascending=order_ascending,
             ),
-            response_model=Page[TableMetaResponse],
+            response_model=Page[ProjectRead],
+            **kwargs,
         )
 
-    async def get_table(
-        self, template_id: str, table_type: str, table_id: str
-    ) -> TableMetaResponse:
-        """
-        Get a table in a template.
-
-        Args:
-            template_id (str): Template ID.
-            table_type (str): Table type.
-            table_id (str): Table ID.
-
-        Returns:
-            table (TableMetaResponse): The table.
-        """
+    async def get_template(self, template_id: str, **kwargs) -> ProjectRead:
         return await self._get(
-            self.api_base,
-            f"/public/v1/templates/{quote(template_id)}/gen_tables/{quote(table_type)}/{quote(table_id)}",
-            params=None,
-            response_model=TableMetaResponse,
-        )
-
-    async def list_table_rows(
-        self,
-        template_id: str,
-        table_type: str,
-        table_id: str,
-        *,
-        starting_after: str | None = None,
-        offset: int = 0,
-        limit: int = 100,
-        order_by: str = "Updated at",
-        order_descending: bool = True,
-        float_decimals: int = 0,
-        vec_decimals: int = 0,
-    ) -> Page[dict[str, Any]]:
-        """
-        List rows in a template table.
-
-        Args:
-            template_id (str): Template ID.
-            table_type (str): Table type.
-            table_id (str): Table ID.
-            starting_after (str | None, optional): A cursor for use in pagination.
-                Only rows with ID > `starting_after` will be returned.
-                For instance, if your call receives 100 rows ending with ID "x",
-                your subsequent call can include `starting_after="x"` in order to fetch the next page of the list.
-                Defaults to None.
-            offset (int, optional): Item offset. Defaults to 0.
-            limit (int, optional): Number of rows to return (min 1, max 100). Defaults to 100.
-            order_by (str, optional): Sort rows by this column. Defaults to "Updated at".
-            order_descending (bool, optional): Whether to sort by descending order. Defaults to True.
-            float_decimals (int, optional): Number of decimals for float values.
-                Defaults to 0 (no rounding).
-            vec_decimals (int, optional): Number of decimals for vectors.
-                If its negative, exclude vector columns. Defaults to 0 (no rounding).
-
-        Returns:
-            rows (Page[dict[str, Any]]): The rows.
-        """
-        return await self._get(
-            self.api_base,
-            f"/public/v1/templates/{quote(template_id)}/gen_tables/{quote(table_type)}/{quote(table_id)}/rows",
-            params=dict(
-                starting_after=starting_after,
-                offset=offset,
-                limit=limit,
-                order_by=order_by,
-                order_descending=order_descending,
-                float_decimals=float_decimals,
-                vec_decimals=vec_decimals,
-            ),
-            response_model=Page[dict[str, Any]],
-        )
-
-
-class _FileClientAsync(_ClientAsync):
-    """File methods."""
-
-    async def upload_file(self, file_path: str) -> FileUploadResponse:
-        """
-        Uploads a file to the server.
-
-        Args:
-            file_path (str): Path to the file to be uploaded.
-
-        Returns:
-            response (FileUploadResponse): The response containing the file URI.
-        """
-        filename = split(file_path)[-1]
-        mime_type = filetype.guess(file_path).mime
-        if mime_type is None:
-            mime_type = "application/octet-stream"  # Default MIME type
-
-        with open(file_path, "rb") as f:
-            return await self._post(
-                self.api_base,
-                "/v1/files/upload",
-                body=None,
-                response_model=FileUploadResponse,
-                files={
-                    "file": (filename, f, mime_type),
-                },
-                timeout=self.file_upload_timeout,
-            )
-
-    async def get_raw_urls(self, uris: list[str]) -> GetURLResponse:
-        """
-        Get download URLs for raw files.
-
-        Args:
-            uris (List[str]): List of file URIs to download.
-
-        Returns:
-            response (GetURLResponse): The response containing download information for the files.
-        """
-        return await self._post(
-            self.api_base,
-            "/v1/files/url/raw",
-            body=GetURLRequest(uris=uris),
-            response_model=GetURLResponse,
-        )
-
-    async def get_thumbnail_urls(self, uris: list[str]) -> GetURLResponse:
-        """
-        Get download URLs for file thumbnails.
-
-        Args:
-            uris (List[str]): List of file URIs to get thumbnails for.
-
-        Returns:
-            response (GetURLResponse): The response containing download information for the thumbnails.
-        """
-        return await self._post(
-            self.api_base,
-            "/v1/files/url/thumb",
-            body=GetURLRequest(uris=uris),
-            response_model=GetURLResponse,
-        )
-
-
-class _GenTableClientAsync(_ClientAsync):
-    """Generative Table methods."""
-
-    async def create_action_table(self, request: ActionTableSchemaCreate) -> TableMetaResponse:
-        """
-        Create an Action Table.
-
-        Args:
-            request (ActionTableSchemaCreate): The action table schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self._post(
-            self.api_base,
-            "/v1/gen_tables/action",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    async def create_knowledge_table(
-        self, request: KnowledgeTableSchemaCreate
-    ) -> TableMetaResponse:
-        """
-        Create a Knowledge Table.
-
-        Args:
-            request (KnowledgeTableSchemaCreate): The knowledge table schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self._post(
-            self.api_base,
-            "/v1/gen_tables/knowledge",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    async def create_chat_table(self, request: ChatTableSchemaCreate) -> TableMetaResponse:
-        """
-        Create a Chat Table.
-
-        Args:
-            request (ChatTableSchemaCreate): The chat table schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self._post(
-            self.api_base,
-            "/v1/gen_tables/chat",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    async def get_table(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-    ) -> TableMetaResponse:
-        """
-        Get metadata for a specific Generative Table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}",
-            params=None,
-            response_model=TableMetaResponse,
+            "/v2/templates",
+            params=dict(template_id=template_id),
+            response_model=ProjectRead,
+            **kwargs,
         )
 
     async def list_tables(
         self,
-        table_type: str | TableType,
+        template_id: str,
+        table_type: str,
         *,
         offset: int = 0,
         limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        search_query: str = "",
         parent_id: str | None = None,
-        search_query: str = "",
-        order_by: str = GenTableOrderBy.UPDATED_AT,
-        order_descending: bool = True,
         count_rows: bool = False,
+        **kwargs,
     ) -> Page[TableMetaResponse]:
-        """
-        List Generative Tables of a specific type.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            offset (int, optional): Item offset. Defaults to 0.
-            limit (int, optional): Number of tables to return (min 1, max 100). Defaults to 100.
-            parent_id (str | None, optional): Parent ID of tables to return.
-                Additionally for Chat Table, you can list:
-                (1) all chat agents by passing in "_agent_"; or
-                (2) all chats by passing in "_chat_".
-                Defaults to None (return all tables).
-            search_query (str, optional): A string to search for within table IDs as a filter.
-                Defaults to "" (no filter).
-            order_by (str, optional): Sort tables by this attribute. Defaults to "updated_at".
-            order_descending (bool, optional): Whether to sort by descending order. Defaults to True.
-            count_rows (bool, optional): Whether to count the rows of the tables. Defaults to False.
-
-        Returns:
-            response (Page[TableMetaResponse]): The paginated table metadata response.
-        """
         return await self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}",
+            f"/v2/templates/gen_tables/{table_type}/list",
             params=dict(
+                template_id=template_id,
                 offset=offset,
                 limit=limit,
-                parent_id=parent_id,
-                search_query=search_query,
                 order_by=order_by,
-                order_descending=order_descending,
+                order_ascending=order_ascending,
+                search_query=search_query,
+                parent_id=parent_id,
                 count_rows=count_rows,
             ),
             response_model=Page[TableMetaResponse],
+            **kwargs,
         )
 
-    async def delete_table(
+    async def get_table(
         self,
-        table_type: str | TableType,
+        template_id: str,
+        table_type: str,
         table_id: str,
-        *,
-        missing_ok: bool = True,
-    ) -> OkResponse:
-        """
-        Delete a specific table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-            missing_ok (bool, optional): Ignore resource not found error.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        response = await self._delete(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}",
-            params=None,
-            response_model=None,
-            ignore_code=404 if missing_ok else None,
-        )
-        if response.status_code == 404 and missing_ok:
-            return OkResponse()
-        else:
-            return OkResponse.model_validate_json(response.text)
-
-    async def duplicate_table(
-        self,
-        table_type: str | TableType,
-        table_id_src: str,
-        table_id_dst: str | None = None,
-        *,
-        include_data: bool = True,
-        create_as_child: bool = False,
         **kwargs,
     ) -> TableMetaResponse:
-        """
-        Duplicate a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id_src (str): The source table ID.
-            table_id_dst (str | None, optional): The destination / new table ID.
-                Defaults to None (create a new table ID automatically).
-            include_data (bool, optional): Whether to include data in the duplicated table. Defaults to True.
-            create_as_child (bool, optional): Whether the new table is a child table.
-                If this is True, then `include_data` will be set to True. Defaults to False.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        if "deploy" in kwargs:
-            warn(
-                'The "deploy" argument is deprecated, use "create_as_child" instead.',
-                FutureWarning,
-                stacklevel=2,
-            )
-            create_as_child = create_as_child or kwargs.pop("deploy")
-        return await self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/duplicate/{quote(table_id_src)}",
-            body=None,
+        return await self._get(
+            f"/v2/templates/gen_tables/{table_type}",
             params=dict(
-                table_id_dst=table_id_dst,
-                include_data=include_data,
-                create_as_child=create_as_child,
+                template_id=template_id,
+                table_id=table_id,
             ),
             response_model=TableMetaResponse,
-        )
-
-    async def rename_table(
-        self,
-        table_type: str | TableType,
-        table_id_src: str,
-        table_id_dst: str,
-    ) -> TableMetaResponse:
-        """
-        Rename a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id_src (str): The source table ID.
-            table_id_dst (str): The destination / new table ID.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/rename/{quote(table_id_src)}/{quote(table_id_dst)}",
-            body=None,
-            response_model=TableMetaResponse,
-        )
-
-    async def update_gen_config(
-        self,
-        table_type: str | TableType,
-        request: GenConfigUpdateRequest,
-    ) -> TableMetaResponse:
-        """
-        Update the generation configuration for a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (GenConfigUpdateRequest): The generation configuration update request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/gen_config/update",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    async def add_action_columns(self, request: AddActionColumnSchema) -> TableMetaResponse:
-        """
-        Add columns to an Action Table.
-
-        Args:
-            request (AddActionColumnSchema): The action column schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self._post(
-            self.api_base,
-            "/v1/gen_tables/action/columns/add",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    async def add_knowledge_columns(self, request: AddKnowledgeColumnSchema) -> TableMetaResponse:
-        """
-        Add columns to a Knowledge Table.
-
-        Args:
-            request (AddKnowledgeColumnSchema): The knowledge column schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self._post(
-            self.api_base,
-            "/v1/gen_tables/knowledge/columns/add",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    async def add_chat_columns(self, request: AddChatColumnSchema) -> TableMetaResponse:
-        """
-        Add columns to a Chat Table.
-
-        Args:
-            request (AddChatColumnSchema): The chat column schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self._post(
-            self.api_base,
-            "/v1/gen_tables/chat/columns/add",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    async def drop_columns(
-        self,
-        table_type: str | TableType,
-        request: ColumnDropRequest,
-    ) -> TableMetaResponse:
-        """
-        Drop columns from a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (ColumnDropRequest): The column drop request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/columns/drop",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    async def rename_columns(
-        self,
-        table_type: str | TableType,
-        request: ColumnRenameRequest,
-    ) -> TableMetaResponse:
-        """
-        Rename columns in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (ColumnRenameRequest): The column rename request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/columns/rename",
-            body=request,
-            response_model=TableMetaResponse,
-        )
-
-    async def reorder_columns(
-        self,
-        table_type: str | TableType,
-        request: ColumnReorderRequest,
-    ) -> TableMetaResponse:
-        """
-        Reorder columns in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (ColumnReorderRequest): The column reorder request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/columns/reorder",
-            body=request,
-            response_model=TableMetaResponse,
+            **kwargs,
         )
 
     async def list_table_rows(
         self,
-        table_type: str | TableType,
+        template_id: str,
+        table_type: str,
         table_id: str,
         *,
         offset: int = 0,
         limit: int = 100,
-        search_query: str = "",
+        order_by: str = "ID",
+        order_ascending: bool = True,
         columns: list[str] | None = None,
+        search_query: str = "",
+        search_columns: list[str] | None = None,
         float_decimals: int = 0,
         vec_decimals: int = 0,
-        order_descending: bool = True,
+        **kwargs,
     ) -> Page[dict[str, Any]]:
         """
         List rows in a table.
 
         Args:
-            table_type (str | TableType): The type of the table.
+            template_id (str): The ID of the template.
+            table_type (str): The type of the table.
             table_id (str): The ID of the table.
             offset (int, optional): Item offset. Defaults to 0.
             limit (int, optional): Number of rows to return (min 1, max 100). Defaults to 100.
-            search_query (str, optional): A string to search for within the rows as a filter.
-                Defaults to "" (no filter).
+            order_by (str, optional): Column name to order by. Defaults to "ID".
+            order_ascending (bool, optional): Whether to sort by ascending order. Defaults to True.
             columns (list[str] | None, optional): List of column names to include in the response.
                 Defaults to None (all columns).
+            search_query (str, optional): A string to search for within the rows as a filter.
+                Defaults to "" (no filter).
+            search_columns (list[str] | None, optional): A list of column names to search for `search_query`.
+                Defaults to None (search all columns).
             float_decimals (int, optional): Number of decimals for float values.
                 Defaults to 0 (no rounding).
             vec_decimals (int, optional): Number of decimals for vectors.
                 If its negative, exclude vector columns. Defaults to 0 (no rounding).
-            order_descending (bool, optional): Whether to sort by descending order. Defaults to True.
         """
+        if columns is not None and not isinstance(columns, list):
+            raise TypeError("`columns` must be None or a list.")
         return await self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}/rows",
+            f"/v2/templates/gen_tables/{table_type}/rows/list",
             params=dict(
+                template_id=template_id,
+                table_id=table_id,
                 offset=offset,
                 limit=limit,
-                search_query=search_query,
+                order_by=order_by,
+                order_ascending=order_ascending,
                 columns=columns,
+                search_query=search_query,
+                search_columns=search_columns,
                 float_decimals=float_decimals,
                 vec_decimals=vec_decimals,
-                order_descending=order_descending,
             ),
             response_model=Page[dict[str, Any]],
+            **kwargs,
         )
 
     async def get_table_row(
         self,
-        table_type: str | TableType,
+        template_id: str,
+        table_type: str,
         table_id: str,
         row_id: str,
+        *,
         columns: list[str] | None = None,
         float_decimals: int = 0,
         vec_decimals: int = 0,
+        **kwargs,
     ) -> dict[str, Any]:
         """
         Get a specific row in a table.
 
         Args:
-            table_type (str | TableType): The type of the table.
+            template_id (str): The ID of the template.
+            table_type (str): The type of the table.
             table_id (str): The ID of the table.
             row_id (str): The ID of the row.
             columns (list[str] | None, optional): List of column names to include in the response.
@@ -4491,188 +2214,701 @@ class _GenTableClientAsync(_ClientAsync):
         Returns:
             response (dict[str, Any]): The row data.
         """
+        if columns is not None and not isinstance(columns, list):
+            raise TypeError("`columns` must be None or a list.")
         response = await self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}/rows/{quote(row_id)}",
+            f"/v2/templates/gen_tables/{table_type}/rows",
             params=dict(
+                template_id=template_id,
+                table_id=table_id,
+                row_id=row_id,
                 columns=columns,
                 float_decimals=float_decimals,
                 vec_decimals=vec_decimals,
             ),
             response_model=None,
+            **kwargs,
         )
         return json_loads(response.text)
 
+
+class _FileClientAsync(_ClientAsync):
+    """File methods."""
+
+    async def upload_file(self, file_path: str, **kwargs) -> FileUploadResponse:
+        """
+        Uploads a file to the server.
+
+        Args:
+            file_path (str): Path to the file to be uploaded.
+
+        Returns:
+            response (FileUploadResponse): The response containing the file URI.
+        """
+        with open(file_path, "rb") as f:
+            return await self._post(
+                "/v2/files/upload",
+                body=None,
+                response_model=FileUploadResponse,
+                files={
+                    "file": (basename(file_path), f, guess_mime(file_path)),
+                },
+                timeout=self.file_upload_timeout,
+                **kwargs,
+            )
+
+    async def get_raw_urls(self, uris: list[str], **kwargs) -> GetURLResponse:
+        """
+        Get download URLs for raw files.
+
+        Args:
+            uris (List[str]): List of file URIs to download.
+
+        Returns:
+            response (GetURLResponse): The response containing download information for the files.
+        """
+        return await self._post(
+            "/v2/files/url/raw",
+            body=GetURLRequest(uris=uris),
+            response_model=GetURLResponse,
+            **kwargs,
+        )
+
+    async def get_thumbnail_urls(self, uris: list[str], **kwargs) -> GetURLResponse:
+        """
+        Get download URLs for file thumbnails.
+
+        Args:
+            uris (List[str]): List of file URIs to get thumbnails for.
+
+        Returns:
+            response (GetURLResponse): The response containing download information for the thumbnails.
+        """
+        return await self._post(
+            "/v2/files/url/thumb",
+            body=GetURLRequest(uris=uris),
+            response_model=GetURLResponse,
+            **kwargs,
+        )
+
+
+class _GenTableClientAsync(_ClientAsync):
+    """Generative Table methods."""
+
+    # Table CRUD
+    async def create_action_table(
+        self,
+        request: ActionTableSchemaCreate,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Create an Action Table.
+
+        Args:
+            request (ActionTableSchemaCreate): The action table schema.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
+        return await self._post(
+            f"/{v}/gen_tables/action",
+            body=request,
+            response_model=TableMetaResponse,
+            **kwargs,
+        )
+
+    async def create_knowledge_table(
+        self,
+        request: KnowledgeTableSchemaCreate,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Create a Knowledge Table.
+
+        Args:
+            request (KnowledgeTableSchemaCreate): The knowledge table schema.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
+        return await self._post(
+            f"/{v}/gen_tables/knowledge",
+            body=request,
+            response_model=TableMetaResponse,
+            **kwargs,
+        )
+
+    async def create_chat_table(
+        self,
+        request: ChatTableSchemaCreate,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Create a Chat Table.
+
+        Args:
+            request (ChatTableSchemaCreate): The chat table schema.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
+        return await self._post(
+            f"/{v}/gen_tables/chat",
+            body=request,
+            response_model=TableMetaResponse,
+            **kwargs,
+        )
+
+    async def duplicate_table(
+        self,
+        table_type: str,
+        table_id_src: str,
+        table_id_dst: str | None = None,
+        *,
+        include_data: bool = True,
+        create_as_child: bool = False,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Duplicate a table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id_src (str): The source table ID.
+            table_id_dst (str | None, optional): The destination / new table ID.
+                Defaults to None (create a new table ID automatically).
+            include_data (bool, optional): Whether to include data in the duplicated table. Defaults to True.
+            create_as_child (bool, optional): Whether the new table is a child table.
+                If this is True, then `include_data` will be set to True. Defaults to False.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        if (deploy := kwargs.pop("deploy", None)) is not None:
+            warn(
+                'The "deploy" argument is deprecated, use "create_as_child" instead.',
+                FutureWarning,
+                stacklevel=2,
+            )
+            create_as_child = create_as_child or deploy
+        return await self._post(
+            f"/v1/gen_tables/{table_type}/duplicate/{quote(table_id_src)}"
+            if kwargs.pop("v1", False)
+            else f"/v2/gen_tables/{table_type}/duplicate",
+            body=None,
+            params=dict(
+                table_id_src=table_id_src,
+                table_id_dst=table_id_dst,
+                include_data=include_data,
+                create_as_child=create_as_child,
+            ),
+            response_model=TableMetaResponse,
+            **kwargs,
+        )
+
+    async def get_table(
+        self,
+        table_type: str,
+        table_id: str,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Get metadata for a specific Generative Table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id (str): The ID of the table.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return await self._get(
+            f"/v1/gen_tables/{table_type}/{quote(table_id)}"
+            if kwargs.pop("v1", False)
+            else f"/v2/gen_tables/{table_type}",
+            params=dict(table_id=table_id),
+            response_model=TableMetaResponse,
+            **kwargs,
+        )
+
+    async def list_tables(
+        self,
+        table_type: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        created_by: str | None = None,
+        parent_id: str | None = None,
+        search_query: str = "",
+        count_rows: bool = False,
+        **kwargs,
+    ) -> Page[TableMetaResponse]:
+        """
+        List Generative Tables of a specific type.
+
+        Args:
+            table_type (str): The type of the table.
+            offset (int, optional): Item offset. Defaults to 0.
+            limit (int, optional): Number of tables to return (min 1, max 100). Defaults to 100.
+            order_by (str, optional): Sort tables by this attribute. Defaults to "updated_at".
+            order_ascending (bool, optional): Whether to sort by ascending order. Defaults to True.
+            created_by (str | None, optional): Return tables created by this user.
+                Defaults to None (return all tables).
+            parent_id (str | None, optional): Parent ID of tables to return.
+                Additionally for Chat Table, you can list:
+                (1) all chat agents by passing in "_agent_"; or
+                (2) all chats by passing in "_chat_".
+                Defaults to None (return all tables).
+            search_query (str, optional): A string to search for within table IDs as a filter.
+                Defaults to "" (no filter).
+            count_rows (bool, optional): Whether to count the rows of the tables. Defaults to False.
+
+        Returns:
+            response (Page[TableMetaResponse]): The paginated table metadata response.
+        """
+        if (order_descending := kwargs.pop("order_descending", None)) is not None:
+            warn(
+                'The "order_descending" argument is deprecated, use "order_ascending" instead.',
+                FutureWarning,
+                stacklevel=2,
+            )
+            order_ascending = not order_descending
+        return await self._get(
+            f"/v1/gen_tables/{table_type}"
+            if kwargs.pop("v1", False)
+            else f"/v2/gen_tables/{table_type}/list",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                created_by=created_by,
+                parent_id=parent_id,
+                search_query=search_query,
+                count_rows=count_rows,
+            ),
+            response_model=Page[TableMetaResponse],
+            **kwargs,
+        )
+
+    async def rename_table(
+        self,
+        table_type: str,
+        table_id_src: str,
+        table_id_dst: str,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Rename a table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id_src (str): The source table ID.
+            table_id_dst (str): The destination / new table ID.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return await self._post(
+            f"/v1/gen_tables/{table_type}/rename/{quote(table_id_src)}/{quote(table_id_dst)}"
+            if kwargs.pop("v1", False)
+            else f"/v2/gen_tables/{table_type}/rename",
+            params=dict(
+                table_id_src=table_id_src,
+                table_id_dst=table_id_dst,
+            ),
+            body=None,
+            response_model=TableMetaResponse,
+            **kwargs,
+        )
+
+    async def delete_table(
+        self,
+        table_type: str,
+        table_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Delete a specific table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id (str): The ID of the table.
+            missing_ok (bool, optional): Ignore resource not found error.
+
+        Returns:
+            response (OkResponse): The response indicating success.
+        """
+        response = await self._delete(
+            f"/v1/gen_tables/{table_type}/{quote(table_id)}"
+            if kwargs.pop("v1", False)
+            else f"/v2/gen_tables/{table_type}",
+            params=dict(table_id=table_id),
+            response_model=None,
+            ignore_code=404 if missing_ok else None,
+            **kwargs,
+        )
+        if response.status_code == 404 and missing_ok:
+            return OkResponse()
+        else:
+            return OkResponse.model_validate_json(response.text)
+
+    # Column CRUD
+    async def add_action_columns(
+        self,
+        request: AddActionColumnSchema,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Add columns to an Action Table.
+
+        Args:
+            request (AddActionColumnSchema): The action column schema.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
+        return await self._post(
+            f"/{v}/gen_tables/action/columns/add",
+            body=request,
+            response_model=TableMetaResponse,
+            **kwargs,
+        )
+
+    async def add_knowledge_columns(
+        self,
+        request: AddKnowledgeColumnSchema,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Add columns to a Knowledge Table.
+
+        Args:
+            request (AddKnowledgeColumnSchema): The knowledge column schema.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
+        return await self._post(
+            f"/{v}/gen_tables/knowledge/columns/add",
+            body=request,
+            response_model=TableMetaResponse,
+            **kwargs,
+        )
+
+    async def add_chat_columns(
+        self,
+        request: AddChatColumnSchema,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Add columns to a Chat Table.
+
+        Args:
+            request (AddChatColumnSchema): The chat column schema.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
+        return await self._post(
+            f"/{v}/gen_tables/chat/columns/add",
+            body=request,
+            response_model=TableMetaResponse,
+            **kwargs,
+        )
+
+    async def rename_columns(
+        self,
+        table_type: str,
+        request: ColumnRenameRequest,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Rename columns in a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (ColumnRenameRequest): The column rename request.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
+        return await self._post(
+            f"/{v}/gen_tables/{table_type}/columns/rename",
+            body=request,
+            response_model=TableMetaResponse,
+            **kwargs,
+        )
+
+    async def update_gen_config(
+        self,
+        table_type: str,
+        request: GenConfigUpdateRequest,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Update the generation configuration for a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (GenConfigUpdateRequest): The generation configuration update request.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        if kwargs.pop("v1", False):
+            return await self._post(
+                f"/v1/gen_tables/{table_type}/gen_config/update",
+                body=request,
+                response_model=TableMetaResponse,
+                process_body_kwargs={"exclude_unset": True},
+                **kwargs,
+            )
+        return await self._patch(
+            f"/v2/gen_tables/{table_type}/gen_config",
+            body=request,
+            response_model=TableMetaResponse,
+            **kwargs,
+        )
+
+    async def reorder_columns(
+        self,
+        table_type: str,
+        request: ColumnReorderRequest,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Reorder columns in a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (ColumnReorderRequest): The column reorder request.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
+        return await self._post(
+            f"/{v}/gen_tables/{table_type}/columns/reorder",
+            body=request,
+            response_model=TableMetaResponse,
+            **kwargs,
+        )
+
+    async def drop_columns(
+        self,
+        table_type: str,
+        request: ColumnDropRequest,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Drop columns from a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (ColumnDropRequest): The column drop request.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
+        return await self._post(
+            f"/{v}/gen_tables/{table_type}/columns/drop",
+            body=request,
+            response_model=TableMetaResponse,
+            **kwargs,
+        )
+
+    # Row CRUD
     async def add_table_rows(
         self,
-        table_type: str | TableType,
-        request: RowAddRequest,
+        table_type: str,
+        request: MultiRowAddRequest,
+        **kwargs,
     ) -> (
-        GenTableRowsChatCompletionChunks
-        | AsyncGenerator[GenTableStreamReferences | GenTableStreamChatCompletionChunk, None]
+        MultiRowCompletionResponse
+        | AsyncGenerator[CellReferencesResponse | CellCompletionResponse, None]
     ):
         """
         Add rows to a table.
 
         Args:
-            table_type (str | TableType): The type of the table.
-            request (RowAddRequest): The row add request.
+            table_type (str): The type of the table.
+            request (MultiRowAddRequest): The row add request.
 
         Returns:
-            response (GenTableRowsChatCompletionChunks | AsyncGenerator): The row completion.
-                In streaming mode, it is an async generator that yields a `GenTableStreamReferences` object
-                followed by zero or more `GenTableStreamChatCompletionChunk` objects.
-                In non-streaming mode, it is a `GenTableRowsChatCompletionChunks` object.
+            response (MultiRowCompletionResponse | AsyncGenerator): The row completion.
+                In streaming mode, it is an async generator that yields a `CellReferencesResponse` object
+                followed by zero or more `CellCompletionResponse` objects.
+                In non-streaming mode, it is a `MultiRowCompletionResponse` object.
         """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
         if request.stream:
-
-            async def gen():
-                async for chunk in self._stream(
-                    self.api_base,
-                    f"/v1/gen_tables/{table_type}/rows/add",
-                    body=request,
-                ):
-                    chunk = json_loads(chunk[5:])
-                    if chunk["object"] == "gen_table.references":
-                        yield GenTableStreamReferences.model_validate(chunk)
-                    elif chunk["object"] == "gen_table.completion.chunk":
-                        yield GenTableStreamChatCompletionChunk.model_validate(chunk)
-
-            return gen()
+            agen = self._stream(
+                f"/{v}/gen_tables/{table_type}/rows/add",
+                body=request,
+                **kwargs,
+            )
+            return await self._return_async_iterator(
+                agen, [CellCompletionResponse, CellReferencesResponse]
+            )
         else:
             return await self._post(
-                self.api_base,
-                f"/v1/gen_tables/{table_type}/rows/add",
+                f"/{v}/gen_tables/{table_type}/rows/add",
                 body=request,
-                response_model=GenTableRowsChatCompletionChunks,
+                response_model=MultiRowCompletionResponse,
+                **kwargs,
             )
 
-    async def regen_table_rows(
+    async def list_table_rows(
         self,
-        table_type: str | TableType,
-        request: RowRegenRequest,
-    ) -> (
-        GenTableRowsChatCompletionChunks
-        | AsyncGenerator[GenTableStreamReferences | GenTableStreamChatCompletionChunk, None]
-    ):
+        table_type: str,
+        table_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "ID",
+        order_ascending: bool = True,
+        columns: list[str] | None = None,
+        where: str = "",
+        search_query: str = "",
+        search_columns: list[str] | None = None,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
+        **kwargs,
+    ) -> Page[dict[str, Any]]:
         """
-        Regenerate rows in a table.
+        List rows in a table.
 
         Args:
-            table_type (str | TableType): The type of the table.
-            request (RowRegenRequest): The row regenerate request.
-
-        Returns:
-            response (GenTableRowsChatCompletionChunks | AsyncGenerator): The row completion.
-                In streaming mode, it is an async generator that yields a `GenTableStreamReferences` object
-                followed by zero or more `GenTableStreamChatCompletionChunk` objects.
-                In non-streaming mode, it is a `GenTableRowsChatCompletionChunks` object.
+            table_type (str): The type of the table.
+            table_id (str): The ID of the table.
+            offset (int, optional): Item offset. Defaults to 0.
+            limit (int, optional): Number of rows to return (min 1, max 100). Defaults to 100.
+            order_by (str, optional): Column name to order by. Defaults to "ID".
+            order_ascending (bool, optional): Whether to sort by ascending order. Defaults to True.
+            columns (list[str] | None, optional): List of column names to include in the response.
+                Defaults to None (all columns).
+            where (str, optional): SQL where clause. Can be nested ie `x = '1' AND ("y (1)" = 2 OR z = '3')`.
+                It will be combined other filters using `AND`. Defaults to "" (no filter).
+            search_query (str, optional): A string to search for within the rows as a filter.
+                Defaults to "" (no filter).
+            search_columns (list[str] | None, optional): A list of column names to search for `search_query`.
+                Defaults to None (search all columns).
+            float_decimals (int, optional): Number of decimals for float values.
+                Defaults to 0 (no rounding).
+            vec_decimals (int, optional): Number of decimals for vectors.
+                If its negative, exclude vector columns. Defaults to 0 (no rounding).
         """
-        if request.stream:
-
-            async def gen():
-                async for chunk in self._stream(
-                    self.api_base,
-                    f"/v1/gen_tables/{table_type}/rows/regen",
-                    body=request,
-                ):
-                    chunk = json_loads(chunk[5:])
-                    if chunk["object"] == "gen_table.references":
-                        yield GenTableStreamReferences.model_validate(chunk)
-                    elif chunk["object"] == "gen_table.completion.chunk":
-                        yield GenTableStreamChatCompletionChunk.model_validate(chunk)
-
-            return gen()
-        else:
-            return await self._post(
-                self.api_base,
-                f"/v1/gen_tables/{table_type}/rows/regen",
-                body=request,
-                response_model=GenTableRowsChatCompletionChunks,
+        if (order_descending := kwargs.pop("order_descending", None)) is not None:
+            warn(
+                'The "order_descending" argument is deprecated, use "order_ascending" instead.',
+                FutureWarning,
+                stacklevel=2,
             )
-
-    async def update_table_row(
-        self,
-        table_type: str | TableType,
-        request: RowUpdateRequest,
-    ) -> OkResponse:
-        """
-        Update a specific row in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowUpdateRequest): The row update request.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return await self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/rows/update",
-            body=request,
-            response_model=OkResponse,
+            order_ascending = not order_descending
+        if columns is not None and not isinstance(columns, list):
+            raise TypeError("`columns` must be None or a list.")
+        if search_columns is not None and not isinstance(search_columns, list):
+            raise TypeError("`search_columns` must be None or a list.")
+        return await self._get(
+            f"/v1/gen_tables/{table_type}/{quote(table_id)}/rows"
+            if kwargs.pop("v1", False)
+            else f"/v2/gen_tables/{table_type}/rows/list",
+            params=dict(
+                table_id=table_id,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                columns=columns,
+                where=where,
+                search_query=search_query,
+                search_columns=search_columns,
+                float_decimals=float_decimals,
+                vec_decimals=vec_decimals,
+            ),
+            response_model=Page[dict[str, Any]],
+            **kwargs,
         )
 
-    async def delete_table_rows(
+    async def get_table_row(
         self,
-        table_type: str | TableType,
-        request: RowDeleteRequest,
-    ) -> OkResponse:
-        """
-        Delete rows from a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowDeleteRequest): The row delete request.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return await self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/rows/delete",
-            body=request,
-            response_model=OkResponse,
-        )
-
-    async def delete_table_row(
-        self,
-        table_type: str | TableType,
+        table_type: str,
         table_id: str,
         row_id: str,
-    ) -> OkResponse:
+        *,
+        columns: list[str] | None = None,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
+        **kwargs,
+    ) -> dict[str, Any]:
         """
-        Delete a specific row from a table.
+        Get a specific row in a table.
 
         Args:
-            table_type (str | TableType): The type of the table.
+            table_type (str): The type of the table.
             table_id (str): The ID of the table.
             row_id (str): The ID of the row.
+            columns (list[str] | None, optional): List of column names to include in the response.
+                Defaults to None (all columns).
+            float_decimals (int, optional): Number of decimals for float values.
+                Defaults to 0 (no rounding).
+            vec_decimals (int, optional): Number of decimals for vectors.
+                If its negative, exclude vector columns. Defaults to 0 (no rounding).
 
         Returns:
-            response (OkResponse): The response indicating success.
+            response (dict[str, Any]): The row data.
         """
-        return await self._delete(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}/rows/{quote(row_id)}",
-            params=None,
-            response_model=OkResponse,
+        if columns is not None and not isinstance(columns, list):
+            raise TypeError("`columns` must be None or a list.")
+        response = await self._get(
+            f"/v1/gen_tables/{table_type}/{quote(table_id)}/rows/{quote(row_id)}"
+            if kwargs.pop("v1", False)
+            else f"/v2/gen_tables/{table_type}/rows",
+            params=dict(
+                table_id=table_id,
+                row_id=row_id,
+                columns=columns,
+                float_decimals=float_decimals,
+                vec_decimals=vec_decimals,
+            ),
+            response_model=None,
+            **kwargs,
         )
+        return json_loads(response.text)
 
+    @deprecated(
+        "This method is deprecated, use `get_conversation_threads` instead.",
+        category=FutureWarning,
+        stacklevel=1,
+    )
     async def get_conversation_thread(
         self,
-        table_type: str | TableType,
+        table_type: str,
         table_id: str,
         column_id: str,
         *,
         row_id: str = "",
         include: bool = True,
-    ) -> ChatThread:
+        **kwargs,
+    ) -> ChatThreadResponse:
         """
-        Get the conversation thread for a chat table.
+        Get the conversation thread for a column in a table.
 
         Args:
-            table_type (str | TableType): The type of the table.
+            table_type (str): The type of the table.
             table_id (str): ID / name of the chat table.
             column_id (str): ID / name of the column to fetch.
             row_id (str, optional): ID / name of the last row in the thread.
@@ -4681,48 +2917,238 @@ class _GenTableClientAsync(_ClientAsync):
                 Defaults to True.
 
         Returns:
-            response (ChatThread): The conversation thread.
+            response (ChatThreadResponse): The conversation thread.
         """
         return await self._get(
-            self.api_base,
             f"/v1/gen_tables/{table_type}/{quote(table_id)}/thread",
-            params=dict(column_id=column_id, row_id=row_id, include=include),
-            response_model=ChatThread,
+            params=dict(
+                table_id=table_id,
+                column_id=column_id,
+                row_id=row_id,
+                include=include,
+            ),
+            response_model=ChatThreadResponse,
+            **kwargs,
+        )
+
+    async def get_conversation_threads(
+        self,
+        table_type: str,
+        table_id: str,
+        column_ids: list[str] | None = None,
+        *,
+        row_id: str = "",
+        include_row: bool = True,
+        **kwargs,
+    ) -> ChatThreadsResponse:
+        """
+        Get all multi-turn / conversation threads from a table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id (str): ID / name of the chat table.
+            column_ids (list[str] | None): Columns to fetch as conversation threads.
+            row_id (str, optional): ID / name of the last row in the thread.
+                Defaults to "" (export all rows).
+            include_row (bool, optional): Whether to include the row specified by `row_id`.
+                Defaults to True.
+
+        Returns:
+            response (ChatThreadsResponse): The conversation threads.
+        """
+        return await self._get(
+            f"/v2/gen_tables/{table_type}/threads",
+            params=dict(
+                table_id=table_id,
+                column_ids=column_ids,
+                row_id=row_id,
+                include_row=include_row,
+            ),
+            response_model=ChatThreadsResponse,
+            **kwargs,
         )
 
     async def hybrid_search(
         self,
-        table_type: str | TableType,
+        table_type: str,
         request: SearchRequest,
+        **kwargs,
     ) -> list[dict[str, Any]]:
         """
         Perform a hybrid search on a table.
 
         Args:
-            table_type (str | TableType): The type of the table.
+            table_type (str): The type of the table.
             request (SearchRequest): The search request.
 
         Returns:
             response (list[dict[str, Any]]): The search results.
         """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
         response = await self._post(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/hybrid_search",
+            f"/{v}/gen_tables/{table_type}/hybrid_search",
             body=request,
             response_model=None,
+            **kwargs,
         )
         return json_loads(response.text)
 
-    async def embed_file_options(self) -> httpx.Response:
+    async def regen_table_rows(
+        self,
+        table_type: str,
+        request: MultiRowRegenRequest,
+        **kwargs,
+    ) -> (
+        MultiRowCompletionResponse
+        | AsyncGenerator[CellReferencesResponse | CellCompletionResponse, None]
+    ):
         """
-        Get options for embedding a file to a Knowledge Table.
+        Regenerate rows in a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (MultiRowRegenRequest): The row regenerate request.
+
+        Returns:
+            response (MultiRowCompletionResponse | AsyncGenerator): The row completion.
+                In streaming mode, it is an async generator that yields a `CellReferencesResponse` object
+                followed by zero or more `CellCompletionResponse` objects.
+                In non-streaming mode, it is a `MultiRowCompletionResponse` object.
+        """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
+        if request.stream:
+            agen = self._stream(
+                f"/{v}/gen_tables/{table_type}/rows/regen",
+                body=request,
+                **kwargs,
+            )
+            return await self._return_async_iterator(
+                agen, [CellCompletionResponse, CellReferencesResponse]
+            )
+        else:
+            return await self._post(
+                f"/{v}/gen_tables/{table_type}/rows/regen",
+                body=request,
+                response_model=MultiRowCompletionResponse,
+                **kwargs,
+            )
+
+    async def update_table_rows(
+        self,
+        table_type: str,
+        request: MultiRowUpdateRequest,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Update rows in a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (MultiRowUpdateRequest): The row update request.
+
+        Returns:
+            response (OkResponse): The response indicating success.
+        """
+        return await self._patch(
+            f"/v2/gen_tables/{table_type}/rows",
+            body=request,
+            response_model=OkResponse,
+            **kwargs,
+        )
+
+    @deprecated(
+        "This method is deprecated, use `update_table_rows` instead.",
+        category=FutureWarning,
+        stacklevel=1,
+    )
+    async def update_table_row(
+        self,
+        table_type: str,
+        request: RowUpdateRequest,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Update a specific row in a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (RowUpdateRequest): The row update request.
+
+        Returns:
+            response (OkResponse): The response indicating success.
+        """
+        return await self._post(
+            f"/v1/gen_tables/{table_type}/rows/update",
+            body=request,
+            response_model=OkResponse,
+            **kwargs,
+        )
+
+    async def delete_table_rows(
+        self,
+        table_type: str,
+        request: MultiRowDeleteRequest,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Delete rows from a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (MultiRowDeleteRequest): The row delete request.
+
+        Returns:
+            response (OkResponse): The response indicating success.
+        """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
+        return await self._post(
+            f"/{v}/gen_tables/{table_type}/rows/delete",
+            body=request,
+            response_model=OkResponse,
+            **kwargs,
+        )
+
+    @deprecated(
+        "This method is deprecated, use `delete_table_rows` instead.",
+        category=FutureWarning,
+        stacklevel=1,
+    )
+    async def delete_table_row(
+        self,
+        table_type: str,
+        table_id: str,
+        row_id: str,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Delete a specific row from a table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id (str): The ID of the table.
+            row_id (str): The ID of the row.
+
+        Returns:
+            response (OkResponse): The response indicating success.
+        """
+        return await self._delete(
+            f"/v1/gen_tables/{table_type}/{quote(table_id)}/rows/{quote(row_id)}",
+            params=None,
+            response_model=OkResponse,
+            **kwargs,
+        )
+
+    async def embed_file_options(self, **kwargs) -> httpx.Response:
+        """
+        Get CORS preflight options for file embedding endpoint.
 
         Returns:
             response (httpx.Response): The response containing options information.
         """
+        v = "v1" if kwargs.pop("v1", False) else "v2"
         response = await self._options(
-            self.api_base,
-            "/v1/gen_tables/knowledge/embed_file",
+            f"/{v}/gen_tables/knowledge/embed_file",
+            **kwargs,
         )
         return response
 
@@ -4733,6 +3159,7 @@ class _GenTableClientAsync(_ClientAsync):
         *,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
+        **kwargs,
     ) -> OkResponse:
         """
         Embed a file into a Knowledge Table.
@@ -4748,23 +3175,15 @@ class _GenTableClientAsync(_ClientAsync):
         Returns:
             response (OkResponse): The response indicating success.
         """
-        # Guess the MIME type of the file based on its extension
-        mime_type, _ = guess_type(file_path)
-        if mime_type is None:
-            mime_type = (
-                "application/jsonl" if file_path.endswith(".jsonl") else "application/octet-stream"
-            )  # Default MIME type
-        # Extract the filename from the file path
-        filename = split(file_path)[-1]
+        v = "v1" if kwargs.pop("v1", False) else "v2"
         # Open the file in binary mode
         with open(file_path, "rb") as f:
             response = await self._post(
-                self.api_base,
-                "/v1/gen_tables/knowledge/embed_file",
+                f"/{v}/gen_tables/knowledge/embed_file",
                 body=None,
                 response_model=OkResponse,
                 files={
-                    "file": (filename, f, mime_type),
+                    "file": (basename(file_path), f, guess_mime(file_path)),
                 },
                 data={
                     "table_id": table_id,
@@ -4773,31 +3192,29 @@ class _GenTableClientAsync(_ClientAsync):
                     # "overwrite": request.overwrite,
                 },
                 timeout=self.file_upload_timeout,
+                **kwargs,
             )
         return response
 
+    # Import export
     async def import_table_data(
         self,
-        table_type: str | TableType,
+        table_type: str,
         request: TableDataImportRequest,
+        **kwargs,
     ) -> GenTableChatResponseType:
         """
         Imports CSV or TSV data into a table.
 
         Args:
             file_path (str): CSV or TSV file path.
-            table_type (str | TableType): Table type.
+            table_type (str): Table type.
             request (TableDataImportRequest): Data import request.
 
         Returns:
             response (OkResponse): The response indicating success.
         """
-        # Guess the MIME type of the file based on its extension
-        mime_type, _ = guess_type(request.file_path)
-        if mime_type is None:
-            mime_type = "application/octet-stream"  # Default MIME type
-        # Extract the filename from the file path
-        filename = split(request.file_path)[-1]
+        v = "v1" if kwargs.pop("v1", False) else "v2"
         data = {
             "table_id": request.table_id,
             "stream": request.stream,
@@ -4805,58 +3222,50 @@ class _GenTableClientAsync(_ClientAsync):
             # "columns": request.columns,
             "delimiter": request.delimiter,
         }
+        file_path = request.file_path
         if request.stream:
-
-            async def gen():
-                # Open the file in binary mode
-                with open(request.file_path, "rb") as f:
-                    async for chunk in self._stream(
-                        self.api_base,
-                        f"/v1/gen_tables/{table_type}/import_data",
-                        body=None,
-                        files={
-                            "file": (filename, f, mime_type),
-                        },
-                        data=data,
-                        timeout=self.file_upload_timeout,
-                    ):
-                        chunk = json_loads(chunk[5:])
-                        if chunk["object"] == "gen_table.references":
-                            yield GenTableStreamReferences.model_validate(chunk)
-                        elif chunk["object"] == "gen_table.completion.chunk":
-                            yield GenTableStreamChatCompletionChunk.model_validate(chunk)
-                        else:
-                            raise RuntimeError(f"Unexpected SSE chunk: {chunk}")
-
-            return gen()
+            # Open the file in binary mode
+            with open(file_path, "rb") as f:
+                agen = self._stream(
+                    f"/{v}/gen_tables/{table_type}/import_data",
+                    body=None,
+                    files={"file": (basename(file_path), f, guess_mime(file_path))},
+                    data=data,
+                    timeout=self.file_upload_timeout,
+                    **kwargs,
+                )
+                return await self._return_async_iterator(
+                    agen, [CellCompletionResponse, CellReferencesResponse]
+                )
         else:
             # Open the file in binary mode
             with open(request.file_path, "rb") as f:
                 return await self._post(
-                    self.api_base,
-                    f"/v1/gen_tables/{table_type}/import_data",
+                    f"/{v}/gen_tables/{table_type}/import_data",
                     body=None,
-                    response_model=GenTableRowsChatCompletionChunks,
+                    response_model=MultiRowCompletionResponse,
                     files={
-                        "file": (filename, f, mime_type),
+                        "file": (basename(file_path), f, guess_mime(file_path)),
                     },
                     data=data,
                     timeout=self.file_upload_timeout,
+                    **kwargs,
                 )
 
     async def export_table_data(
         self,
-        table_type: str | TableType,
+        table_type: str,
         table_id: str,
         *,
         columns: list[str] | None = None,
         delimiter: Literal[",", "\t"] = ",",
+        **kwargs,
     ) -> bytes:
         """
         Exports the row data of a table as a CSV or TSV file.
 
         Args:
-            table_type (str | TableType): Table type.
+            table_type (str): Table type.
             table_id (str): ID or name of the table to be exported.
             delimiter (str, optional): The delimiter of the file: can be "," or "\\t". Defaults to ",".
             columns (list[str], optional): A list of columns to be exported. Defaults to None (export all columns).
@@ -4864,82 +3273,2984 @@ class _GenTableClientAsync(_ClientAsync):
         Returns:
             response (list[dict[str, Any]]): The search results.
         """
+        if columns is not None and not isinstance(columns, list):
+            raise TypeError("`columns` must be None or a list.")
         response = await self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}/export_data",
-            params=dict(delimiter=delimiter, columns=columns),
+            f"/v1/gen_tables/{table_type}/{quote(table_id)}/export_data"
+            if kwargs.pop("v1", False)
+            else f"/v2/gen_tables/{table_type}/export_data",
+            params=dict(table_id=table_id, delimiter=delimiter, columns=columns),
             response_model=None,
+            **kwargs,
         )
         return response.content
 
     async def import_table(
         self,
-        table_type: str | TableType,
+        table_type: str,
         request: TableImportRequest,
-    ) -> TableMetaResponse:
+        **kwargs,
+    ) -> TableMetaResponse | OkResponse:
         """
         Imports a table (data and schema) from a parquet file.
 
         Args:
             file_path (str): The parquet file path.
-            table_type (str | TableType): Table type.
+            table_type (str): Table type.
             request (TableImportRequest): Table import request.
 
         Returns:
-            response (TableMetaResponse): The table metadata response.
+            response (TableMetaResponse | OkResponse): The table metadata response if blocking is True,
+                otherwise OkResponse.
         """
+        migrate = kwargs.pop("migrate", False)  # Temporary, may be removed anytime
+        timeout = None if migrate else (kwargs.pop("timeout", None) or self.file_upload_timeout)
+        v = "v1" if kwargs.pop("v1", False) else "v2"
         mime_type = "application/octet-stream"
         filename = split(request.file_path)[-1]
-        data = {"table_id_dst": request.table_id_dst}
         # Open the file in binary mode
         with open(request.file_path, "rb") as f:
             return await self._post(
-                self.api_base,
-                f"/v1/gen_tables/{table_type}/import",
+                f"/{v}/gen_tables/{table_type}/import",
                 body=None,
-                response_model=TableMetaResponse,
+                response_model=TableMetaResponse if request.blocking else OkResponse,
                 files={
                     "file": (filename, f, mime_type),
                 },
-                data=data,
-                timeout=self.file_upload_timeout,
+                data=dict(**self._process_body(request), migrate=migrate),
+                timeout=timeout,
+                **kwargs,
             )
 
     async def export_table(
         self,
-        table_type: str | TableType,
+        table_type: str,
         table_id: str,
+        **kwargs,
     ) -> bytes:
         """
         Exports a table (data and schema) as a parquet file.
 
         Args:
-            table_type (str | TableType): Table type.
+            table_type (str): Table type.
             table_id (str): ID or name of the table to be exported.
 
         Returns:
             response (list[dict[str, Any]]): The search results.
         """
         response = await self._get(
-            self.api_base,
-            f"/v1/gen_tables/{table_type}/{quote(table_id)}/export",
-            params=None,
+            f"/v1/gen_tables/{table_type}/{quote(table_id)}/export"
+            if kwargs.pop("v1", False)
+            else f"/v2/gen_tables/{table_type}/export",
+            params=dict(table_id=table_id),
             response_model=None,
+            **kwargs,
         )
         return response.content
+
+
+class _MeterClientAsync(_ClientAsync):
+    """Meter methods."""
+
+    async def get_usage_metrics(
+        self,
+        type: Literal["llm", "embedding", "reranking"],
+        from_: datetime,
+        window_size: str,
+        org_ids: list[str] | None = None,
+        proj_ids: list[str] | None = None,
+        to: datetime | None = None,
+        group_by: list[str] | None = None,
+        data_source: Literal["clickhouse", "victoriametrics"] = "clickhouse",
+    ) -> UsageResponse:
+        params = {
+            "type": type,
+            "from": from_.isoformat(),  # Use string key to avoid keyword conflict
+            "orgIds": org_ids,
+            "windowSize": window_size,
+            "projIds": proj_ids,
+            "to": to.isoformat() if to else None,
+            "groupBy": group_by,
+            "dataSource": data_source,
+        }
+        return await self._get(
+            "/v2/meters/usages",
+            params=params,
+            response_model=UsageResponse,
+        )
+
+    async def get_billing_metrics(
+        self,
+        from_: datetime,
+        window_size: str,
+        org_ids: list[str] | None = None,
+        proj_ids: list[str] | None = None,
+        to: datetime | None = None,
+        group_by: list[str] | None = None,
+        data_source: Literal["clickhouse", "victoriametrics"] = "clickhouse",
+    ) -> UsageResponse:
+        params = {
+            "from": from_.isoformat(),  # Use string key to avoid keyword conflict
+            "orgIds": org_ids,
+            "windowSize": window_size,
+            "projIds": proj_ids,
+            "to": to.isoformat() if to else None,
+            "groupBy": group_by,
+            "dataSource": data_source,
+        }
+        return await self._get(
+            "/v2/meters/billings",
+            params=params,
+            response_model=UsageResponse,
+        )
+
+    async def get_bandwidth_metrics(
+        self,
+        from_: datetime,
+        window_size: str,
+        org_ids: list[str] | None = None,
+        proj_ids: list[str] | None = None,
+        to: datetime | None = None,
+        group_by: list[str] | None = None,
+        data_source: Literal["clickhouse", "victoriametrics"] = "clickhouse",
+    ) -> UsageResponse:
+        params = {
+            "from": from_.isoformat(),  # Use string key to avoid keyword conflict
+            "orgIds": org_ids,
+            "windowSize": window_size,
+            "projIds": proj_ids,
+            "to": to.isoformat() if to else None,
+            "groupBy": group_by,
+            "dataSource": data_source,
+        }
+        return await self._get(
+            "/v2/meters/bandwidths",
+            params=params,
+            response_model=UsageResponse,
+        )
+
+    async def get_storage_metrics(
+        self,
+        from_: datetime,
+        window_size: str,
+        org_ids: list[str] | None = None,
+        proj_ids: list[str] | None = None,
+        to: datetime | None = None,
+        group_by: list[str] | None = None,
+    ) -> UsageResponse:
+        params = {
+            "from": from_.isoformat(),  # Use string key to avoid keyword conflict
+            "orgIds": org_ids,
+            "windowSize": window_size,
+            "projIds": proj_ids,
+            "to": to.isoformat() if to else None,
+            "groupBy": group_by,
+        }
+        return await self._get(
+            "/v2/meters/storages",
+            params=params,
+            response_model=UsageResponse,
+        )
+
+
+class _TaskClientAsync(_ClientAsync):
+    """Task methods."""
+
+    async def get_progress(
+        self,
+        key: str,
+        **kwargs,
+    ) -> dict[str, Any]:
+        response = await self._get(
+            "/v2/progress",
+            params=dict(key=key),
+            response_model=None,
+            **kwargs,
+        )
+        return json_loads(response.text)
+
+    async def poll_progress(
+        self,
+        key: str,
+        *,
+        initial_wait: float = 0.5,
+        max_wait: float = 30 * 60.0,
+        verbose: bool = False,
+        **kwargs,
+    ) -> dict[str, Any] | None:
+        from asyncio import sleep
+
+        i = 1
+        t0 = perf_counter()
+        while (perf_counter() - t0) < max_wait:
+            await sleep(min(initial_wait * i, 5.0))
+            prog = await self.get_progress(key, **kwargs)
+            state = prog.get("state", None)
+            error = prog.get("error", None)
+            if verbose:
+                logger.info(
+                    f"{self.__class__.__name__}: Progress: key={key} state={state}"
+                    + (f" error={error}" if error else "")
+                )
+            if state == ProgressState.COMPLETED:
+                return prog
+            elif state == ProgressState.FAILED:
+                raise JamaiException(prog.get("error", "Unknown error"))
+            i += 1
+        return None
+
+
+class _ConversationClientAsync(_ClientAsync):
+    """Conversation methods."""
+
+    async def create_conversation(
+        self,
+        request: ConversationCreateRequest,
+        **kwargs,
+    ) -> AsyncGenerator[
+        ConversationMetaResponse | CellReferencesResponse | CellCompletionResponse, None
+    ]:
+        """
+        Creates a new conversation and sends the first message.
+        Yields metadata first, then the message stream.
+        """
+        agen = self._stream("/v2/conversations", body=request, **kwargs)
+        current_event = None
+        # Get the first chunk outside of the loop so that errors can be raised immediately
+        try:
+            chunk = await anext(agen)
+        except StopAsyncIteration:
+            # Return empty async generator
+            return self._empty_async_generator()
+
+        def _process(
+            _chunk: str,
+        ) -> ConversationMetaResponse | CellCompletionResponse | CellReferencesResponse | None:
+            nonlocal current_event
+            if _chunk.startswith("event:"):
+                current_event = _chunk[6:].strip()
+                return None
+
+            if _chunk.startswith("data:"):
+                data_obj = json_loads(_chunk[5:])
+
+                if current_event == "metadata":
+                    # This is the special metadata event
+                    current_event = None  # Reset for next events
+                    return ConversationMetaResponse.model_validate(data_obj)
+                else:
+                    # This is a standard gen_table chunk
+                    if data_obj.get("object") == "gen_table.completion.chunk":
+                        return CellCompletionResponse.model_validate(data_obj)
+                    elif data_obj.get("object") == "gen_table.references":
+                        return CellReferencesResponse.model_validate(data_obj)
+                    else:
+                        pass
+
+        async def gen():
+            nonlocal chunk
+            res = _process(chunk)
+            if res is not None:
+                yield res
+            async for chunk in agen:
+                res = _process(chunk)
+                if res is not None:
+                    yield res
+
+        return gen()
+
+    async def list_conversations(
+        self,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        search_query: str = "",
+        **kwargs,
+    ) -> Page[ConversationMetaResponse]:
+        """Lists all conversations for the authenticated user."""
+        return await self._get(
+            "/v2/conversations/list",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                search_query=search_query,
+            ),
+            response_model=Page[ConversationMetaResponse],
+            **kwargs,
+        )
+
+    async def list_agents(
+        self,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        search_query: str = "",
+        **kwargs,
+    ) -> Page[ConversationMetaResponse]:
+        """Lists all available agents for the authenticated user."""
+        return await self._get(
+            "/v2/conversations/agents/list",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                search_query=search_query,
+            ),
+            response_model=Page[ConversationMetaResponse],
+            **kwargs,
+        )
+
+    async def get_conversation(self, conversation_id: str, **kwargs) -> ConversationMetaResponse:
+        """Fetches metadata for a single conversation."""
+        return await self._get(
+            "/v2/conversations",
+            params={"conversation_id": conversation_id},
+            response_model=ConversationMetaResponse,
+            **kwargs,
+        )
+
+    async def get_agent(self, agent_id: str, **kwargs) -> AgentMetaResponse:
+        """Fetches metadata for a single agent."""
+        return await self._get(
+            "/v2/conversations/agents",
+            params={"agent_id": agent_id},
+            response_model=AgentMetaResponse,
+            **kwargs,
+        )
+
+    async def generate_title(
+        self,
+        conversation_id: str,
+        **kwargs,
+    ) -> ConversationMetaResponse:
+        """Generates a title for a conversation."""
+        return await self._post(
+            "/v2/conversations/title",
+            params=dict(conversation_id=conversation_id),
+            body=None,
+            response_model=ConversationMetaResponse,
+            **kwargs,
+        )
+
+    async def rename_conversation_title(
+        self,
+        conversation_id: str,
+        title: str,
+        **kwargs,
+    ) -> ConversationMetaResponse:
+        """Renames conversation title."""
+        return await self._patch(
+            "/v2/conversations/title",
+            params=dict(conversation_id=conversation_id, title=title),
+            body=None,
+            response_model=ConversationMetaResponse,
+            **kwargs,
+        )
+
+    async def delete_conversation(
+        self,
+        conversation_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        """Deletes a conversation permanently."""
+        response = await self._delete(
+            "/v2/conversations",
+            params={"conversation_id": conversation_id},
+            response_model=None,
+            ignore_code=404 if missing_ok else None,
+            **kwargs,
+        )
+        if response.status_code == 404 and missing_ok:
+            return OkResponse()
+        else:
+            return OkResponse.model_validate_json(response.text)
+
+    async def send_message(
+        self,
+        request: MessageAddRequest,
+        **kwargs,
+    ) -> AsyncGenerator[CellReferencesResponse | CellCompletionResponse, None]:
+        """
+        Sends a message to a conversation and streams back the response.
+        Note: This endpoint currently only supports streaming responses from the server.
+        """
+        agen = self._stream(
+            "/v2/conversations/messages",
+            body=request,
+            **kwargs,
+        )
+        return await self._return_async_iterator(
+            agen, [CellCompletionResponse, CellReferencesResponse]
+        )
+
+    async def list_messages(
+        self,
+        conversation_id: str,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "ID",
+        order_ascending: bool = True,
+        columns: list[str] | None = None,
+        search_query: str = "",
+        search_columns: list[str] | None = None,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
+        **kwargs,
+    ) -> Page[dict[str, Any]]:
+        """Fetches all messages in a conversation."""
+        return await self._get(
+            "/v2/conversations/messages/list",
+            params=dict(
+                conversation_id=conversation_id,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                columns=columns,
+                search_query=search_query,
+                search_columns=search_columns,
+                float_decimals=float_decimals,
+                vec_decimals=vec_decimals,
+            ),
+            response_model=Page[dict[str, Any]],
+            **kwargs,
+        )
+
+    async def regen_message(
+        self,
+        request: MessagesRegenRequest,
+        **kwargs,
+    ) -> AsyncGenerator[CellReferencesResponse | CellCompletionResponse, None]:
+        """
+        Regenerates a message in a conversation and streams back the response.
+        """
+        agen = self._stream(
+            "/v2/conversations/messages/regen",
+            body=request,
+            **kwargs,
+        )
+        return await self._return_async_iterator(
+            agen, [CellCompletionResponse, CellReferencesResponse]
+        )
+
+    async def update_message(
+        self,
+        request: MessageUpdateRequest,
+        **kwargs,
+    ) -> OkResponse:
+        """Updates a specific message within a conversation."""
+        return await self._patch(
+            "/v2/conversations/messages",
+            body=request,
+            response_model=OkResponse,
+            **kwargs,
+        )
+
+    async def get_threads(
+        self,
+        conversation_id: str,
+        column_ids: list[str] | None = None,
+        **kwargs,
+    ) -> ConversationThreadsResponse:
+        """
+        Get all threads from a conversation.
+
+        Args:
+            conversation_id (str): Conversation ID.
+            column_ids (list[str] | None): Columns to fetch as conversation threads.
+
+        Returns:
+            response (ConversationThreadsResponse): The conversation threads.
+        """
+        return await self._get(
+            "/v2/conversations/threads",
+            params=dict(
+                conversation_id=conversation_id,
+                column_ids=column_ids,
+            ),
+            response_model=ConversationThreadsResponse,
+            **kwargs,
+        )
 
 
 class JamAIAsync(_ClientAsync):
     def __init__(
         self,
-        project_id: str = ENV_CONFIG.jamai_project_id,
-        token: str = ENV_CONFIG.jamai_token_plain,
-        api_base: str = ENV_CONFIG.jamai_api_base,
+        project_id: str = ENV_CONFIG.project_id,
+        token: str = ENV_CONFIG.token_plain,
+        api_base: str = ENV_CONFIG.api_base,
         headers: dict | None = None,
-        timeout: float | None = ENV_CONFIG.jamai_timeout_sec,
-        file_upload_timeout: float | None = ENV_CONFIG.jamai_file_upload_timeout_sec,
+        timeout: float | None = ENV_CONFIG.timeout_sec,
+        file_upload_timeout: float | None = ENV_CONFIG.file_upload_timeout_sec,
         *,
-        api_key: str = "",
+        user_id: str = "",
+    ) -> None:
+        """
+        Initialize the JamAI async client.
+
+        Args:
+            project_id (str, optional): The project ID.
+                Defaults to "default", but can be overridden via
+                `JAMAI_PROJECT_ID` var in environment or `.env` file.
+            token (str, optional): Your Personal Access Token or organization API key (deprecated) for authentication.
+                Defaults to "", but can be overridden via
+                `JAMAI_TOKEN` var in environment or `.env` file.
+            api_base (str, optional): The base URL for the API.
+                Defaults to "https://api.jamaibase.com/api", but can be overridden via
+                `JAMAI_API_BASE` var in environment or `.env` file.
+            headers (dict | None, optional): Additional headers to include in requests.
+                Defaults to None.
+            timeout (float | None, optional): The timeout to use when sending requests.
+                Defaults to 15 minutes, but can be overridden via
+                `JAMAI_TIMEOUT_SEC` var in environment or `.env` file.
+            file_upload_timeout (float | None, optional): The timeout to use when sending file upload requests.
+                Defaults to 60 minutes, but can be overridden via
+                `JAMAI_FILE_UPLOAD_TIMEOUT_SEC` var in environment or `.env` file.
+            user_id (str, optional): User ID. For development purposes.
+                Defaults to "".
+        """
+        if not isinstance(project_id, str):
+            raise TypeError("`project_id` must be a string.")
+        if not isinstance(token, str):
+            raise TypeError("`token` must be a string.")
+        if not isinstance(api_base, str):
+            raise TypeError("`api_base` must be a string.")
+        if not (isinstance(headers, dict) or headers is None):
+            raise TypeError("`headers` must be a dict or None.")
+        if not (isinstance(timeout, (float, int)) or timeout is None):
+            raise TypeError("`timeout` must be a float, int or None.")
+        if not (isinstance(file_upload_timeout, (float, int)) or file_upload_timeout is None):
+            raise TypeError("`file_upload_timeout` must be a float, int or None.")
+        if not isinstance(user_id, str):
+            raise TypeError("`user_id` must be a string.")
+        http_client = httpx.AsyncClient(
+            timeout=timeout,
+            transport=httpx.AsyncHTTPTransport(retries=3),
+        )
+        kwargs = dict(
+            user_id=user_id,
+            project_id=project_id,
+            token=token,
+            api_base=api_base,
+            headers=headers,
+            http_client=http_client,
+            timeout=timeout,
+            file_upload_timeout=file_upload_timeout,
+        )
+        super().__init__(**kwargs)
+        self.auth = _AuthAsync(**kwargs)
+        self.prices = _PricesAsync(**kwargs)
+        self.users = _UsersAsync(**kwargs)
+        self.models = _ModelsAsync(**kwargs)
+        self.organizations = _OrganizationsAsync(**kwargs)
+        self.projects = _ProjectsAsync(**kwargs)
+        self.templates = _TemplatesAsync(**kwargs)
+        self.file = _FileClientAsync(**kwargs)
+        self.table = _GenTableClientAsync(**kwargs)
+        self.meters = _MeterClientAsync(**kwargs)
+        self.tasks = _TaskClientAsync(**kwargs)
+        self.conversations = _ConversationClientAsync(**kwargs)
+
+    async def health(self) -> dict[str, Any]:
+        """
+        Get health status.
+
+        Returns:
+            response (dict[str, Any]): Health status.
+        """
+        response = await self._get("/health", response_model=None)
+        return json_loads(response.text)
+
+    # --- Models and chat --- #
+
+    async def model_info(
+        self,
+        model: str = "",
+        capabilities: list[
+            Literal["completion", "chat", "image", "audio", "document", "tool", "embed", "rerank"]
+        ]
+        | None = None,
+        **kwargs,
+    ) -> ModelInfoListResponse:
+        """
+        Get information about available models.
+
+        Args:
+            name (str, optional): The model name. Defaults to "".
+            capabilities (list[Literal["completion", "chat", "image", "audio", "document", "tool", "embed", "rerank"]] | None, optional):
+                List of model capabilities to filter by. Defaults to None.
+
+        Returns:
+            response (ModelInfoListResponse): The model information response.
+        """
+        if (name := kwargs.pop("name", None)) is not None:
+            warnings.warn(
+                "'name' parameter is deprecated, use 'model' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            model = name
+        return await self._get(
+            "/v1/models",
+            params=dict(model=model, capabilities=capabilities),
+            response_model=ModelInfoListResponse,
+            **kwargs,
+        )
+
+    async def model_ids(
+        self,
+        prefer: str = "",
+        capabilities: list[
+            Literal["completion", "chat", "image", "audio", "document", "tool", "embed", "rerank"]
+        ]
+        | None = None,
+        **kwargs,
+    ) -> list[str]:
+        """
+        Get the IDs of available models.
+
+        Args:
+            prefer (str, optional): Preferred model ID. Defaults to "".
+            capabilities (list[Literal["completion", "chat", "image", "audio", "document", "tool", "embed", "rerank"]] | None, optional):
+                List of model capabilities to filter by. Defaults to None.
+
+        Returns:
+            response (list[str]): List of model IDs.
+        """
+        params = {"prefer": prefer, "capabilities": capabilities}
+        response = await self._get(
+            "/v1/models/ids",
+            params=params,
+            response_model=None,
+            **kwargs,
+        )
+        return json_loads(response.text)
+
+    @deprecated(
+        "This method is deprecated, use `model_ids` instead.", category=FutureWarning, stacklevel=1
+    )
+    async def model_names(
+        self,
+        prefer: str = "",
+        capabilities: list[
+            Literal["completion", "chat", "image", "audio", "document", "tool", "embed", "rerank"]
+        ]
+        | None = None,
+        **kwargs,
+    ) -> list[str]:
+        return await self.model_ids(prefer=prefer, capabilities=capabilities, **kwargs)
+
+    async def generate_chat_completions(
+        self,
+        request: ChatRequest,
+        **kwargs,
+    ) -> ChatCompletionResponse | AsyncGenerator[References | ChatCompletionChunkResponse, None]:
+        """
+        Generates chat completions.
+
+        Args:
+            request (ChatRequest): The request.
+
+        Returns:
+            completion (ChatCompletionChunkResponse | AsyncGenerator): The chat completion.
+                In streaming mode, it is an async generator that yields a `References` object
+                followed by zero or more `ChatCompletionChunkResponse` objects.
+                In non-streaming mode, it is a `ChatCompletionChunkResponse` object.
+        """
+        body = self._process_body(request)
+        if request.stream:
+            agen = self._stream("/v1/chat/completions", body=body, **kwargs)
+            return await self._return_async_iterator(
+                agen, [ChatCompletionChunkResponse, References]
+            )
+        else:
+            return await self._post(
+                "/v1/chat/completions",
+                body=body,
+                response_model=ChatCompletionResponse,
+                **kwargs,
+            )
+
+    async def generate_embeddings(
+        self,
+        request: EmbeddingRequest,
+        **kwargs,
+    ) -> EmbeddingResponse:
+        """
+        Generate embeddings for the given input.
+
+        Args:
+            request (EmbeddingRequest): The embedding request.
+
+        Returns:
+            response (EmbeddingResponse): The embedding response.
+        """
+        return await self._post(
+            "/v1/embeddings",
+            body=request,
+            response_model=EmbeddingResponse,
+            **kwargs,
+        )
+
+    async def rerank(self, request: RerankingRequest, **kwargs) -> RerankingResponse:
+        """
+        Generate similarity rankings for the given query and documents.
+
+        Args:
+            request (RerankingRequest): The reranking request body.
+
+        Returns:
+            RerankingResponse: The reranking response.
+        """
+        return await self._post(
+            "/v1/rerank",
+            body=request,
+            response_model=RerankingResponse,
+            **kwargs,
+        )
+
+
+class _Auth(_AuthAsync):
+    """Auth methods."""
+
+    def register_password(self, body: UserCreate, **kwargs) -> UserRead:
+        return LOOP.run(super().register_password(body, **kwargs))
+
+    def login_password(self, body: PasswordLoginRequest, **kwargs) -> UserRead:
+        return LOOP.run(super().login_password(body, **kwargs))
+
+    def change_password(self, body: PasswordChangeRequest, **kwargs) -> UserRead:
+        return LOOP.run(super().change_password(body, **kwargs))
+
+
+class _Prices(_PricesAsync):
+    """Prices methods."""
+
+    def create_price_plan(
+        self,
+        body: PricePlanCreate,
+        **kwargs,
+    ) -> PricePlanRead:
+        return LOOP.run(super().create_price_plan(body, **kwargs))
+
+    def list_price_plans(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[PricePlanRead]:
+        return LOOP.run(
+            super().list_price_plans(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                **kwargs,
+            )
+        )
+
+    def get_price_plan(
+        self,
+        plan_id: str,
+        **kwargs,
+    ) -> PricePlanRead:
+        return LOOP.run(super().get_price_plan(plan_id=plan_id, **kwargs))
+
+    def update_price_plan(
+        self,
+        plan_id: str,
+        body: PricePlanUpdate,
+        **kwargs,
+    ) -> PricePlanRead:
+        return LOOP.run(super().update_price_plan(plan_id, body, **kwargs))
+
+    def delete_price_plan(
+        self,
+        price_plan_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> None:
+        return LOOP.run(super().delete_price_plan(price_plan_id, missing_ok=missing_ok, **kwargs))
+
+    def list_model_prices(self, **kwargs) -> ModelPrice:
+        return LOOP.run(super().list_model_prices(**kwargs))
+
+
+class _Users(_UsersAsync):
+    """Users methods."""
+
+    def create_user(self, body: UserCreate, **kwargs) -> UserRead:
+        return LOOP.run(super().create_user(body, **kwargs))
+
+    def list_users(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        search_query: str = "",
+        search_columns: list[str] | None = None,
+        after: str | None = None,
+        **kwargs,
+    ) -> Page[UserRead]:
+        return LOOP.run(
+            super().list_users(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                search_query=search_query,
+                search_columns=search_columns,
+                after=after,
+                **kwargs,
+            )
+        )
+
+    def get_user(
+        self,
+        user_id: str | None = None,
+        **kwargs,
+    ) -> UserRead:
+        return LOOP.run(super().get_user(user_id, **kwargs))
+
+    def update_user(
+        self,
+        body: UserUpdate,
+        **kwargs,
+    ) -> UserRead:
+        return LOOP.run(super().update_user(body, **kwargs))
+
+    def delete_user(
+        self,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(super().delete_user(missing_ok=missing_ok, **kwargs))
+
+    def create_pat(self, body: ProjectKeyCreate, **kwargs) -> ProjectKeyRead:
+        return LOOP.run(super().create_pat(body, **kwargs))
+
+    def list_pats(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[ProjectKeyRead]:
+        return LOOP.run(
+            super().list_pats(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                **kwargs,
+            )
+        )
+
+    def update_pat(
+        self,
+        pat_id: str,
+        body: ProjectKeyUpdate,
+        **kwargs,
+    ) -> ProjectKeyRead:
+        return LOOP.run(super().update_pat(pat_id, body, **kwargs))
+
+    def delete_pat(
+        self,
+        pat_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(super().delete_pat(pat_id, missing_ok=missing_ok, **kwargs))
+
+    def create_email_verification_code(
+        self,
+        *,
+        valid_days: int = 7,
+        **kwargs,
+    ) -> VerificationCodeRead:
+        """
+        Generates an email verification code.
+
+        Args:
+            valid_days (int, optional): Code validity in days. Defaults to 7.
+
+        Returns:
+            code (InviteCodeRead): Verification code.
+        """
+        return LOOP.run(super().create_email_verification_code(valid_days=valid_days, **kwargs))
+
+    def list_email_verification_codes(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        search_query: str = "",
+        search_columns: list[str] | None = None,
+        after: str | None = None,
+        **kwargs,
+    ) -> Page[VerificationCodeRead]:
+        return LOOP.run(
+            super().list_email_verification_codes(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                search_query=search_query,
+                search_columns=search_columns,
+                after=after,
+                **kwargs,
+            )
+        )
+
+    def get_email_verification_code(
+        self,
+        verification_code: str,
+        **kwargs,
+    ) -> VerificationCodeRead:
+        return LOOP.run(
+            super().get_email_verification_code(
+                verification_code=verification_code,
+                **kwargs,
+            )
+        )
+
+    def revoke_email_verification_code(
+        self,
+        verification_code: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(
+            super().revoke_email_verification_code(
+                verification_code=verification_code,
+                missing_ok=missing_ok,
+                **kwargs,
+            )
+        )
+
+    @deprecated(
+        "`delete_email_verification_code` is deprecated, use `revoke_email_verification_code` instead.",
+        category=FutureWarning,
+        stacklevel=1,
+    )
+    def delete_email_verification_code(
+        self,
+        verification_code: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(
+            super().delete_email_verification_code(
+                verification_code=verification_code,
+                missing_ok=missing_ok,
+                **kwargs,
+            )
+        )
+
+    def verify_email(
+        self,
+        verification_code: str,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Verify and update user email.
+
+        Args:
+            verification_code (str): Verification code.
+
+        Returns:
+            ok (OkResponse): Success.
+        """
+        return LOOP.run(super().verify_email(verification_code=verification_code, **kwargs))
+
+
+class _Models(_ModelsAsync):
+    """Models methods."""
+
+    def create_model_config(self, body: ModelConfigCreate, **kwargs) -> ModelConfigRead:
+        return LOOP.run(super().create_model_config(body, **kwargs))
+
+    def list_model_configs(
+        self,
+        *,
+        organization_id: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[ModelConfigRead]:
+        return LOOP.run(
+            super().list_model_configs(
+                organization_id=organization_id,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                **kwargs,
+            )
+        )
+
+    def get_model_config(
+        self,
+        model_id: str,
+        **kwargs,
+    ) -> ModelConfigRead:
+        return LOOP.run(super().get_model_config(model_id, **kwargs))
+
+    def update_model_config(
+        self,
+        model_id: str,
+        body: ModelConfigUpdate,
+        **kwargs,
+    ) -> ModelConfigRead:
+        return LOOP.run(super().update_model_config(model_id, body, **kwargs))
+
+    def delete_model_config(
+        self,
+        model_id: str,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(super().delete_model_config(model_id, missing_ok=missing_ok, **kwargs))
+
+    def create_deployment(
+        self,
+        body: DeploymentCreate,
+        timeout: float | None = 300.0,
+        **kwargs,
+    ) -> DeploymentRead:
+        return LOOP.run(super().create_deployment(body, timeout=timeout, **kwargs))
+
+    def list_deployments(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[DeploymentRead]:
+        return LOOP.run(
+            super().list_deployments(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                **kwargs,
+            )
+        )
+
+    def get_deployment(
+        self,
+        deployment_id: str,
+        **kwargs,
+    ) -> DeploymentRead:
+        return LOOP.run(super().get_deployment(deployment_id, **kwargs))
+
+    def update_deployment(
+        self,
+        deployment_id: str,
+        body: DeploymentUpdate,
+        **kwargs,
+    ) -> DeploymentRead:
+        return LOOP.run(super().update_deployment(deployment_id, body, **kwargs))
+
+    def delete_deployment(self, deployment_id: str, **kwargs) -> OkResponse:
+        return LOOP.run(super().delete_deployment(deployment_id, **kwargs))
+
+
+class _Organizations(_OrganizationsAsync):
+    """Organization methods."""
+
+    def create_organization(
+        self,
+        body: OrganizationCreate,
+        **kwargs,
+    ) -> OrganizationRead:
+        return LOOP.run(super().create_organization(body, **kwargs))
+
+    def list_organizations(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[OrganizationRead]:
+        return LOOP.run(
+            super().list_organizations(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                **kwargs,
+            )
+        )
+
+    def get_organization(
+        self,
+        organization_id: str,
+        **kwargs,
+    ) -> OrganizationRead:
+        return LOOP.run(super().get_organization(organization_id, **kwargs))
+
+    def update_organization(
+        self,
+        organization_id: str,
+        body: OrganizationUpdate,
+        **kwargs,
+    ) -> OrganizationRead:
+        return LOOP.run(super().update_organization(organization_id, body, **kwargs))
+
+    def delete_organization(
+        self,
+        organization_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(
+            super().delete_organization(organization_id, missing_ok=missing_ok, **kwargs)
+        )
+
+    def join_organization(
+        self,
+        user_id: str,
+        *,
+        invite_code: str | None = None,
+        organization_id: str | None = None,
+        role: str | None = None,
+        **kwargs,
+    ) -> OrgMemberRead:
+        return LOOP.run(
+            super().join_organization(
+                user_id=user_id,
+                invite_code=invite_code,
+                organization_id=organization_id,
+                role=role,
+                **kwargs,
+            )
+        )
+
+    def list_members(
+        self,
+        organization_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[OrgMemberRead]:
+        return LOOP.run(
+            super().list_members(
+                organization_id=organization_id,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                **kwargs,
+            )
+        )
+
+    def get_member(
+        self,
+        *,
+        user_id: str,
+        organization_id: str,
+        **kwargs,
+    ) -> OrgMemberRead:
+        return LOOP.run(
+            super().get_member(
+                user_id=user_id,
+                organization_id=organization_id,
+                **kwargs,
+            )
+        )
+
+    def update_member_role(
+        self,
+        *,
+        user_id: str,
+        organization_id: str,
+        role: Role,
+        **kwargs,
+    ) -> OrgMemberRead:
+        return LOOP.run(
+            super().update_member_role(
+                user_id=user_id,
+                organization_id=organization_id,
+                role=role,
+                **kwargs,
+            )
+        )
+
+    def leave_organization(
+        self,
+        user_id: str,
+        organization_id: str,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(
+            super().leave_organization(
+                user_id=user_id,
+                organization_id=organization_id,
+                **kwargs,
+            )
+        )
+
+    def model_catalogue(
+        self,
+        *,
+        organization_id: str,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[ModelConfigRead]:
+        return LOOP.run(
+            super().model_catalogue(
+                organization_id=organization_id,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                **kwargs,
+            )
+        )
+
+    def create_invite(
+        self,
+        *,
+        user_email: str,
+        organization_id: str,
+        role: str,
+        valid_days: int = 7,
+        **kwargs,
+    ) -> VerificationCodeRead:
+        return LOOP.run(
+            super().create_invite(
+                user_email=user_email,
+                organization_id=organization_id,
+                role=role,
+                valid_days=valid_days,
+                **kwargs,
+            )
+        )
+
+    def generate_invite_token(self, *_, **__):
+        raise NotImplementedError("This method is deprecated, use `create_invite` instead.")
+
+    def list_invites(
+        self,
+        organization_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[VerificationCodeRead]:
+        return LOOP.run(
+            super().list_invites(
+                organization_id=organization_id,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                **kwargs,
+            )
+        )
+
+    def revoke_invite(
+        self,
+        invite_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ):
+        return LOOP.run(
+            super().revoke_invite(invite_id=invite_id, missing_ok=missing_ok, **kwargs)
+        )
+
+    @deprecated(
+        "`delete_invite` is deprecated, use `revoke_invite` instead.",
+        category=FutureWarning,
+        stacklevel=1,
+    )
+    def delete_invite(
+        self,
+        invite_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(
+            super().delete_invite(
+                invite_id=invite_id,
+                missing_ok=missing_ok,
+                **kwargs,
+            )
+        )
+
+    def subscribe_plan(
+        self,
+        organization_id: str,
+        price_plan_id: str,
+        **kwargs,
+    ) -> StripePaymentInfo:
+        return LOOP.run(
+            super().subscribe_plan(
+                organization_id=organization_id,
+                price_plan_id=price_plan_id,
+                **kwargs,
+            )
+        )
+
+    def refresh_quota(
+        self,
+        organization_id: str,
+        **kwargs,
+    ) -> OrganizationRead:
+        return LOOP.run(
+            super().refresh_quota(
+                organization_id=organization_id,
+                **kwargs,
+            )
+        )
+
+    def purchase_credits(
+        self,
+        organization_id: str,
+        amount: float,
+        *,
+        confirm: bool = False,
+        off_session: bool = False,
+        **kwargs,
+    ) -> StripePaymentInfo:
+        return LOOP.run(
+            super().purchase_credits(
+                organization_id=organization_id,
+                amount=amount,
+                confirm=confirm,
+                off_session=off_session,
+                **kwargs,
+            )
+        )
+
+    def set_credit_grant(
+        self,
+        organization_id: str,
+        amount: float,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(
+            super().set_credit_grant(
+                organization_id=organization_id,
+                amount=amount,
+                **kwargs,
+            )
+        )
+
+    def add_credit_grant(
+        self,
+        organization_id: str,
+        amount: float,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(
+            super().add_credit_grant(
+                organization_id=organization_id,
+                amount=amount,
+                **kwargs,
+            )
+        )
+
+    def get_organization_metrics(
+        self,
+        metric_id: str,
+        from_: datetime,
+        org_id: str,
+        window_size: str | None = None,
+        proj_ids: list[str] | None = None,
+        to: datetime | None = None,
+        group_by: list[str] | None = None,
+        data_source: Literal["clickhouse", "victoriametrics"] = "clickhouse",
+        **kwargs,
+    ) -> UsageResponse:
+        return LOOP.run(
+            super().get_organization_metrics(
+                metric_id=metric_id,
+                from_=from_,
+                org_id=org_id,
+                window_size=window_size,
+                proj_ids=proj_ids,
+                to=to,
+                group_by=group_by,
+                data_source=data_source,
+                **kwargs,
+            )
+        )
+
+    # def get_billing_metrics(
+    #     self,
+    #     from_: datetime,
+    #     window_size: str,
+    #     org_id: str,
+    #     proj_ids: list[str] | None = None,
+    #     to: datetime | None = None,
+    #     group_by: list[str] | None = None,
+    #     **kwargs,
+    # ) -> dict:
+    #     return LOOP.run(
+    #         super().get_billing_metrics(
+    #             from_=from_,
+    #             window_size=window_size,
+    #             org_id=org_id,
+    #             proj_ids=proj_ids,
+    #             to=to,
+    #             group_by=group_by,
+    #             **kwargs,
+    #         )
+    #     )
+
+
+class _Projects(_ProjectsAsync):
+    """Project methods."""
+
+    def create_project(self, body: ProjectCreate, **kwargs) -> ProjectRead:
+        return LOOP.run(super().create_project(body, **kwargs))
+
+    def list_projects(
+        self,
+        organization_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        search_query: str = "",
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        list_chat_agents: bool = False,
+        **kwargs,
+    ) -> Page[ProjectRead]:
+        return LOOP.run(
+            super().list_projects(
+                organization_id=organization_id,
+                offset=offset,
+                limit=limit,
+                search_query=search_query,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                list_chat_agents=list_chat_agents,
+                **kwargs,
+            )
+        )
+
+    def get_project(
+        self,
+        project_id: str,
+        **kwargs,
+    ) -> ProjectRead:
+        return LOOP.run(super().get_project(project_id, **kwargs))
+
+    def update_project(
+        self,
+        project_id: str,
+        body: ProjectUpdate,
+        **kwargs,
+    ) -> ProjectRead:
+        return LOOP.run(super().update_project(project_id, body, **kwargs))
+
+    def delete_project(
+        self,
+        project_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(super().delete_project(project_id, missing_ok=missing_ok, **kwargs))
+
+    def join_project(
+        self,
+        user_id: str,
+        *,
+        invite_code: str | None = None,
+        project_id: str | None = None,
+        role: str | None = None,
+        **kwargs,
+    ) -> ProjectMemberRead:
+        return LOOP.run(
+            super().join_project(
+                user_id=user_id,
+                invite_code=invite_code,
+                project_id=project_id,
+                role=role,
+                **kwargs,
+            )
+        )
+
+    def list_members(
+        self,
+        project_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[ProjectMemberRead]:
+        return LOOP.run(
+            super().list_members(
+                project_id=project_id,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                **kwargs,
+            )
+        )
+
+    def get_member(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        **kwargs,
+    ) -> ProjectMemberRead:
+        return LOOP.run(
+            super().get_member(
+                user_id=user_id,
+                project_id=project_id,
+                **kwargs,
+            )
+        )
+
+    def update_member_role(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        role: Role,
+        **kwargs,
+    ) -> ProjectMemberRead:
+        return LOOP.run(
+            super().update_member_role(
+                user_id=user_id,
+                project_id=project_id,
+                role=role,
+                **kwargs,
+            )
+        )
+
+    def leave_project(
+        self,
+        user_id: str,
+        project_id: str,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(
+            super().leave_project(
+                user_id=user_id,
+                project_id=project_id,
+                **kwargs,
+            )
+        )
+
+    def import_project(
+        self,
+        source: str | BinaryIO,
+        *,
+        project_id: str = "",
+        organization_id: str = "",
+        **kwargs,
+    ) -> ProjectRead:
+        return LOOP.run(
+            super().import_project(
+                source=source,
+                project_id=project_id,
+                organization_id=organization_id,
+                **kwargs,
+            )
+        )
+
+    def export_project(
+        self,
+        project_id: str,
+        **kwargs,
+    ) -> bytes:
+        return LOOP.run(
+            super().export_project(
+                project_id=project_id,
+                **kwargs,
+            )
+        )
+
+    def import_template(
+        self,
+        template_id: str,
+        *,
+        project_id: str = "",
+        organization_id: str = "",
+        **kwargs,
+    ) -> ProjectRead:
+        return LOOP.run(
+            super().import_template(
+                template_id=template_id,
+                project_id=project_id,
+                organization_id=organization_id,
+                **kwargs,
+            )
+        )
+
+    def create_invite(
+        self,
+        *,
+        user_email: str,
+        project_id: str,
+        role: str,
+        valid_days: int = 7,
+        **kwargs,
+    ) -> VerificationCodeRead:
+        return LOOP.run(
+            super().create_invite(
+                user_email=user_email,
+                project_id=project_id,
+                role=role,
+                valid_days=valid_days,
+                **kwargs,
+            )
+        )
+
+    def list_invites(
+        self,
+        project_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[VerificationCodeRead]:
+        return LOOP.run(
+            super().list_invites(
+                project_id=project_id,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                **kwargs,
+            )
+        )
+
+    def revoke_invite(
+        self,
+        invite_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ):
+        return LOOP.run(
+            super().revoke_invite(invite_id=invite_id, missing_ok=missing_ok, **kwargs)
+        )
+
+    @deprecated(
+        "`delete_invite` is deprecated, use `revoke_invite` instead.",
+        category=FutureWarning,
+        stacklevel=1,
+    )
+    def delete_invite(
+        self,
+        invite_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(
+            super().delete_invite(
+                invite_id=invite_id,
+                missing_ok=missing_ok,
+                **kwargs,
+            )
+        )
+
+
+class _Templates(_TemplatesAsync):
+    """Template methods."""
+
+    def list_templates(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        search_query: str = "",
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        **kwargs,
+    ) -> Page[ProjectRead]:
+        return LOOP.run(
+            super().list_templates(
+                offset=offset,
+                limit=limit,
+                search_query=search_query,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                **kwargs,
+            )
+        )
+
+    def get_template(self, template_id: str, **kwargs) -> ProjectRead:
+        return LOOP.run(super().get_template(template_id, **kwargs))
+
+    def list_tables(
+        self,
+        template_id: str,
+        table_type: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        search_query: str = "",
+        parent_id: str | None = None,
+        count_rows: bool = False,
+        **kwargs,
+    ) -> Page[TableMetaResponse]:
+        return LOOP.run(
+            super().list_tables(
+                template_id=template_id,
+                table_type=table_type,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                search_query=search_query,
+                parent_id=parent_id,
+                count_rows=count_rows,
+                **kwargs,
+            )
+        )
+
+    def get_table(
+        self,
+        template_id: str,
+        table_type: str,
+        table_id: str,
+        **kwargs,
+    ) -> TableMetaResponse:
+        return LOOP.run(
+            super().get_table(
+                template_id=template_id,
+                table_type=table_type,
+                table_id=table_id,
+                **kwargs,
+            )
+        )
+
+    def list_table_rows(
+        self,
+        template_id: str,
+        table_type: str,
+        table_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "ID",
+        order_ascending: bool = True,
+        columns: list[str] | None = None,
+        search_query: str = "",
+        search_columns: list[str] | None = None,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
+        **kwargs,
+    ) -> Page[dict[str, Any]]:
+        """
+        List rows in a table.
+
+        Args:
+            template_id (str): The ID of the template.
+            table_type (str): The type of the table.
+            table_id (str): The ID of the table.
+            offset (int, optional): Item offset. Defaults to 0.
+            limit (int, optional): Number of rows to return (min 1, max 100). Defaults to 100.
+            order_by (str, optional): Column name to order by. Defaults to "ID".
+            order_ascending (bool, optional): Whether to sort by ascending order. Defaults to True.
+            columns (list[str] | None, optional): List of column names to include in the response.
+                Defaults to None (all columns).
+            search_query (str, optional): A string to search for within the rows as a filter.
+                Defaults to "" (no filter).
+            search_columns (list[str] | None, optional): A list of column names to search for `search_query`.
+                Defaults to None (search all columns).
+            float_decimals (int, optional): Number of decimals for float values.
+                Defaults to 0 (no rounding).
+            vec_decimals (int, optional): Number of decimals for vectors.
+                If its negative, exclude vector columns. Defaults to 0 (no rounding).
+        """
+        return LOOP.run(
+            super().list_table_rows(
+                template_id=template_id,
+                table_type=table_type,
+                table_id=table_id,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                columns=columns,
+                search_query=search_query,
+                search_columns=search_columns,
+                float_decimals=float_decimals,
+                vec_decimals=vec_decimals,
+                **kwargs,
+            )
+        )
+
+    def get_table_row(
+        self,
+        template_id: str,
+        table_type: str,
+        table_id: str,
+        row_id: str,
+        *,
+        columns: list[str] | None = None,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """
+        Get a specific row in a table.
+
+        Args:
+            template_id (str): The ID of the template.
+            table_type (str): The type of the table.
+            table_id (str): The ID of the table.
+            row_id (str): The ID of the row.
+            columns (list[str] | None, optional): List of column names to include in the response.
+                Defaults to None (all columns).
+            float_decimals (int, optional): Number of decimals for float values.
+                Defaults to 0 (no rounding).
+            vec_decimals (int, optional): Number of decimals for vectors.
+                If its negative, exclude vector columns. Defaults to 0 (no rounding).
+
+        Returns:
+            response (dict[str, Any]): The row data.
+        """
+        return LOOP.run(
+            super().get_table_row(
+                template_id=template_id,
+                table_type=table_type,
+                table_id=table_id,
+                row_id=row_id,
+                columns=columns,
+                float_decimals=float_decimals,
+                vec_decimals=vec_decimals,
+                **kwargs,
+            )
+        )
+
+
+class _FileClient(_FileClientAsync):
+    """File methods (synchronous version)."""
+
+    def upload_file(self, file_path: str, **kwargs) -> FileUploadResponse:
+        return LOOP.run(super().upload_file(file_path, **kwargs))
+
+    def get_raw_urls(self, uris: list[str], **kwargs) -> GetURLResponse:
+        return LOOP.run(super().get_raw_urls(uris, **kwargs))
+
+    def get_thumbnail_urls(self, uris: list[str], **kwargs) -> GetURLResponse:
+        return LOOP.run(super().get_thumbnail_urls(uris, **kwargs))
+
+
+class _GenTableClient(_GenTableClientAsync):
+    """Generative Table methods (synchronous version)."""
+
+    # Table CRUD
+    def create_action_table(
+        self,
+        request: ActionTableSchemaCreate,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Create an Action Table.
+
+        Args:
+            request (ActionTableSchemaCreate): The action table schema.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return LOOP.run(super().create_action_table(request, **kwargs))
+
+    def create_knowledge_table(
+        self,
+        request: KnowledgeTableSchemaCreate,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Create a Knowledge Table.
+
+        Args:
+            request (KnowledgeTableSchemaCreate): The knowledge table schema.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return LOOP.run(super().create_knowledge_table(request, **kwargs))
+
+    def create_chat_table(
+        self,
+        request: ChatTableSchemaCreate,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Create a Chat Table.
+
+        Args:
+            request (ChatTableSchemaCreate): The chat table schema.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return LOOP.run(super().create_chat_table(request, **kwargs))
+
+    def duplicate_table(
+        self,
+        table_type: str,
+        table_id_src: str,
+        table_id_dst: str | None = None,
+        *,
+        include_data: bool = True,
+        create_as_child: bool = False,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Duplicate a table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id_src (str): The source table ID.
+            table_id_dst (str | None, optional): The destination / new table ID.
+                Defaults to None (create a new table ID automatically).
+            include_data (bool, optional): Whether to include data in the duplicated table. Defaults to True.
+            create_as_child (bool, optional): Whether the new table is a child table.
+                If this is True, then `include_data` will be set to True. Defaults to False.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return LOOP.run(
+            super().duplicate_table(
+                table_type,
+                table_id_src,
+                table_id_dst=table_id_dst,
+                include_data=include_data,
+                create_as_child=create_as_child,
+                **kwargs,
+            )
+        )
+
+    def get_table(
+        self,
+        table_type: str,
+        table_id: str,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Get metadata for a specific Generative Table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id (str): The ID of the table.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return LOOP.run(super().get_table(table_type, table_id, **kwargs))
+
+    def list_tables(
+        self,
+        table_type: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        created_by: str | None = None,
+        parent_id: str | None = None,
+        search_query: str = "",
+        count_rows: bool = False,
+        **kwargs,
+    ) -> Page[TableMetaResponse]:
+        """
+        List Generative Tables of a specific type.
+
+        Args:
+            table_type (str): The type of the table.
+            offset (int, optional): Item offset. Defaults to 0.
+            limit (int, optional): Number of tables to return (min 1, max 100). Defaults to 100.
+            order_by (str, optional): Sort tables by this attribute. Defaults to "updated_at".
+            order_ascending (bool, optional): Whether to sort by ascending order. Defaults to True.
+            created_by (str | None, optional): Return tables created by this user.
+                Defaults to None (return all tables).
+            parent_id (str | None, optional): Parent ID of tables to return.
+                Additionally for Chat Table, you can list:
+                (1) all chat agents by passing in "_agent_"; or
+                (2) all chats by passing in "_chat_".
+                Defaults to None (return all tables).
+            search_query (str, optional): A string to search for within table IDs as a filter.
+                Defaults to "" (no filter).
+            count_rows (bool, optional): Whether to count the rows of the tables. Defaults to False.
+
+        Returns:
+            response (Page[TableMetaResponse]): The paginated table metadata response.
+        """
+        return LOOP.run(
+            super().list_tables(
+                table_type,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                created_by=created_by,
+                parent_id=parent_id,
+                search_query=search_query,
+                count_rows=count_rows,
+                **kwargs,
+            )
+        )
+
+    def rename_table(
+        self,
+        table_type: str,
+        table_id_src: str,
+        table_id_dst: str,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Rename a table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id_src (str): The source table ID.
+            table_id_dst (str): The destination / new table ID.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return LOOP.run(super().rename_table(table_type, table_id_src, table_id_dst, **kwargs))
+
+    def delete_table(
+        self,
+        table_type: str,
+        table_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Delete a specific table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id (str): The ID of the table.
+            missing_ok (bool, optional): Ignore resource not found error.
+
+        Returns:
+            response (OkResponse): The response indicating success.
+        """
+        return LOOP.run(
+            super().delete_table(
+                table_type,
+                table_id,
+                missing_ok=missing_ok,
+                **kwargs,
+            )
+        )
+
+    # Column CRUD
+    def add_action_columns(
+        self,
+        request: AddActionColumnSchema,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Add columns to an Action Table.
+
+        Args:
+            request (AddActionColumnSchema): The action column schema.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return LOOP.run(super().add_action_columns(request, **kwargs))
+
+    def add_knowledge_columns(
+        self,
+        request: AddKnowledgeColumnSchema,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Add columns to a Knowledge Table.
+
+        Args:
+            request (AddKnowledgeColumnSchema): The knowledge column schema.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return LOOP.run(super().add_knowledge_columns(request, **kwargs))
+
+    def add_chat_columns(
+        self,
+        request: AddChatColumnSchema,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Add columns to a Chat Table.
+
+        Args:
+            request (AddChatColumnSchema): The chat column schema.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return LOOP.run(super().add_chat_columns(request, **kwargs))
+
+    def rename_columns(
+        self,
+        table_type: str,
+        request: ColumnRenameRequest,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Rename columns in a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (ColumnRenameRequest): The column rename request.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return LOOP.run(super().rename_columns(table_type, request, **kwargs))
+
+    def update_gen_config(
+        self,
+        table_type: str,
+        request: GenConfigUpdateRequest,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Update the generation configuration for a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (GenConfigUpdateRequest): The generation configuration update request.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return LOOP.run(super().update_gen_config(table_type, request, **kwargs))
+
+    def reorder_columns(
+        self,
+        table_type: str,
+        request: ColumnReorderRequest,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Reorder columns in a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (ColumnReorderRequest): The column reorder request.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return LOOP.run(super().reorder_columns(table_type, request, **kwargs))
+
+    def drop_columns(
+        self,
+        table_type: str,
+        request: ColumnDropRequest,
+        **kwargs,
+    ) -> TableMetaResponse:
+        """
+        Drop columns from a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (ColumnDropRequest): The column drop request.
+
+        Returns:
+            response (TableMetaResponse): The table metadata response.
+        """
+        return LOOP.run(super().drop_columns(table_type, request, **kwargs))
+
+    # Row CRUD
+    def add_table_rows(
+        self,
+        table_type: str,
+        request: MultiRowAddRequest,
+        **kwargs,
+    ) -> (
+        MultiRowCompletionResponse
+        | Generator[CellReferencesResponse | CellCompletionResponse, None, None]
+    ):
+        """
+        Add rows to a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (MultiRowAddRequest): The row add request.
+
+        Returns:
+            response (MultiRowCompletionResponse | AsyncGenerator): The row completion.
+                In streaming mode, it is an async generator that yields a `CellReferencesResponse` object
+                followed by zero or more `CellCompletionResponse` objects.
+                In non-streaming mode, it is a `MultiRowCompletionResponse` object.
+        """
+        agen = LOOP.run(super().add_table_rows(table_type, request, **kwargs))
+        return self._return_iterator(agen, request.stream)
+
+    def list_table_rows(
+        self,
+        table_type: str,
+        table_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "ID",
+        order_ascending: bool = True,
+        columns: list[str] | None = None,
+        where: str = "",
+        search_query: str = "",
+        search_columns: list[str] | None = None,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
+        **kwargs,
+    ) -> Page[dict[str, Any]]:
+        """
+        List rows in a table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id (str): The ID of the table.
+            offset (int, optional): Item offset. Defaults to 0.
+            limit (int, optional): Number of rows to return (min 1, max 100). Defaults to 100.
+            order_by (str, optional): Column name to order by. Defaults to "ID".
+            order_ascending (bool, optional): Whether to sort by ascending order. Defaults to True.
+            columns (list[str] | None, optional): List of column names to include in the response.
+                Defaults to None (all columns).
+            where (str, optional): SQL where clause. Can be nested ie `x = '1' AND ("y (1)" = 2 OR z = '3')`.
+                It will be combined other filters using `AND`. Defaults to "" (no filter).
+            search_query (str, optional): A string to search for within the rows as a filter.
+                Defaults to "" (no filter).
+            search_columns (list[str] | None, optional): A list of column names to search for `search_query`.
+                Defaults to None (search all columns).
+            float_decimals (int, optional): Number of decimals for float values.
+                Defaults to 0 (no rounding).
+            vec_decimals (int, optional): Number of decimals for vectors.
+                If its negative, exclude vector columns. Defaults to 0 (no rounding).
+        """
+        return LOOP.run(
+            super().list_table_rows(
+                table_type,
+                table_id,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                columns=columns,
+                where=where,
+                search_query=search_query,
+                search_columns=search_columns,
+                float_decimals=float_decimals,
+                vec_decimals=vec_decimals,
+                **kwargs,
+            )
+        )
+
+    def get_table_row(
+        self,
+        table_type: str,
+        table_id: str,
+        row_id: str,
+        *,
+        columns: list[str] | None = None,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """
+        Get a specific row in a table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id (str): The ID of the table.
+            row_id (str): The ID of the row.
+            columns (list[str] | None, optional): List of column names to include in the response.
+                Defaults to None (all columns).
+            float_decimals (int, optional): Number of decimals for float values.
+                Defaults to 0 (no rounding).
+            vec_decimals (int, optional): Number of decimals for vectors.
+                If its negative, exclude vector columns. Defaults to 0 (no rounding).
+
+        Returns:
+            response (dict[str, Any]): The row data.
+        """
+        return LOOP.run(
+            super().get_table_row(
+                table_type,
+                table_id,
+                row_id,
+                columns=columns,
+                float_decimals=float_decimals,
+                vec_decimals=vec_decimals,
+                **kwargs,
+            )
+        )
+
+    @deprecated(
+        "This method is deprecated, use `get_conversation_threads` instead.",
+        category=FutureWarning,
+        stacklevel=1,
+    )
+    def get_conversation_thread(
+        self,
+        table_type: str,
+        table_id: str,
+        column_id: str,
+        *,
+        row_id: str = "",
+        include: bool = True,
+        **kwargs,
+    ) -> ChatThreadResponse:
+        """
+        Get the conversation thread for a column in a table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id (str): ID / name of the chat table.
+            column_id (str): ID / name of the column to fetch.
+            row_id (str, optional): ID / name of the last row in the thread.
+                Defaults to "" (export all rows).
+            include (bool, optional): Whether to include the row specified by `row_id`.
+                Defaults to True.
+
+        Returns:
+            response (ChatThreadResponse): The conversation thread.
+        """
+        return LOOP.run(
+            super().get_conversation_thread(
+                table_type,
+                table_id,
+                column_id,
+                row_id=row_id,
+                include=include,
+                **kwargs,
+            )
+        )
+
+    def get_conversation_threads(
+        self,
+        table_type: str,
+        table_id: str,
+        column_ids: list[str] | None = None,
+        *,
+        row_id: str = "",
+        include_row: bool = True,
+        **kwargs,
+    ) -> ChatThreadsResponse:
+        """
+        Get all multi-turn / conversation threads from a table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id (str): ID / name of the chat table.
+            column_ids (list[str] | None): Columns to fetch as conversation threads.
+            row_id (str, optional): ID / name of the last row in the thread.
+                Defaults to "" (export all rows).
+            include_row (bool, optional): Whether to include the row specified by `row_id`.
+                Defaults to True.
+
+        Returns:
+            response (ChatThreadsResponse): The conversation threads.
+        """
+        return LOOP.run(
+            super().get_conversation_threads(
+                table_type,
+                table_id,
+                column_ids,
+                row_id=row_id,
+                include_row=include_row,
+                **kwargs,
+            )
+        )
+
+    def hybrid_search(
+        self,
+        table_type: str,
+        request: SearchRequest,
+        **kwargs,
+    ) -> list[dict[str, Any]]:
+        """
+        Perform a hybrid search on a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (SearchRequest): The search request.
+
+        Returns:
+            response (list[dict[str, Any]]): The search results.
+        """
+        return LOOP.run(super().hybrid_search(table_type, request, **kwargs))
+
+    def regen_table_rows(
+        self,
+        table_type: str,
+        request: MultiRowRegenRequest,
+        **kwargs,
+    ) -> (
+        MultiRowCompletionResponse
+        | Generator[CellReferencesResponse | CellCompletionResponse, None, None]
+    ):
+        """
+        Regenerate rows in a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (MultiRowRegenRequest): The row regenerate request.
+
+        Returns:
+            response (MultiRowCompletionResponse | AsyncGenerator): The row completion.
+                In streaming mode, it is an async generator that yields a `CellReferencesResponse` object
+                followed by zero or more `CellCompletionResponse` objects.
+                In non-streaming mode, it is a `MultiRowCompletionResponse` object.
+        """
+        agen = LOOP.run(super().regen_table_rows(table_type, request, **kwargs))
+        return self._return_iterator(agen, request.stream)
+
+    def update_table_rows(
+        self,
+        table_type: str,
+        request: MultiRowUpdateRequest,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Update rows in a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (MultiRowUpdateRequest): The row update request.
+
+        Returns:
+            response (OkResponse): The response indicating success.
+        """
+        return LOOP.run(super().update_table_rows(table_type, request, **kwargs))
+
+    @deprecated(
+        "This method is deprecated, use `update_table_rows` instead.",
+        category=FutureWarning,
+        stacklevel=1,
+    )
+    def update_table_row(
+        self,
+        table_type: str,
+        request: RowUpdateRequest,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Update a specific row in a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (RowUpdateRequest): The row update request.
+
+        Returns:
+            response (OkResponse): The response indicating success.
+        """
+        return LOOP.run(super().update_table_row(table_type, request, **kwargs))
+
+    def delete_table_rows(
+        self,
+        table_type: str,
+        request: MultiRowDeleteRequest,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Delete rows from a table.
+
+        Args:
+            table_type (str): The type of the table.
+            request (MultiRowDeleteRequest): The row delete request.
+
+        Returns:
+            response (OkResponse): The response indicating success.
+        """
+        return LOOP.run(super().delete_table_rows(table_type, request, **kwargs))
+
+    @deprecated(
+        "This method is deprecated, use `delete_table_rows` instead.",
+        category=FutureWarning,
+        stacklevel=1,
+    )
+    def delete_table_row(
+        self,
+        table_type: str,
+        table_id: str,
+        row_id: str,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Delete a specific row from a table.
+
+        Args:
+            table_type (str): The type of the table.
+            table_id (str): The ID of the table.
+            row_id (str): The ID of the row.
+
+        Returns:
+            response (OkResponse): The response indicating success.
+        """
+        return LOOP.run(super().delete_table_row(table_type, table_id, row_id, **kwargs))
+
+    def embed_file_options(self, **kwargs) -> httpx.Response:
+        """
+        Get CORS preflight options for file embedding endpoint.
+
+        Returns:
+            response (httpx.Response): The response containing options information.
+        """
+        return LOOP.run(super().embed_file_options(**kwargs))
+
+    def embed_file(
+        self,
+        file_path: str,
+        table_id: str,
+        *,
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Embed a file into a Knowledge Table.
+
+        Args:
+            file_path (str): File path of the document to be embedded.
+            table_id (str): Knowledge Table ID / name.
+            chunk_size (int, optional): Maximum chunk size (number of characters). Must be > 0.
+                Defaults to 1000.
+            chunk_overlap (int, optional): Overlap in characters between chunks. Must be >= 0.
+                Defaults to 200.
+
+        Returns:
+            response (OkResponse): The response indicating success.
+        """
+        return LOOP.run(
+            super().embed_file(
+                file_path, table_id, chunk_size=chunk_size, chunk_overlap=chunk_overlap, **kwargs
+            )
+        )
+
+    # Import export
+    def import_table_data(
+        self,
+        table_type: str,
+        request: TableDataImportRequest,
+        **kwargs,
+    ) -> GenTableChatResponseType:
+        """
+        Imports CSV or TSV data into a table.
+
+        Args:
+            file_path (str): CSV or TSV file path.
+            table_type (str): Table type.
+            request (TableDataImportRequest): Data import request.
+
+        Returns:
+            response (OkResponse): The response indicating success.
+        """
+        agen = LOOP.run(super().import_table_data(table_type, request, **kwargs))
+        return self._return_iterator(agen, request.stream)
+
+    def export_table_data(
+        self,
+        table_type: str,
+        table_id: str,
+        *,
+        columns: list[str] | None = None,
+        delimiter: Literal[",", "\t"] = ",",
+        **kwargs,
+    ) -> bytes:
+        """
+        Exports the row data of a table as a CSV or TSV file.
+
+        Args:
+            table_type (str): Table type.
+            table_id (str): ID or name of the table to be exported.
+            delimiter (str, optional): The delimiter of the file: can be "," or "\\t". Defaults to ",".
+            columns (list[str], optional): A list of columns to be exported. Defaults to None (export all columns).
+
+        Returns:
+            response (list[dict[str, Any]]): The search results.
+        """
+        return LOOP.run(
+            super().export_table_data(
+                table_type, table_id, columns=columns, delimiter=delimiter, **kwargs
+            )
+        )
+
+    def import_table(
+        self,
+        table_type: str,
+        request: TableImportRequest,
+        **kwargs,
+    ) -> TableMetaResponse | OkResponse:
+        """
+        Imports a table (data and schema) from a parquet file.
+
+        Args:
+            file_path (str): The parquet file path.
+            table_type (str): Table type.
+            request (TableImportRequest): Table import request.
+
+        Returns:
+            response (TableMetaResponse | OkResponse): The table metadata response if blocking is True,
+                otherwise OkResponse.
+        """
+        return LOOP.run(super().import_table(table_type, request, **kwargs))
+
+    def export_table(
+        self,
+        table_type: str,
+        table_id: str,
+        **kwargs,
+    ) -> bytes:
+        """
+        Exports a table (data and schema) as a parquet file.
+
+        Args:
+            table_type (str): Table type.
+            table_id (str): ID or name of the table to be exported.
+
+        Returns:
+            response (list[dict[str, Any]]): The search results.
+        """
+        return LOOP.run(super().export_table(table_type, table_id, **kwargs))
+
+
+class _MeterClient(_MeterClientAsync):
+    def get_usage_metrics(
+        self,
+        type,
+        from_,
+        window_size,
+        org_ids=None,
+        proj_ids=None,
+        to=None,
+        group_by=None,
+        data_source=None,
+    ) -> UsageResponse:
+        return LOOP.run(
+            super().get_usage_metrics(
+                type, from_, window_size, org_ids, proj_ids, to, group_by, data_source
+            )
+        )
+
+    def get_billing_metrics(
+        self,
+        from_,
+        window_size,
+        org_ids=None,
+        proj_ids=None,
+        to=None,
+        group_by=None,
+        data_source=None,
+    ) -> UsageResponse:
+        return LOOP.run(
+            super().get_billing_metrics(
+                from_, window_size, org_ids, proj_ids, to, group_by, data_source
+            )
+        )
+
+    def get_bandwidth_metrics(
+        self,
+        from_,
+        window_size,
+        org_ids=None,
+        proj_ids=None,
+        to=None,
+        group_by=None,
+        data_source=None,
+    ) -> UsageResponse:
+        return LOOP.run(
+            super().get_bandwidth_metrics(
+                from_, window_size, org_ids, proj_ids, to, group_by, data_source
+            )
+        )
+
+    def get_storage_metrics(
+        self, from_, window_size, org_ids=None, proj_ids=None, to=None, group_by=None
+    ) -> UsageResponse:
+        return LOOP.run(
+            super().get_storage_metrics(from_, window_size, org_ids, proj_ids, to, group_by)
+        )
+
+
+class _TaskClient(_TaskClientAsync):
+    """Task methods."""
+
+    def get_progress(
+        self,
+        key: str,
+        **kwargs,
+    ) -> dict[str, Any]:
+        return LOOP.run(super().get_progress(key, **kwargs))
+
+    def poll_progress(
+        self,
+        key: str,
+        *,
+        initial_wait: float = 0.5,
+        max_wait: float = 30 * 60.0,
+        verbose: bool = False,
+        **kwargs,
+    ) -> dict[str, Any] | None:
+        from time import sleep
+
+        i = 1
+        t0 = perf_counter()
+        while (perf_counter() - t0) < max_wait:
+            sleep(min(initial_wait * i, 5.0))
+            prog = self.get_progress(key, **kwargs)
+            state = prog.get("state", None)
+            error = prog.get("error", None)
+            if verbose:
+                logger.info(
+                    f"{self.__class__.__name__}: Progress: key={key} state={state}"
+                    + (f" error={error}" if error else "")
+                )
+            if state == ProgressState.COMPLETED:
+                return prog
+            elif state == ProgressState.FAILED:
+                raise JamaiException(prog.get("error", "Unknown error"))
+            i += 1
+        return None
+
+    # def poll_progress(
+    #     self,
+    #     key: str,
+    #     *,
+    #     initial_wait: float = 0.5,
+    #     max_wait: float = 30 * 60.0,
+    #     **kwargs,
+    # ) -> dict[str, Any] | None:
+    #     return LOOP.run(
+    #         super().poll_progress(
+    #             key,
+    #             initial_wait=initial_wait,
+    #             max_wait=max_wait,
+    #             **kwargs,
+    #         )
+    #     )
+
+
+class _ConversationClient(_ConversationClientAsync):
+    """Conversation methods (synchronous version)."""
+
+    def create_conversation(
+        self,
+        request: ConversationCreateRequest,
+        **kwargs,
+    ) -> Generator[
+        ConversationMetaResponse | CellReferencesResponse | CellCompletionResponse, None, None
+    ]:
+        agen = LOOP.run(super().create_conversation(request, **kwargs))
+        return self._return_iterator(agen, True)
+
+    def list_conversations(
+        self,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        search_query: str = "",
+        **kwargs,
+    ) -> Page[ConversationMetaResponse]:
+        return LOOP.run(
+            super().list_conversations(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                search_query=search_query,
+                **kwargs,
+            )
+        )
+
+    def list_agents(
+        self,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        search_query: str = "",
+        **kwargs,
+    ) -> Page[ConversationMetaResponse]:
+        return LOOP.run(
+            super().list_agents(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                search_query=search_query,
+                **kwargs,
+            )
+        )
+
+    def get_conversation(self, conversation_id: str, **kwargs) -> ConversationMetaResponse:
+        return LOOP.run(super().get_conversation(conversation_id, **kwargs))
+
+    def get_agent(self, agent_id: str, **kwargs) -> AgentMetaResponse:
+        return LOOP.run(super().get_agent(agent_id, **kwargs))
+
+    def generate_title(
+        self,
+        conversation_id: str,
+        **kwargs,
+    ) -> ConversationMetaResponse:
+        """Generates a title for a conversation."""
+        return LOOP.run(super().generate_title(conversation_id, **kwargs))
+
+    def rename_conversation_title(
+        self,
+        conversation_id: str,
+        title: str,
+        **kwargs,
+    ) -> ConversationMetaResponse:
+        return LOOP.run(super().rename_conversation_title(conversation_id, title, **kwargs))
+
+    def delete_conversation(
+        self,
+        conversation_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(
+            super().delete_conversation(conversation_id, missing_ok=missing_ok, **kwargs)
+        )
+
+    def send_message(
+        self,
+        request: MessageAddRequest,
+        **kwargs,
+    ) -> Generator[CellReferencesResponse | CellCompletionResponse, None, None]:
+        agen = LOOP.run(super().send_message(request, **kwargs))
+        return self._return_iterator(agen, True)
+
+    def list_messages(
+        self,
+        conversation_id: str,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "ID",
+        order_ascending: bool = True,
+        columns: list[str] | None = None,
+        search_query: str = "",
+        search_columns: list[str] | None = None,
+        float_decimals: int = 0,
+        vec_decimals: int = 0,
+        **kwargs,
+    ) -> Page[dict[str, Any]]:
+        return LOOP.run(
+            super().list_messages(
+                conversation_id=conversation_id,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                columns=columns,
+                search_query=search_query,
+                search_columns=search_columns,
+                float_decimals=float_decimals,
+                vec_decimals=vec_decimals,
+                **kwargs,
+            )
+        )
+
+    def regen_message(
+        self,
+        request: MessagesRegenRequest,
+        **kwargs,
+    ) -> Generator[CellReferencesResponse | CellCompletionResponse, None, None]:
+        """Regenerates a message in a conversation and streams back the response."""
+        agen = LOOP.run(super().regen_message(request, **kwargs))
+        return self._return_iterator(agen, True)
+
+    def update_message(
+        self,
+        request: MessageUpdateRequest,
+        **kwargs,
+    ) -> OkResponse:
+        """Updates a specific message within a conversation."""
+        return LOOP.run(super().update_message(request, **kwargs))
+
+    def get_threads(
+        self,
+        conversation_id: str,
+        column_ids: list[str] | None = None,
+        **kwargs,
+    ) -> ConversationThreadsResponse:
+        """
+        Get all threads from a conversation.
+
+        Args:
+            conversation_id (str): Conversation ID.
+            column_ids (list[str] | None): Columns to fetch as conversation threads.
+
+        Returns:
+            response (ConversationThreadsResponse): The conversation threads.
+        """
+        return LOOP.run(super().get_threads(conversation_id, column_ids, **kwargs))
+
+
+class JamAI(JamAIAsync):
+    def __init__(
+        self,
+        project_id: str = ENV_CONFIG.project_id,
+        token: str = ENV_CONFIG.token_plain,
+        api_base: str = ENV_CONFIG.api_base,
+        headers: dict | None = None,
+        timeout: float | None = ENV_CONFIG.timeout_sec,
+        file_upload_timeout: float | None = ENV_CONFIG.file_upload_timeout_sec,
+        *,
+        user_id: str = "",
     ) -> None:
         """
         Initialize the JamAI client.
@@ -4962,98 +6273,115 @@ class JamAIAsync(_ClientAsync):
             file_upload_timeout (float | None, optional): The timeout to use when sending file upload requests.
                 Defaults to 60 minutes, but can be overridden via
                 `JAMAI_FILE_UPLOAD_TIMEOUT_SEC` var in environment or `.env` file.
-            api_key (str, optional): (Deprecated) Organization API key for authentication.
+            user_id (str, optional): User ID. For development purposes.
+                Defaults to "".
         """
-        if api_key:
-            warn(ORG_API_KEY_DEPRECATE, FutureWarning, stacklevel=2)
-        http_client = httpx.AsyncClient(
-            timeout=timeout,
-            transport=httpx.AsyncHTTPTransport(retries=3),
-        )
-        kwargs = dict(
+        super().__init__(
             project_id=project_id,
-            token=token or api_key,
+            token=token,
             api_base=api_base,
             headers=headers,
-            http_client=http_client,
+            timeout=timeout,
             file_upload_timeout=file_upload_timeout,
+            user_id=user_id,
         )
-        super().__init__(**kwargs)
-        self.admin = _AdminClientAsync(**kwargs)
-        self.template = _TemplateClientAsync(**kwargs)
-        self.file = _FileClientAsync(**kwargs)
-        self.table = _GenTableClientAsync(**kwargs)
+        kwargs = dict(
+            user_id=self.user_id,
+            project_id=self.project_id,
+            token=self.token,
+            api_base=self.api_base,
+            headers=self.headers,
+            http_client=self.http_client,
+            timeout=self.timeout,
+            file_upload_timeout=self.file_upload_timeout,
+        )
+        self.auth = _Auth(**kwargs)
+        self.prices = _Prices(**kwargs)
+        self.users = _Users(**kwargs)
+        self.models = _Models(**kwargs)
+        self.organizations = _Organizations(**kwargs)
+        self.projects = _Projects(**kwargs)
+        self.templates = _Templates(**kwargs)
+        self.file = _FileClient(**kwargs)
+        self.table = _GenTableClient(**kwargs)
+        self.meters = _MeterClient(**kwargs)
+        self.tasks = _TaskClient(**kwargs)
+        self.conversations = _ConversationClient(**kwargs)
 
-    async def health(self) -> dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         """
         Get health status.
 
         Returns:
             response (dict[str, Any]): Health status.
         """
-        response = await self._get(self.api_base, "/health", response_model=None)
-        return json_loads(response.text)
+        return LOOP.run(super().health())
 
     # --- Models and chat --- #
 
-    async def model_info(
+    def model_info(
         self,
-        name: str = "",
+        model: str = "",
         capabilities: list[
-            Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]
+            Literal["completion", "chat", "image", "audio", "document", "tool", "embed", "rerank"]
         ]
         | None = None,
-    ) -> ModelInfoResponse:
+        **kwargs,
+    ) -> ModelInfoListResponse:
         """
         Get information about available models.
 
         Args:
             name (str, optional): The model name. Defaults to "".
-            capabilities (list[Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]] | None, optional):
+            capabilities (list[Literal["completion", "chat", "image", "audio", "document", "tool", "embed", "rerank"]] | None, optional):
                 List of model capabilities to filter by. Defaults to None.
 
         Returns:
-            response (ModelInfoResponse): The model information response.
+            response (ModelInfoListResponse): The model information response.
         """
-        params = {"model": name, "capabilities": capabilities}
-        return await self._get(
-            self.api_base,
-            "/v1/models",
-            params=params,
-            response_model=ModelInfoResponse,
-        )
+        return LOOP.run(super().model_info(model=model, capabilities=capabilities, **kwargs))
 
-    async def model_names(
+    def model_ids(
         self,
         prefer: str = "",
         capabilities: list[
-            Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]
+            Literal["completion", "chat", "image", "audio", "document", "tool", "embed", "rerank"]
         ]
         | None = None,
+        **kwargs,
     ) -> list[str]:
         """
-        Get the names of available models.
+        Get the IDs of available models.
 
         Args:
-            prefer (str, optional): Preferred model name. Defaults to "".
-            capabilities (list[Literal["completion", "chat", "image", "audio", "tool", "embed", "rerank"]] | None, optional):
+            prefer (str, optional): Preferred model ID. Defaults to "".
+            capabilities (list[Literal["completion", "chat", "image", "audio", "document", "tool", "embed", "rerank"]] | None, optional):
                 List of model capabilities to filter by. Defaults to None.
 
         Returns:
-            response (list[str]): List of model names.
+            response (list[str]): List of model IDs.
         """
-        params = {"prefer": prefer, "capabilities": capabilities}
-        response = await self._get(
-            self.api_base,
-            "/v1/model_names",
-            params=params,
-            response_model=None,
-        )
-        return json_loads(response.text)
+        return LOOP.run(super().model_ids(prefer=prefer, capabilities=capabilities, **kwargs))
 
-    async def generate_chat_completions(
-        self, request: ChatRequest
-    ) -> ChatCompletionChunk | AsyncGenerator[References | ChatCompletionChunk, None]:
+    @deprecated(
+        "This method is deprecated, use `model_ids` instead.", category=FutureWarning, stacklevel=1
+    )
+    def model_names(
+        self,
+        prefer: str = "",
+        capabilities: list[
+            Literal["completion", "chat", "image", "audio", "document", "tool", "embed", "rerank"]
+        ]
+        | None = None,
+        **kwargs,
+    ) -> list[str]:
+        return self.model_ids(prefer=prefer, capabilities=capabilities, **kwargs)
+
+    def generate_chat_completions(
+        self,
+        request: ChatRequest,
+        **kwargs,
+    ) -> ChatCompletionResponse | Generator[References | ChatCompletionChunkResponse, None, None]:
         """
         Generates chat completions.
 
@@ -5061,33 +6389,19 @@ class JamAIAsync(_ClientAsync):
             request (ChatRequest): The request.
 
         Returns:
-            completion (ChatCompletionChunk | AsyncGenerator): The chat completion.
+            completion (ChatCompletionChunkResponse | AsyncGenerator): The chat completion.
                 In streaming mode, it is an async generator that yields a `References` object
-                followed by zero or more `ChatCompletionChunk` objects.
-                In non-streaming mode, it is a `ChatCompletionChunk` object.
+                followed by zero or more `ChatCompletionChunkResponse` objects.
+                In non-streaming mode, it is a `ChatCompletionChunkResponse` object.
         """
-        if request.stream:
+        agen = LOOP.run(super().generate_chat_completions(request=request, **kwargs))
+        return self._return_iterator(agen, request.stream)
 
-            async def gen():
-                async for chunk in self._stream(
-                    self.api_base, "/v1/chat/completions", body=request
-                ):
-                    chunk = json_loads(chunk[5:])
-                    if chunk["object"] == "chat.references":
-                        yield References.model_validate(chunk)
-                    elif chunk["object"] == "chat.completion.chunk":
-                        yield ChatCompletionChunk.model_validate(chunk)
-
-            return gen()
-        else:
-            return await self._post(
-                self.api_base,
-                "/v1/chat/completions",
-                body=request,
-                response_model=ChatCompletionChunk,
-            )
-
-    async def generate_embeddings(self, request: EmbeddingRequest) -> EmbeddingResponse:
+    def generate_embeddings(
+        self,
+        request: EmbeddingRequest,
+        **kwargs,
+    ) -> EmbeddingResponse:
         """
         Generate embeddings for the given input.
 
@@ -5097,642 +6411,16 @@ class JamAIAsync(_ClientAsync):
         Returns:
             response (EmbeddingResponse): The embedding response.
         """
-        return await self._post(
-            self.api_base,
-            "/v1/embeddings",
-            body=request,
-            response_model=EmbeddingResponse,
-        )
+        return LOOP.run(super().generate_embeddings(request=request, **kwargs))
 
-    # --- Gen Table --- #
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def create_action_table(self, request: ActionTableSchemaCreate) -> TableMetaResponse:
+    def rerank(self, request: RerankingRequest, **kwargs) -> RerankingResponse:
         """
-        Create an Action Table.
+        Generate similarity rankings for the given query and documents.
 
         Args:
-            request (ActionTableSchemaCreate): The action table schema.
+            request (RerankingRequest): The reranking request body.
 
         Returns:
-            response (TableMetaResponse): The table metadata response.
+            RerankingResponse: The reranking response.
         """
-        return await self.table.create_action_table(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def create_knowledge_table(
-        self, request: KnowledgeTableSchemaCreate
-    ) -> TableMetaResponse:
-        """
-        Create a Knowledge Table.
-
-        Args:
-            request (KnowledgeTableSchemaCreate): The knowledge table schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self.table.create_knowledge_table(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def create_chat_table(self, request: ChatTableSchemaCreate) -> TableMetaResponse:
-        """
-        Create a Chat Table.
-
-        Args:
-            request (ChatTableSchemaCreate): The chat table schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self.table.create_chat_table(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def get_table(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-    ) -> TableMetaResponse:
-        """
-        Get metadata for a specific Generative Table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self.table.get_table(table_type, table_id)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def list_tables(
-        self,
-        table_type: str | TableType,
-        offset: int = 0,
-        limit: int = 100,
-        parent_id: str | None = None,
-        search_query: str = "",
-        order_by: str = GenTableOrderBy.UPDATED_AT,
-        order_descending: bool = True,
-        count_rows: bool = False,
-    ) -> Page[TableMetaResponse]:
-        """
-        List Generative Tables of a specific type.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            offset (int, optional): Item offset. Defaults to 0.
-            limit (int, optional): Number of tables to return (min 1, max 100). Defaults to 100.
-            parent_id (str | None, optional): Parent ID of tables to return.
-                Additionally for Chat Table, you can list:
-                (1) all chat agents by passing in "_agent_"; or
-                (2) all chats by passing in "_chat_".
-                Defaults to None (return all tables).
-            search_query (str, optional): A string to search for within table IDs as a filter.
-                Defaults to "" (no filter).
-            order_by (str, optional): Sort tables by this attribute. Defaults to "updated_at".
-            order_descending (bool, optional): Whether to sort by descending order. Defaults to True.
-            count_rows (bool, optional): Whether to count the rows of the tables. Defaults to False.
-
-        Returns:
-            response (Page[TableMetaResponse]): The paginated table metadata response.
-        """
-        return await self.table.list_tables(
-            table_type,
-            offset=offset,
-            limit=limit,
-            parent_id=parent_id,
-            search_query=search_query,
-            order_by=order_by,
-            order_descending=order_descending,
-            count_rows=count_rows,
-        )
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def delete_table(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        *,
-        missing_ok: bool = True,
-    ) -> OkResponse:
-        """
-        Delete a specific table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-            missing_ok (bool, optional): Ignore resource not found error.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return await self.table.delete_table(table_type, table_id, missing_ok=missing_ok)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def duplicate_table(
-        self,
-        table_type: str | TableType,
-        table_id_src: str,
-        table_id_dst: str | None = None,
-        *,
-        include_data: bool = True,
-        create_as_child: bool = False,
-        **kwargs,
-    ) -> TableMetaResponse:
-        """
-        Duplicate a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id_src (str): The source table ID.
-            table_id_dst (str | None, optional): The destination / new table ID.
-                Defaults to None (create a new table ID automatically).
-            include_data (bool, optional): Whether to include data in the duplicated table. Defaults to True.
-            create_as_child (bool, optional): Whether the new table is a child table.
-                If this is True, then `include_data` will be set to True. Defaults to False.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self.table.duplicate_table(
-            table_type,
-            table_id_src,
-            table_id_dst,
-            include_data=include_data,
-            create_as_child=create_as_child,
-            **kwargs,
-        )
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def rename_table(
-        self,
-        table_type: str | TableType,
-        table_id_src: str,
-        table_id_dst: str,
-    ) -> TableMetaResponse:
-        """
-        Rename a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id_src (str): The source table ID.
-            table_id_dst (str): The destination / new table ID.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self.table.rename_table(table_type, table_id_src, table_id_dst)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def update_gen_config(
-        self,
-        table_type: str | TableType,
-        request: GenConfigUpdateRequest,
-    ) -> TableMetaResponse:
-        """
-        Update the generation configuration for a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (GenConfigUpdateRequest): The generation configuration update request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self.table.update_gen_config(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def add_action_columns(self, request: AddActionColumnSchema) -> TableMetaResponse:
-        """
-        Add columns to an Action Table.
-
-        Args:
-            request (AddActionColumnSchema): The action column schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self.table.add_action_columns(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def add_knowledge_columns(self, request: AddKnowledgeColumnSchema) -> TableMetaResponse:
-        """
-        Add columns to a Knowledge Table.
-
-        Args:
-            request (AddKnowledgeColumnSchema): The knowledge column schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self.table.add_knowledge_columns(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def add_chat_columns(self, request: AddChatColumnSchema) -> TableMetaResponse:
-        """
-        Add columns to a Chat Table.
-
-        Args:
-            request (AddChatColumnSchema): The chat column schema.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self.table.add_chat_columns(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def drop_columns(
-        self,
-        table_type: str | TableType,
-        request: ColumnDropRequest,
-    ) -> TableMetaResponse:
-        """
-        Drop columns from a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (ColumnDropRequest): The column drop request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self.table.drop_columns(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def rename_columns(
-        self,
-        table_type: str | TableType,
-        request: ColumnRenameRequest,
-    ) -> TableMetaResponse:
-        """
-        Rename columns in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (ColumnRenameRequest): The column rename request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self.table.rename_columns(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def reorder_columns(
-        self,
-        table_type: str | TableType,
-        request: ColumnReorderRequest,
-    ) -> TableMetaResponse:
-        """
-        Reorder columns in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (ColumnReorderRequest): The column reorder request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self.table.reorder_columns(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def list_table_rows(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        *,
-        offset: int = 0,
-        limit: int = 100,
-        search_query: str = "",
-        columns: list[str] | None = None,
-        float_decimals: int = 0,
-        vec_decimals: int = 0,
-        order_descending: bool = True,
-    ) -> Page[dict[str, Any]]:
-        """
-        List rows in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-            offset (int, optional): Item offset. Defaults to 0.
-            limit (int, optional): Number of rows to return (min 1, max 100). Defaults to 100.
-            search_query (str, optional): A string to search for within the rows as a filter.
-                Defaults to "" (no filter).
-            columns (list[str] | None, optional): List of column names to include in the response.
-                Defaults to None (all columns).
-            float_decimals (int, optional): Number of decimals for float values.
-                Defaults to 0 (no rounding).
-            vec_decimals (int, optional): Number of decimals for vectors.
-                If its negative, exclude vector columns. Defaults to 0 (no rounding).
-            order_descending (bool, optional): Whether to sort by descending order. Defaults to True.
-        """
-        return await self.table.list_table_rows(
-            table_type,
-            table_id,
-            offset=offset,
-            limit=limit,
-            search_query=search_query,
-            columns=columns,
-            float_decimals=float_decimals,
-            vec_decimals=vec_decimals,
-            order_descending=order_descending,
-        )
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def get_table_row(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        row_id: str,
-        *,
-        columns: list[str] | None = None,
-        float_decimals: int = 0,
-        vec_decimals: int = 0,
-    ) -> dict[str, Any]:
-        """
-        Get a specific row in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-            row_id (str): The ID of the row.
-            columns (list[str] | None, optional): List of column names to include in the response.
-                Defaults to None (all columns).
-            float_decimals (int, optional): Number of decimals for float values.
-                Defaults to 0 (no rounding).
-            vec_decimals (int, optional): Number of decimals for vectors.
-                If its negative, exclude vector columns. Defaults to 0 (no rounding).
-
-        Returns:
-            response (dict[str, Any]): The row data.
-        """
-        return await self.table.get_table_row(
-            table_type,
-            table_id,
-            row_id,
-            columns=columns,
-            float_decimals=float_decimals,
-            vec_decimals=vec_decimals,
-        )
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def add_table_rows(
-        self,
-        table_type: str | TableType,
-        request: RowAddRequest,
-    ) -> (
-        GenTableRowsChatCompletionChunks
-        | AsyncGenerator[GenTableStreamReferences | GenTableStreamChatCompletionChunk, None]
-    ):
-        """
-        Add rows to a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowAddRequest): The row add request.
-
-        Returns:
-            response (GenTableRowsChatCompletionChunks | AsyncGenerator): The row completion.
-                In streaming mode, it is an async generator that yields a `GenTableStreamReferences` object
-                followed by zero or more `GenTableStreamChatCompletionChunk` objects.
-                In non-streaming mode, it is a `GenTableRowsChatCompletionChunks` object.
-        """
-        return await self.table.add_table_rows(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def regen_table_rows(
-        self,
-        table_type: str | TableType,
-        request: RowRegenRequest,
-    ) -> (
-        GenTableRowsChatCompletionChunks
-        | AsyncGenerator[GenTableStreamReferences | GenTableStreamChatCompletionChunk, None]
-    ):
-        """
-        Regenerate rows in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowRegenRequest): The row regenerate request.
-
-        Returns:
-            response (GenTableRowsChatCompletionChunks | AsyncGenerator): The row completion.
-                In streaming mode, it is an async generator that yields a `GenTableStreamReferences` object
-                followed by zero or more `GenTableStreamChatCompletionChunk` objects.
-                In non-streaming mode, it is a `GenTableRowsChatCompletionChunks` object.
-        """
-        return await self.table.regen_table_rows(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def update_table_row(
-        self,
-        table_type: str | TableType,
-        request: RowUpdateRequest,
-    ) -> OkResponse:
-        """
-        Update a specific row in a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowUpdateRequest): The row update request.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return await self.table.update_table_row(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def delete_table_rows(
-        self,
-        table_type: str | TableType,
-        request: RowDeleteRequest,
-    ) -> OkResponse:
-        """
-        Delete rows from a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (RowDeleteRequest): The row delete request.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return await self.table.delete_table_rows(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def delete_table_row(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        row_id: str,
-    ) -> OkResponse:
-        """
-        Delete a specific row from a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): The ID of the table.
-            row_id (str): The ID of the row.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return await self.table.delete_table_row(table_type, table_id, row_id)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def get_conversation_thread(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        column_id: str,
-        row_id: str = "",
-        include: bool = True,
-    ) -> ChatThread:
-        """
-        Get the conversation thread for a chat table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            table_id (str): ID / name of the chat table.
-            column_id (str): ID / name of the column to fetch.
-            row_id (str, optional): ID / name of the last row in the thread.
-                Defaults to "" (export all rows).
-            include (bool, optional): Whether to include the row specified by `row_id`.
-                Defaults to True.
-
-        Returns:
-            response (ChatThread): The conversation thread.
-        """
-        return await self.table.get_conversation_thread(
-            table_type, table_id, column_id, row_id=row_id, include=include
-        )
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def hybrid_search(
-        self,
-        table_type: str | TableType,
-        request: SearchRequest,
-    ) -> list[dict[str, Any]]:
-        """
-        Perform a hybrid search on a table.
-
-        Args:
-            table_type (str | TableType): The type of the table.
-            request (SearchRequest): The search request.
-
-        Returns:
-            response (list[dict[str, Any]]): The search results.
-        """
-        return await self.table.hybrid_search(table_type, request)
-
-    @deprecated(
-        "This method is deprecated, use `client.table.embed_file_options` instead.",
-        category=FutureWarning,
-        stacklevel=1,
-    )
-    async def upload_file_options(self) -> httpx.Response:
-        """
-        Get options for uploading a file to a Knowledge Table.
-
-        Returns:
-            response (httpx.Response): The response containing options information.
-        """
-        return await self.table.embed_file_options()
-
-    @deprecated(
-        "This method is deprecated, use `client.table.embed_file` instead.",
-        category=FutureWarning,
-        stacklevel=1,
-    )
-    async def upload_file(self, request: FileUploadRequest) -> OkResponse:
-        """
-        Upload a file to a Knowledge Table.
-
-        Args:
-            request (FileUploadRequest): The file upload request.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return await self.table.embed_file(request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def import_table_data(
-        self,
-        table_type: str | TableType,
-        request: TableDataImportRequest,
-    ) -> GenTableChatResponseType:
-        """
-        Imports CSV or TSV data into a table.
-
-        Args:
-            file_path (str): CSV or TSV file path.
-            table_type (str | TableType): Table type.
-            request (TableDataImportRequest): Data import request.
-
-        Returns:
-            response (OkResponse): The response indicating success.
-        """
-        return await self.table.import_table_data(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def export_table_data(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-        columns: list[str] | None = None,
-        delimiter: Literal[",", "\t"] = ",",
-    ) -> bytes:
-        """
-        Exports the row data of a table as a CSV or TSV file.
-
-        Args:
-            table_type (str | TableType): Table type.
-            table_id (str): ID or name of the table to be exported.
-            delimiter (str, optional): The delimiter of the file: can be "," or "\\t". Defaults to ",".
-            columns (list[str], optional): A list of columns to be exported. Defaults to None (export all columns).
-
-        Returns:
-            response (list[dict[str, Any]]): The search results.
-        """
-        return await self.table.export_table_data(
-            table_type, table_id, columns=columns, delimiter=delimiter
-        )
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def import_table(
-        self,
-        table_type: str | TableType,
-        request: TableImportRequest,
-    ) -> TableMetaResponse:
-        """
-        Imports a table (data and schema) from a parquet file.
-
-        Args:
-            file_path (str): The parquet file path.
-            table_type (str | TableType): Table type.
-            request (TableImportRequest): Table import request.
-
-        Returns:
-            response (TableMetaResponse): The table metadata response.
-        """
-        return await self.table.import_table(table_type, request)
-
-    @deprecated(TABLE_METHOD_DEPRECATE, category=FutureWarning, stacklevel=1)
-    async def export_table(
-        self,
-        table_type: str | TableType,
-        table_id: str,
-    ) -> bytes:
-        """
-        Exports a table (data and schema) as a parquet file.
-
-        Args:
-            table_type (str | TableType): Table type.
-            table_id (str): ID or name of the table to be exported.
-
-        Returns:
-            response (list[dict[str, Any]]): The search results.
-        """
-        return await self.table.export_table(table_type, table_id)
+        return LOOP.run(super().rerank(request=request, **kwargs))

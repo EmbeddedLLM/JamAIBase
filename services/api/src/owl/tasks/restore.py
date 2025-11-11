@@ -1,25 +1,17 @@
 import multiprocessing
 import os
-import re
 import sqlite3
 import time
-from io import BytesIO
 
 import boto3
 import click
-import lance
-import pyarrow.parquet as pq
 from botocore.client import Config
 from loguru import logger
-from tqdm import tqdm
 
-from owl import protocol as p
-from owl.configs.manager import ENV_CONFIG
-from owl.db.gen_table import GenerativeTable
-from owl.protocol import TableMetaResponse
+from owl.configs import ENV_CONFIG
 from owl.utils.logging import setup_logger_sinks
 
-setup_logger_sinks(f"{ENV_CONFIG.owl_log_dir}/restoration.log")
+setup_logger_sinks(f"{ENV_CONFIG.log_dir}/restoration.log")
 logger.info(f"Using configuration: {ENV_CONFIG}")
 
 
@@ -41,7 +33,7 @@ def _initialize_databases(table_info_list):
         project_id = item["project_id"]
         table_type = item["table_type"]
 
-        lance_path = os.path.join(ENV_CONFIG.owl_db_dir, org_id, project_id, table_type)
+        lance_path = os.path.join(ENV_CONFIG.db_dir, org_id, project_id, table_type)
         sqlite_path = f"{lance_path}.db"
         if table_type != "file":
             if sqlite_path not in initialized_dbs:
@@ -55,57 +47,57 @@ def get_default_workers():
     return max(multiprocessing.cpu_count() * 8, 1)
 
 
-def restore(item):
-    import asyncio
+# def restore(item):
+#     import asyncio
 
-    try:
-        s3_client = _get_s3_client()
-        org_id = item["org_id"]
-        project_id = item["project_id"]
-        table_type = item["table_type"]
-        table_parquet = item["table_parquet"]
+#     try:
+#         s3_client = _get_s3_client()
+#         org_id = item["org_id"]
+#         project_id = item["project_id"]
+#         table_type = item["table_type"]
+#         table_parquet = item["table_parquet"]
 
-        if table_type == "file":
-            file_parquet_key = os.path.join(
-                item["datetime"], "db", org_id, project_id, "file", "file.parquet"
-            )
-            file_lance_dir = os.path.join(
-                ENV_CONFIG.owl_db_dir, org_id, project_id, "file", "file.lance"
-            )
-            logger.info(f"Processing {org_id}/{project_id}/{table_type}/{table_parquet}")
+#         if table_type == "file":
+#             file_parquet_key = os.path.join(
+#                 item["datetime"], "db", org_id, project_id, "file", "file.parquet"
+#             )
+#             file_lance_dir = os.path.join(
+#                 ENV_CONFIG.db_dir, org_id, project_id, "file", "file.lance"
+#             )
+#             logger.info(f"Processing {org_id}/{project_id}/{table_type}/{table_parquet}")
 
-            if not os.path.exists(file_lance_dir):
-                response = s3_client.get_object(
-                    Bucket=ENV_CONFIG.s3_backup_bucket_name, Key=file_parquet_key
-                )
-                logger.info(f"Processing {org_id}/{project_id}/file/file.parquet")
-                body = response["Body"].read()
-                parquet_table = pq.read_table(BytesIO(body))
-                lance.write_dataset(parquet_table, file_lance_dir)
-        else:
-            object_key = (
-                f"{item['datetime']}/db/{org_id}/{project_id}/{table_type}/{table_parquet}"
-            )
-            logger.info(f"Processing {org_id}/{project_id}/{table_type}/{table_parquet}")
-            response = s3_client.get_object(
-                Bucket=ENV_CONFIG.s3_backup_bucket_name, Key=object_key
-            )
-            table_id = re.sub(r"\.parquet$", "", table_parquet, flags=re.IGNORECASE)
-            table = GenerativeTable.from_ids(org_id, project_id, p.TableType(table_type))
+#             if not os.path.exists(file_lance_dir):
+#                 response = s3_client.get_object(
+#                     Bucket=ENV_CONFIG.s3_backup_bucket_name, Key=file_parquet_key
+#                 )
+#                 logger.info(f"Processing {org_id}/{project_id}/file/file.parquet")
+#                 body = response["Body"].read()
+#                 parquet_table = pq.read_table(BytesIO(body))
+#                 lance.write_dataset(parquet_table, file_lance_dir)
+#         else:
+#             object_key = (
+#                 f"{item['datetime']}/db/{org_id}/{project_id}/{table_type}/{table_parquet}"
+#             )
+#             logger.info(f"Processing {org_id}/{project_id}/{table_type}/{table_parquet}")
+#             response = s3_client.get_object(
+#                 Bucket=ENV_CONFIG.s3_backup_bucket_name, Key=object_key
+#             )
+#             table_id = re.sub(r"\.parquet$", "", table_parquet, flags=re.IGNORECASE)
+#             table = GenerativeTable.from_ids(org_id, project_id, p.TableType(table_type))
 
-            body = response["Body"].read()
-            with table.create_session() as session:
-                _, meta = asyncio.run(
-                    table.import_parquet(
-                        session=session,
-                        source=BytesIO(body),
-                        table_id_dst=table_id,
-                    )
-                )
-            meta = TableMetaResponse(**meta.model_dump(), num_rows=table.count_rows(meta.id))
-            return meta
-    except Exception as e:
-        logger.error(f"Failed to import table from parquet due to {e.__class__.__name__}: {e}")
+#             body = response["Body"].read()
+#             with table.create_session() as session:
+#                 _, meta = asyncio.get_event_loop().run_until_complete(
+#                     table.import_parquet(
+#                         session=session,
+#                         source=BytesIO(body),
+#                         table_id_dst=table_id,
+#                     )
+#                 )
+#             meta = TableMetaResponse(**meta.model_dump(), num_rows=table.count_rows(meta.id))
+#             return meta
+#     except Exception as e:
+#         logger.error(f"Failed to import table from parquet due to {e.__class__.__name__}: {e}")
 
 
 @click.command()
@@ -118,13 +110,13 @@ def main():
         total_objects = 0
         fetch_start_time = time.time()
 
-        # Ask for the number of workers
-        max_workers = get_default_workers()
-        workers = click.prompt(
-            f"Enter the number of worker processes to use (1-{max_workers}). Default:",
-            type=click.IntRange(1, max_workers),
-            default=max_workers,
-        )
+        # # Ask for the number of workers
+        # max_workers = get_default_workers()
+        # workers = click.prompt(
+        #     f"Enter the number of worker processes to use (1-{max_workers}). Default:",
+        #     type=click.IntRange(1, max_workers),
+        #     default=max_workers,
+        # )
 
         click.echo("Fetching S3 objects...")
         while True:
@@ -198,37 +190,37 @@ def main():
             logger.error(f"An error occurred: {e}")
 
         # Check if database files exist and ask for overwrite confirmation
-        current_files = os.listdir(ENV_CONFIG.owl_db_dir)
+        current_files = os.listdir(ENV_CONFIG.db_dir)
         if current_files:
-            click.echo(f"Current database path: {ENV_CONFIG.owl_db_dir}")
+            click.echo(f"Current database path: {ENV_CONFIG.db_dir}")
             if not click.confirm("Do you want to overwrite the existing files?"):
                 click.echo("Operation cancelled.")
                 return
         else:
-            click.echo(f"Current database path: {ENV_CONFIG.owl_db_dir}")
+            click.echo(f"Current database path: {ENV_CONFIG.db_dir}")
             if not click.confirm("Confirm restoring to this directory?"):
                 click.echo("Operation cancelled.")
                 return
 
-        table_info_list = sorted(table_info_list, key=lambda x: x["org_id"])
-        filtered_list = [item for item in table_info_list if item["datetime"] == specific_date]
+    #     table_info_list = sorted(table_info_list, key=lambda x: x["org_id"])
+    #     filtered_list = [item for item in table_info_list if item["datetime"] == specific_date]
 
-        # Use this before starting the multiprocessing pool
-        _initialize_databases(filtered_list)
-        click.echo(f"Using {workers} worker processes")
-        tic = time.time()
+    #     # Use this before starting the multiprocessing pool
+    #     _initialize_databases(filtered_list)
+    #     click.echo(f"Using {workers} worker processes")
+    #     tic = time.time()
 
-        with multiprocessing.Pool(workers, maxtasksperchild=2) as pool:
-            list(
-                tqdm(
-                    pool.imap_unordered(restore, filtered_list),
-                    total=len(filtered_list),
-                    desc="Importing tables",
-                    unit="table",
-                )
-            )
+    #     with multiprocessing.Pool(workers, maxtasksperchild=2) as pool:
+    #         list(
+    #             tqdm(
+    #                 pool.imap_unordered(restore, filtered_list),
+    #                 total=len(filtered_list),
+    #                 desc="Importing tables",
+    #                 unit="table",
+    #             )
+    #         )
 
-        click.echo(f"Import completed successfully! {time.time() - tic:.2f}s")
+    #     click.echo(f"Import completed successfully! {time.time() - tic:.2f}s")
 
     except Exception as e:
         logger.error(f"Failed to import table from parquet: {e}")

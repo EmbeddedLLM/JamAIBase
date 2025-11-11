@@ -5,21 +5,21 @@ from typing import Type
 import pytest
 
 from jamaibase import JamAI, JamAIAsync
-from jamaibase import protocol as p
+from jamaibase import types as t
 from jamaibase.utils import run
 
 CLIENT_CLS = [JamAI, JamAIAsync]
-TABLE_TYPES = [p.TableType.action, p.TableType.knowledge, p.TableType.chat]
+TABLE_TYPES = [t.TableType.action, t.TableType.knowledge, t.TableType.chat]
 
 
 @asynccontextmanager
 async def _create_gen_table(
     jamai: JamAI,
-    table_type: p.TableType,
+    table_type: t.TableType,
     table_id: str,
     model_id: str = "",
-    cols: list[p.ColumnSchemaCreate] | None = None,
-    chat_cols: list[p.ColumnSchemaCreate] | None = None,
+    cols: list[t.ColumnSchemaCreate] | None = None,
+    chat_cols: list[t.ColumnSchemaCreate] | None = None,
     embedding_model: str = "",
     delete_first: bool = True,
     delete: bool = True,
@@ -29,11 +29,11 @@ async def _create_gen_table(
             await run(jamai.table.delete_table, table_type, table_id)
         if cols is None:
             cols = [
-                p.ColumnSchemaCreate(id="input", dtype="str"),
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(id="input", dtype="str"),
+                t.ColumnSchemaCreate(
                     id="output",
                     dtype="str",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model=model_id,
                         prompt="${input}",
                         max_tokens=3,
@@ -42,36 +42,36 @@ async def _create_gen_table(
             ]
         if chat_cols is None:
             chat_cols = [
-                p.ColumnSchemaCreate(id="User", dtype="str"),
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(id="User", dtype="str"),
+                t.ColumnSchemaCreate(
                     id="AI",
                     dtype="str",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model=model_id,
                         system_prompt="You are an assistant.",
                         max_tokens=3,
                     ),
                 ),
             ]
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             table = await run(
-                jamai.table.create_action_table, p.ActionTableSchemaCreate(id=table_id, cols=cols)
+                jamai.table.create_action_table, t.ActionTableSchemaCreate(id=table_id, cols=cols)
             )
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             table = await run(
                 jamai.table.create_knowledge_table,
-                p.KnowledgeTableSchemaCreate(
+                t.KnowledgeTableSchemaCreate(
                     id=table_id, cols=cols, embedding_model=embedding_model
                 ),
             )
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             table = await run(
                 jamai.table.create_chat_table,
-                p.ChatTableSchemaCreate(id=table_id, cols=chat_cols + cols),
+                t.ChatTableSchemaCreate(id=table_id, cols=chat_cols + cols),
             )
         else:
             raise ValueError(f"Invalid table type: {table_type}")
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         yield table
     finally:
         if delete:
@@ -82,7 +82,7 @@ async def _create_gen_table(
 async def test_populate_templates(client_cls: Type[JamAI]):
     client = client_cls()
     response = await run(client.admin.backend.populate_templates)
-    assert isinstance(response, p.OkResponse)
+    assert isinstance(response, t.OkResponse)
 
 
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
@@ -92,7 +92,7 @@ async def test_list_templates(client_cls: Type[JamAI]):
     assert len(response.items) == response.total
     templates = response.items
     assert len(templates) > 0
-    assert all(isinstance(t, p.Template) for t in templates)
+    assert all(isinstance(t, t.Template) for t in templates)
     for template in templates:
         assert len(template.id) > 0
         assert len(template.name) > 0
@@ -107,12 +107,12 @@ async def test_get_template(client_cls: Type[JamAI]):
     template_id = templates[0].id
     # Fetch template
     template = await run(client.template.get_template, template_id)
-    assert isinstance(template, p.Template)
+    assert isinstance(template, t.Template)
     assert len(template.id) > 0
     assert len(template.name) > 0
     assert len(template.created_at) > 0
     assert len(template.tags) > 0
-    assert all(isinstance(t, p.TemplateTag) for t in template.tags)
+    assert all(isinstance(t, t.TemplateTag) for t in template.tags)
 
 
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
@@ -123,15 +123,15 @@ async def test_list_tables(client_cls: Type[JamAI]):
     assert len(templates) > 0
     template_id = templates[0].id
     # List tables
-    tables: list[p.TableMetaResponse] = []
+    tables: list[t.TableMetaResponse] = []
     for table_type in TABLE_TYPES:
         tables += (await run(client.template.list_tables, template_id, table_type)).items
     assert len(tables) > 0
-    assert all(isinstance(t, p.TableMetaResponse) for t in tables)
+    assert all(isinstance(t, t.TableMetaResponse) for t in tables)
     for table in tables:
         assert len(table.id) > 0
         assert len(table.cols) > 0
-        assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
+        assert all(isinstance(c, t.ColumnSchema) for c in table.cols)
         assert len(table.updated_at) > 0
 
     # Create a template by exporting default project
@@ -147,7 +147,7 @@ async def test_list_tables(client_cls: Type[JamAI]):
             new_template_id = "test_template"
             with BytesIO(data) as f:
                 response = await run(client.admin.backend.add_template, f, new_template_id, True)
-                assert isinstance(response, p.OkResponse)
+                assert isinstance(response, t.OkResponse)
 
     # Search query
     tables = (
@@ -220,10 +220,10 @@ async def test_get_table(client_cls: Type[JamAI]):
         table_count += len(tables)
         table_id = tables[0].id
         table = await run(client.template.get_table, template_id, table_type, table_id)
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         assert len(table.id) > 0
         assert len(table.cols) > 0
-        assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
+        assert all(isinstance(c, t.ColumnSchema) for c in table.cols)
         assert len(table.updated_at) > 0
     assert table_count > 0
 
@@ -244,10 +244,10 @@ async def test_list_table_rows(client_cls: Type[JamAI]):
         table_count += len(tables)
         table_id = tables[0].id
         table = await run(client.template.get_table, template_id, table_type, table_id)
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         assert len(table.id) > 0
         assert len(table.cols) > 0
-        assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
+        assert all(isinstance(c, t.ColumnSchema) for c in table.cols)
         assert len(table.updated_at) > 0
         # List rows
         rows = (

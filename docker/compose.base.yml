@@ -1,0 +1,327 @@
+services:
+  dragonfly:
+    image: ghcr.io/embeddedllm/dragonflydb/dragonfly:v1.27.0-ubuntu
+    ulimits:
+      memlock: -1
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 6379 || exit 1"]
+      interval: 10s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
+    # For better performance, consider `host` mode instead `port` to avoid docker NAT.
+    # `host` mode is NOT currently supported in Swarm Mode.
+    # https://docs.docker.com/compose/compose-file/compose-file-v3/#network_mode
+    # network_mode: "host"
+    # volumes:
+    #   - ${PWD}/docker_data/dragonfly:/data
+    networks:
+      - jamai
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.113.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ${PWD}/docker/otel_configs/otel-collector-config.yaml:/etc/otelcol/config.yaml
+    networks:
+      - jamai
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.124.0
+    command:
+      - "--selfScrapeInterval=15s"
+      - "--retentionPeriod=100y"
+    volumes:
+      - ${PWD}/docker_data/vm_data:/victoria-metrics-data
+    networks:
+      - jamai
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://0.0.0.0:8428/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  vmauth:
+    image: victoriametrics/vmauth:v1.124.0
+    command:
+      - "--auth.config=/etc/config.yml"
+    volumes:
+      - ${PWD}/docker/vmauth/config.yml:/etc/config.yml
+    networks:
+      - jamai
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://0.0.0.0:8427/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.28.0
+    command:
+      - "--retentionPeriod=100y"
+    volumes:
+      - ${PWD}/docker_data/vl_data:/victoria-logs-data
+    networks:
+      - jamai
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://0.0.0.0:9428/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  vmagent:
+    image: victoriametrics/vmagent:v1.124.0
+    depends_on:
+      victoriametrics:
+        condition: service_healthy
+      vmauth:
+        condition: service_healthy
+      victorialogs:
+        condition: service_healthy
+    volumes:
+      - ${PWD}/docker/vmagent/streamingAggregation.yaml:/etc/config/streamingAggregation.yaml
+      - ${PWD}/docker_data/vmagent:/tmp/vmagent
+    command:
+      # - "--promscrape.config=/etc/prometheus/prometheus.yml"
+      - "--remoteWrite.url=http://vmauth:8427/vm/api/v1/write"
+      - "--remoteWrite.basicAuth.username=${VMAUTH_USER:-owl}"
+      - "--remoteWrite.basicAuth.password=${VMAUTH_PASSWORD:-owl-vm}"
+      - "--remoteWrite.streamAggr.config=/etc/config/streamingAggregation.yaml"
+      - "--remoteWrite.streamAggr.enableWindows=true"
+      - "--remoteWrite.tmpDataPath=/tmp/vmagent"
+      # - "--promscrape.config.strictParse=false"
+    networks:
+      - jamai
+
+  clickhouse:
+    image: clickhouse:24.10.2.80
+    volumes:
+      - ${PWD}/docker_data/ch_data:/var/lib/clickhouse/
+      - ${PWD}/docker_data/ch_logs:/var/log/clickhouse-server/
+      - ${PWD}/docker/ch_configs/clickhouse_config.xml:/etc/clickhouse-server/config.d/custom_config.xml
+      - ${PWD}/docker/ch_configs/clickhouse_user_config.xml:/etc/clickhouse-server/users.d/custom_config.xml
+      - ${PWD}/docker/ch_configs/create_ch_prom_db.sh:/docker-entrypoint-initdb.d/create_ch_prom_db.sh
+    environment:
+      - CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS=1
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-owluser}
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-owlpassword}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-jamaibase_owl}
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    cap_add:
+      - SYS_NICE
+      - NET_ADMIN
+      - IPC_LOCK
+    networks:
+      - jamai
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8123/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  postgresql:
+    image: ghcr.io/embeddedllm/jamaibase/postgres:20250305
+    command:
+      - "-c"
+      - "max_connections=${PG_MAX_CONNECTIONS:-100}"
+      - "-c"
+      - "max_locks_per_transaction=512"
+      - "-c"
+      - "pgroonga.enable_wal_resource_manager=on"
+      - "-c"
+      - "shared_preload_libraries=pgroonga_wal_resource_manager,pg_stat_statements"
+    environment:
+      POSTGRES_USER: owlpguser
+      POSTGRES_PASSWORD: owlpgpassword
+      POSTGRES_DB: jamaibase_owl
+      PGUSER: owlpguser
+      PGPASSWORD: owlpgpassword
+      PGDATABASE: jamaibase_owl
+    volumes:
+      - ${PWD}/docker_data/postgres_db:/var/lib/postgresql/data
+    networks:
+      - jamai
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "owlpguser", "-d", "jamaibase_owl"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.24.0-p0
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    ports:
+      - 5432:5432
+    environment:
+      DB_USER: owlpguser
+      DB_PASSWORD: owlpgpassword
+      DB_HOST: postgresql
+      DB_PORT: 5432
+      DB_NAME: jamaibase_owl
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: transaction
+      ADMIN_USERS: owlpguser
+      MAX_CLIENT_CONN: ${PB_MAX_CLIENT_CONN:-100}
+      DEFAULT_POOL_SIZE: ${PB_MAX_CLIENT_CONN:-80}
+      SERVER_IDLE_TIMEOUT: 600
+      QUERY_WAIT_TIMEOUT: 120
+      SERVER_RESET_QUERY: DISCARD ALL
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-U", "owlpguser", "-d", "jamaibase_owl"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - jamai
+
+  minio:
+    image: minio/minio:RELEASE.2025-05-24T17-08-30Z
+    entrypoint: /bin/sh -c " minio server /data --console-address ':9001' & until (mc config host add myminio http://localhost:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}) do echo '...waiting...' && sleep 1; done; mc mb myminio/file; wait "
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
+    networks:
+      - jamai
+    volumes:
+      - ${PWD}/docker_data/minio:/data
+
+  docling:
+    image: ghcr.io/embeddedllm/docling-serve:20250528
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:5001/health || exit 1"]
+      interval: 10s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - jamai
+
+  owl:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.owl
+    env_file:
+      - ../.env
+    entrypoint:
+      - /bin/bash
+      - -c
+      - uv run python -m owl.entrypoints.api
+    ports:
+      - "${API_PORT:-6969}:${OWL_PORT:-6969}"
+    networks:
+      - jamai
+    volumes:
+      - ${PWD}/docker_data/owl/db:/usr/src/app/db
+      - ${PWD}/docker_data/owl/logs:/usr/src/app/logs
+      - ${PWD}/docker_data/owl/file:/usr/src/app/file
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+      otel-collector: # Ensure otel-collector is running before owl starts
+        condition: service_started
+      clickhouse:
+        condition: service_healthy
+      victorialogs:
+        condition: service_healthy
+      victoriametrics:
+        condition: service_healthy
+      vmagent:
+        condition: service_started
+      vmauth:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      docling:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail localhost:6969/api/health || exit 1"]
+      interval: 10s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  starling:
+    extends:
+      service: owl
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        uv run --no-sync celery -A owl.entrypoints.starling worker --loglevel=info --max-memory-per-child 65536 --autoscale=4,2 --beat
+    command: !reset []
+    depends_on: !override
+      owl:
+        condition: service_healthy
+    ports: !reset []
+    healthcheck: !reset []
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        PUBLIC_JAMAI_URL: ${PUBLIC_JAMAI_URL}
+        PUBLIC_IS_SPA: ${PUBLIC_IS_SPA}
+        CHECK_ORIGIN: ${CHECK_ORIGIN}
+    command: ["node", "server"]
+    depends_on:
+      owl:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail localhost:4000 || exit 1"]
+      interval: 10s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - BODY_SIZE_LIMIT=Infinity
+    env_file:
+      - ../.env
+    ports:
+      - "${FRONTEND_PORT:-4000}:4000"
+    networks:
+      - jamai
+
+  kopi:
+    image: hoipangg/v8-kopi:0.4
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+      - MAX_SIZE_BYTES=20971520
+    networks:
+      - jamai
+
+networks:
+  jamai:
+    driver_opts:
+      com.docker.network.driver.mtu: 1442

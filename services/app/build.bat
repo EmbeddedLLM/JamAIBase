@@ -24,7 +24,7 @@ powershell -Command "Get-Content .env | ForEach-Object { $line = $_ -replace '#.
 
 echo %BASE_URL%
 echo %PUBLIC_JAMAI_URL%
-echo %JAMAI_URL%
+echo %OWL_URL%
 echo %PUBLIC_IS_SPA%
 
 rem Set the flag variable

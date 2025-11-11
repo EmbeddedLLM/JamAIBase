@@ -7,17 +7,30 @@
 		checkedChange: { event: MouseEvent; value: boolean };
 	}>();
 
-	let className: string | undefined | null = undefined;
-	export { className as class };
+	
 
-	export let id: string | undefined = undefined;
-	export let defaultChecked: boolean = false;
-	export let disabled: boolean | undefined = undefined;
-	export let required: boolean | undefined = undefined;
-	export let name: string | undefined = undefined;
 
-	export let checked: boolean = defaultChecked;
-	export let validateBeforeChange: (e: MouseEvent) => boolean = () => true;
+	interface Props {
+		class?: string | undefined | null;
+		id?: string | undefined;
+		defaultChecked?: boolean;
+		disabled?: boolean | undefined;
+		required?: boolean | undefined;
+		name?: string | undefined;
+		checked?: boolean;
+		validateBeforeChange?: (e: MouseEvent) => boolean;
+	}
+
+	let {
+		class: className = undefined,
+		id = undefined,
+		defaultChecked = false,
+		disabled = undefined,
+		required = undefined,
+		name = undefined,
+		checked = $bindable(defaultChecked),
+		validateBeforeChange = () => true
+	}: Props = $props();
 
 	function toggle(e: MouseEvent) {
 		if (validateBeforeChange(e) == false) return;
@@ -31,8 +44,8 @@
 </script>
 
 <button
-	on:click={toggle}
-	on:keydown={preventEnter}
+	onclick={toggle}
+	onkeydown={preventEnter}
 	{id}
 	{disabled}
 	aria-checked={checked}

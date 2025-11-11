@@ -1,6 +1,6 @@
 {
     "name": "jamaibase",
-    "version": "0.3.0",
+    "version": "0.5.0",
     "description": "JamAIBase Client SDK (JS/TS). JamAI Base: Let Your Database Orchestrate LLMs and RAG",
     "main": "dist/index.cjs",
     "module": "dist/index.mjs",
@@ -13,7 +13,7 @@
         "build": "/bin/bash build",
         "openapi-to-zod": "openapi-zod-client openapi.json -o zodschema/zodmodels.ts",
         "doc-ts-moduler": "typedoc  --includeVersion --tsconfig tsconfig.build.json --includes ./dist/*.d.ts --includes ./dist/**/*.d.ts --includes ./dist/resources/**/*.d.ts --out docs-autogen-ts",
-        "doc-ts": "typedoc --readme ./README.md --includeVersion --tsconfig tsconfig.build.json --entryPoints ./dist/index.d.ts --out docs-autogen-ts && cp JamAI_Base_Cover.png  docs-autogen-ts/"
+        "doc-ts": "typedoc --readme ./README.md --includeVersion --tsconfig tsconfig.build.json --entryPointStrategy expand --entryPoints ./dist/index.d.ts --entryPoints ./dist/resources --out docs-autogen-ts --categorizeByGroup --sort alphabetical && cp JamAI_Base_Cover.png docs-autogen-ts/"
     },
     "repository": {
         "type": "git",
@@ -27,29 +27,26 @@
     ],
     "exports": {
         ".": {
-            "import": "./dist/index.mjs",
-            "require": "./dist/index.cjs.js",
+            "import": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.mjs"
+            },
+            "require": {
+                "types": "./dist/index.d.ts",
+                "default": "./dist/index.cjs.js"
+            },
             "browser": "./dist/index.umd.js",
-            "types": "./dist/index.d.ts",
             "default": "./dist/index.mjs"
         },
-        "./index.mjs": {
-            "types": "./dist/index.d.ts",
-            "default": "./dist/index.mjs"
-        },
-        "./index.cjs.js": {
-            "types": "./dist/index.d.ts",
-            "default": "./index.cjs.js"
-        },
-        "./index.umd.js": {
-            "types": "./dist/index.d.ts",
-            "default": "./dist/index.umd.js"
+        "./resources/*": {
+            "import": "./dist/resources/*",
+            "require": "./dist/resources/*"
         }
     },
     "files": [
         "dist/**/*"
     ],
-    "author": "EmbeddedLLM, Tan Tun Jian",
+    "author": "EmbeddedLLM, Tan Tun Jian, Kamil Hassan",
     "license": "Apache-2.0",
     "bugs": {
         "url": "https://github.com/EmbeddedLLM/JAM.ai.dev/issues"

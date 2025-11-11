@@ -1,6 +1,10 @@
 <script lang="ts">
-	let className: string | undefined | null = undefined;
-	export { className as class };
+	interface Props {
+		class?: string | undefined | null;
+	}
+
+	let { class: className = undefined }: Props = $props();
+	
 </script>
 
 <svg viewBox="0 0 41 41" fill="none" xmlns="http://www.w3.org/2000/svg" class={className}>

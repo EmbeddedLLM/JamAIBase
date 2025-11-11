@@ -1,75 +1,104 @@
-"""
-API server.
-"""
+import asyncio
+from asyncio.coroutines import iscoroutine
+from collections import defaultdict
+from contextlib import asynccontextmanager
+from time import perf_counter
 
-import os
-from typing import Any
-
-from fastapi import BackgroundTasks, FastAPI, Request, status
-from fastapi.exceptions import RequestValidationError, ResponseValidationError
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
-from filelock import Timeout
+from gunicorn.app.base import BaseApplication
 from loguru import logger
-from pydantic import BaseModel
-from starlette.exceptions import HTTPException
-from starlette.middleware.sessions import SessionMiddleware
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.redis import RedisInstrumentor
 
-from jamaibase import JamAIAsync
-from jamaibase.exceptions import (
-    AuthorizationError,
-    BadInputError,
-    ContextOverflowError,
-    ExternalAuthError,
-    ForbiddenError,
-    InsufficientCreditsError,
-    ResourceExistsError,
-    ResourceNotFoundError,
-    ServerBusyError,
-    TableSchemaFixedError,
-    UnexpectedError,
-    UnsupportedMediaTypeError,
-    UpgradeTierError,
+from owl.configs import CACHE, ENV_CONFIG
+from owl.db import create_db_engine_async, init_db, migrate_db, reset_db
+from owl.routers import (
+    auth,
+    conversation,
+    file,
+    gen_table,
+    gen_table_v1,
+    meters,
+    models,
+    organizations,
+    projects,
+    serving,
+    tasks,
+    templates,
+    users,
 )
-from owl.billing import BillingManager
-from owl.configs.manager import CONFIG, ENV_CONFIG
-from owl.protocol import COL_NAME_PATTERN, TABLE_NAME_PATTERN, UserAgent
-from owl.routers import file, gen_table, llm, org_admin, template
+from owl.routers.projects import v1 as projects_v1
+from owl.types import UserAgent
 from owl.utils import uuid7_str
+from owl.utils.billing import CLICKHOUSE_CLIENT, BillingManager
+from owl.utils.exceptions import JamaiException
+from owl.utils.handlers import exception_handler, make_request_log_str, path_not_found_handler
 from owl.utils.logging import setup_logger_sinks, suppress_logging_handlers
-from owl.utils.responses import (
-    bad_input_response,
-    forbidden_response,
-    internal_server_error_response,
-    make_request_log_str,
-    make_response,
-    resource_exists_response,
-    resource_not_found_response,
-    server_busy_response,
-    unauthorized_response,
-)
+from owl.utils.mcp import get_mcp_router
+from owl.utils.mcp.server import MCP_TOOL_TAG
 
-if ENV_CONFIG.is_oss:
-    from owl.routers import oss_admin as admin
-
-    cloud_auth = None
-else:
-    from owl.routers import cloud_admin as admin
-    from owl.routers import cloud_auth
-
-
-NO_AUTH_ROUTES = {"health", "public", "favicon.ico"}
-
-client = JamAIAsync(token=ENV_CONFIG.service_key_plain, timeout=60.0)
-logger.enable("owl")
-setup_logger_sinks()
+OVERHEAD_LOG_ROUTES = {r.path for r in serving.router.routes}
+# logger.enable("owl")
+setup_logger_sinks(None)
 # We purposely don't intercept uvicorn logs since it is typically not useful
 # We also don't intercept transformers logs
 # replace_logging_handlers(["uvicorn.access"], False)
-suppress_logging_handlers(["uvicorn", "litellm", "openmeter", "azure"], True)
+suppress_logging_handlers(["uvicorn", "litellm", "azure", "openmeter", "pottery"], True)
+
+# --- Setup DB --- #
+# Maybe reset DB
+if ENV_CONFIG.db_reset:
+    asyncio.run(reset_db(reset_max_users=ENV_CONFIG.db_init_max_users))
+# Migration
+asyncio.run(migrate_db())
+# Maybe populate DB with demo data
+# If OSS and first launch, init user, organization and project
+if ENV_CONFIG.db_init:
+    asyncio.run(init_db(init_max_users=ENV_CONFIG.db_init_max_users))
+# Maybe reset cache
+if ENV_CONFIG.cache_reset:
+    CACHE.purge()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic
+    logger.info(f"Using configuration: {ENV_CONFIG}")
+    yield
+    logger.info("Shutting down...")
+
+    # Close DB connection
+    logger.info("Closing DB connection.")
+    try:
+        await (await create_db_engine_async()).dispose()
+    except Exception as e:
+        logger.warning(f"Failed to close DB connection: {repr(e)}")
+
+    # Close Redis connection
+    logger.info("Closing Redis connection.")
+    try:
+        await CACHE.aclose()
+    except Exception as e:
+        logger.warning(f"Failed to close Redis connection: {repr(e)}")
+
+    # Flush buffer
+    logger.info("Flushing redis buffer to database.")
+    try:
+        await CLICKHOUSE_CLIENT.flush_buffer()
+    except Exception as e:
+        logger.warning(f"Failed to flush buffer: {repr(e)}")
+    finally:
+        ret = CLICKHOUSE_CLIENT.client.close()
+        if iscoroutine(ret):
+            await ret
+    logger.info("Shutdown complete.")
 
 
 app = FastAPI(
+    title="JamAI Base API",
     logger=logger,
     default_response_class=ORJSONResponse,  # Should be faster
     openapi_url="/api/public/openapi.json",
@@ -80,37 +109,107 @@ app = FastAPI(
         "url": "https://www.apache.org/licenses/LICENSE-2.0.html",
     },
     servers=[dict(url="https://api.jamaibase.com")],
+    lifespan=lifespan,
 )
-services = [
-    (admin.router, ["Backend Admin"], "/api"),
-    (admin.public_router, ["Backend Admin"], "/api"),
-    (org_admin.router, ["Organization Admin"], "/api/admin/org"),
-    (template.router, ["Templates"], "/api"),
-    (template.public_router, ["Templates (Public)"], "/api"),
-    (llm.router, ["Large Language Model"], "/api"),
-    (gen_table.router, ["Generative Table"], "/api"),
-    (file.router, ["File"], "/api"),
-]
+
+# Programmatic Instrumentation
+FastAPIInstrumentor.instrument_app(app)
+RedisInstrumentor().instrument()
+HTTPXClientInstrumentor().instrument()
 
 # Mount
-for router, tags, prefix in services:
+internal_api_tag = "" if ENV_CONFIG.is_oss else " (Internal API)"
+app.include_router(
+    models.router,
+    prefix="/api",
+    tags=["Models" + internal_api_tag],
+)
+app.include_router(
+    auth.router,
+    prefix="/api",
+    tags=["Authentication" + internal_api_tag],
+)
+app.include_router(
+    users.router,
+    prefix="/api",
+    tags=["Users" + internal_api_tag],
+)
+app.include_router(
+    organizations.router,
+    prefix="/api",
+    tags=["Organizations" + internal_api_tag],
+)
+app.include_router(
+    projects.router,
+    prefix="/api",
+    tags=["Projects"],
+)
+app.include_router(
+    projects_v1.router,
+    deprecated=True,
+    prefix="/api/admin/org",
+    tags=["Organization Admin (Legacy)"],
+)
+app.include_router(
+    templates.router,
+    prefix="/api",
+    tags=["Templates"],
+)
+app.include_router(
+    conversation.router,
+    prefix="/api",
+    tags=["Conversations"],
+)
+app.include_router(
+    gen_table.router,
+    prefix="/api",
+    tags=["Generative Table (V2)"],
+)
+app.include_router(
+    gen_table_v1.router,
+    prefix="/api",
+    tags=["Generative Table (V1)"],
+    deprecated=True,
+)
+app.include_router(
+    serving.router,
+    prefix="/api",
+    tags=["Serving"],
+)
+app.include_router(
+    file.router,
+    prefix="/api",
+    tags=["File"],
+)
+app.include_router(
+    tasks.router,
+    prefix="/api",
+    tags=["Tasks"],
+)
+app.include_router(
+    meters.router,
+    prefix="/api",
+    tags=["Meters" + internal_api_tag],
+)
+if ENV_CONFIG.is_cloud:
+    from owl.routers.cloud import logs, prices
+
     app.include_router(
-        router,
-        prefix=prefix,
-        tags=tags,
-    )
-if cloud_auth is not None:
-    app.include_router(
-        cloud_auth.router,
+        prices.router,
         prefix="/api",
-        tags=["OAuth"],
+        tags=["Prices"],
     )
-    app.add_middleware(
-        SessionMiddleware,
-        secret_key=ENV_CONFIG.owl_session_secret_plain,
-        max_age=60 * 60 * 24 * 7,
-        https_only=ENV_CONFIG.owl_is_prod,
+    app.include_router(
+        logs.router,
+        prefix="/api",
+        tags=["Logs (Internal Cloud-only API)"],
     )
+app.include_router(
+    get_mcp_router(app),
+    prefix="/api",
+    tags=["Model Context Protocol (MCP)"],
+)
+
 
 # Permissive CORS
 app.add_middleware(
@@ -120,51 +219,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def startup():
-    # Router lifespan is broken as of fastapi==0.109.0 and starlette==0.35.1
-    # https://github.com/tiangolo/fastapi/discussions/9664
-    logger.info(f"Using configuration: {ENV_CONFIG}")
-    # Maybe purge Redis data
-    if ENV_CONFIG.owl_cache_purge:
-        CONFIG.purge()
-    if ENV_CONFIG.is_oss:
-        logger.opt(colors=True).info("Launching in <b><u><cyan>OSS mode</></></>.")
-        from sqlalchemy import func
-        from sqlmodel import Session, select
-
-        from owl.db import MAIN_ENGINE
-        from owl.db.oss_admin import Organization, Project
-
-        with Session(MAIN_ENGINE) as session:
-            org = session.get(Organization, ENV_CONFIG.default_org_id)
-            if org is None:
-                org = Organization()
-                session.add(org)
-                session.commit()
-                session.refresh(org)
-                logger.info(f"Default organization created: {org}")
-            else:
-                logger.info(f"Default organization found: {org}")
-            # Default project could have been deleted
-            # As long as there is at least one project it's ok
-            project_count = session.exec(select(func.count(Project.id))).one()
-            if project_count == 0:
-                project = Project(
-                    id=ENV_CONFIG.default_project_id,
-                    name="Default",
-                    organization_id=org.id,
-                )
-                session.add(project)
-                session.commit()
-                session.refresh(project)
-                logger.info(f"Default project created: {project}")
-            else:
-                logger.info(f"{project_count:,d} projects found.")
-    else:
-        logger.opt(colors=True).info("Launching in <b><u><cyan>Cloud mode</></></>.")
+app.add_exception_handler(JamaiException, exception_handler)  # Suppress starlette traceback
+app.add_exception_handler(Exception, exception_handler)
+app.add_exception_handler(404, path_not_found_handler)
 
 
 @app.middleware("http")
@@ -178,35 +235,48 @@ async def log_request(request: Request, call_next):
     Returns:
         response (Response): Response of the path operation.
     """
+    request.state.request_start_time = perf_counter()
     # Set request state
-    request.state.id = uuid7_str()
+    request_id = request.headers.get("x-request-id", uuid7_str())
+    request.state.id = request_id
     request.state.user_agent = UserAgent.from_user_agent_string(
         request.headers.get("user-agent", "")
     )
-    request.state.billing = BillingManager(request=request)
-
-    # OPTIONS are always allowed for CORS preflight:
-    if request.method == "OPTIONS":
-        return await call_next(request)
-    # The following paths are always allowed:
-    path_components = [p for p in request.url.path.split("/") if p][:2]
-    if request.method in ("GET", "HEAD") and (
-        len(path_components) == 0 or path_components[-1] in NO_AUTH_ROUTES
-    ):
-        return await call_next(request)
+    request.state.timing = defaultdict(float)
 
     # Call request
+    path = request.url.path
+    if "api/health" not in path:
+        logger.info(make_request_log_str(request))
     response = await call_next(request)
-    logger.info(make_request_log_str(request, response.status_code))
+    response.headers["x-request-id"] = request_id
+    if "api/health" not in path:
+        logger.info(make_request_log_str(request, response.status_code))
 
-    # Add egress events
-    request.state.billing.create_egress_events(
-        float(response.headers.get("content-length", 0)) / (1024**3)
-    )
-    # Process billing (this will run AFTER streaming responses are sent)
-    tasks = BackgroundTasks()
-    tasks.add_task(request.state.billing.process_all)
-    response.background = tasks
+    # Process billing (this will run BEFORE any responses are sent)
+    if hasattr(request.state, "billing"):
+        billing: BillingManager = request.state.billing
+        # Add egress events
+        # This does not include SSE egress, and will need to be captured separately
+        egress_bytes = float(response.headers.get("content-length", 0))
+        if egress_bytes > 0:
+            billing.create_egress_events(egress_bytes / (1024**3))
+        # Background tasks will run AFTER streaming responses are sent
+        tasks = BackgroundTasks()
+        tasks.add_task(billing.process_all)
+        response.background = tasks
+    # Log timing
+    model_start_time = getattr(request.state, "model_start_time", None)
+    if (
+        ENV_CONFIG.log_timings
+        and model_start_time
+        and any(p for p in OVERHEAD_LOG_ROUTES if p in path)
+    ):
+        overhead = model_start_time - request.state.request_start_time
+        breakdown = {k: f"{v * 1e3:,.1f} ms" for k, v in request.state.timing.items()}
+        logger.info(
+            f"{request.state.id} - Total overhead: {overhead * 1e3:,.1f} ms. Breakdown: {breakdown}"
+        )
     return response
 
 
@@ -219,256 +289,134 @@ async def health() -> ORJSONResponse:
     )
 
 
-# --- Order of handlers does not matter --- #
-
-
-@app.exception_handler(AuthorizationError)
-async def authorization_exc_handler(request: Request, exc: ForbiddenError):
-    return unauthorized_response(request, str(exc), exception=exc)
-
-
-@app.exception_handler(ExternalAuthError)
-async def external_auth_exc_handler(request: Request, exc: ExternalAuthError):
-    return unauthorized_response(
-        request, str(exc), error="external_authentication_failed", exception=exc
-    )
-
-
-@app.exception_handler(PermissionError)
-async def permission_error_exc_handler(request: Request, exc: PermissionError):
-    return forbidden_response(request, str(exc), error="resource_protected", exception=exc)
-
-
-@app.exception_handler(ForbiddenError)
-async def forbidden_exc_handler(request: Request, exc: ForbiddenError):
-    return forbidden_response(request, str(exc), exception=exc)
-
-
-@app.exception_handler(UpgradeTierError)
-async def upgrade_tier_exc_handler(request: Request, exc: UpgradeTierError):
-    return forbidden_response(request, str(exc), error="upgrade_tier", exception=exc)
-
-
-@app.exception_handler(InsufficientCreditsError)
-async def insufficient_credits_exc_handler(request: Request, exc: InsufficientCreditsError):
-    return forbidden_response(request, str(exc), error="insufficient_credits", exception=exc)
-
-
-@app.exception_handler(FileNotFoundError)
-async def file_not_found_exc_handler(request: Request, exc: FileNotFoundError):
-    return resource_not_found_response(request, str(exc), exception=exc)
-
-
-@app.exception_handler(ResourceNotFoundError)
-async def resource_not_found_exc_handler(request: Request, exc: ResourceNotFoundError):
-    return resource_not_found_response(request, str(exc), exception=exc)
-
-
-@app.exception_handler(FileExistsError)
-async def file_exists_exc_handler(request: Request, exc: FileExistsError):
-    return resource_exists_response(request, str(exc), exception=exc)
-
-
-@app.exception_handler(ResourceExistsError)
-async def resource_exists_exc_handler(request: Request, exc: ResourceExistsError):
-    return resource_exists_response(request, str(exc), exception=exc)
-
-
-@app.exception_handler(UnsupportedMediaTypeError)
-async def unsupported_media_type_exc_handler(request: Request, exc: UnsupportedMediaTypeError):
-    logger.warning(f"{make_request_log_str(request, 415)} - {exc.__class__.__name__}: {exc}")
-    return ORJSONResponse(
-        status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-        content={
-            "object": "error",
-            "error": "unsupported_media_type",
-            "message": str(exc),
-            "detail": str(exc),
-            "request_id": request.state.id,
-            "exception": "",
-        },
-    )
-
-
-@app.exception_handler(BadInputError)
-async def bad_input_exc_handler(request: Request, exc: BadInputError):
-    return bad_input_response(request, str(exc), exception=exc)
-
-
-@app.exception_handler(TableSchemaFixedError)
-async def table_fixed_exc_handler(request: Request, exc: TableSchemaFixedError):
-    return bad_input_response(request, str(exc), error="table_schema_fixed", exception=exc)
-
-
-@app.exception_handler(ContextOverflowError)
-async def context_overflow_exc_handler(request: Request, exc: ContextOverflowError):
-    return bad_input_response(request, str(exc), error="context_overflow", exception=exc)
-
-
-class Wrapper(BaseModel):
-    body: Any
-
-
-@app.exception_handler(RequestValidationError)
-async def request_validation_exc_handler(request: Request, exc: RequestValidationError):
-    content = None
-    try:
-        logger.info(
-            f"{make_request_log_str(request, 422)} - RequestValidationError: {exc.errors()}"
+# Process OpenAPI docs
+openapi_schema = app.openapi()
+# Remove MCP and permission tags
+for path_info in openapi_schema["paths"].values():
+    for method_info in path_info.values():
+        tags = method_info["tags"]
+        tags = [
+            tag
+            for tag in tags
+            if not (tag == MCP_TOOL_TAG or tag.startswith(("system", "organization", "project")))
+        ]
+        method_info["tags"] = tags
+# Re-order paths to put internal APIs last
+if ENV_CONFIG.is_cloud:
+    openapi_schema["paths"] = {
+        k: openapi_schema["paths"][k]
+        for k in sorted(
+            openapi_schema["paths"].keys(),
+            key=lambda p: internal_api_tag
+            in list(openapi_schema["paths"][p].values())[0]["tags"][0],
         )
-        errors, messages = [], []
-        for i, e in enumerate(exc.errors()):
-            try:
-                msg = str(e["ctx"]["error"]).strip()
-            except Exception:
-                msg = e["msg"].strip()
-            if not msg.endswith("."):
-                msg = f"{msg}."
-            # Intercept Table and Column ID regex error message
-            if TABLE_NAME_PATTERN in msg:
-                msg = (
-                    "Table name or ID must be unique with at least 1 character and up to 100 characters. "
-                    "Must start and end with an alphabet or number. "
-                    "Characters in the middle can include `_` (underscore), `-` (dash), `.` (dot)."
-                )
-            elif COL_NAME_PATTERN in msg:
-                msg = (
-                    "Column name or ID must be unique with at least 1 character and up to 100 characters. "
-                    "Must start and end with an alphabet or number. "
-                    "Characters in the middle can include `_` (underscore), `-` (dash), ` ` (space). "
-                    'Cannot be called "ID" or "Updated at" (case-insensitive).'
-                )
-
-            path = ""
-            for j, x in enumerate(e.get("loc", [])):
-                if isinstance(x, str):
-                    if j > 0:
-                        path += "."
-                    path += x
-                elif isinstance(x, int):
-                    path += f"[{x}]"
-                else:
-                    raise TypeError("Unexpected type")
-            if path:
-                path += " : "
-            messages.append(f"{i + 1}. {path}{msg}")
-            error = {k: v for k, v in e.items() if k != "ctx"}
-            if "ctx" in e:
-                error["ctx"] = {k: repr(v) if k == "error" else v for k, v in e["ctx"].items()}
-            if "input" in e:
-                error["input"] = repr(e["input"])
-            errors.append(error)
-        message = "\n".join(messages)
-        message = f"Your request contains errors:\n{message}"
-        content = {
-            "object": "error",
-            "error": "validation_error",
-            "message": message,
-            "detail": errors,
-            "request_id": request.state.id,
-            "exception": "",
-            **Wrapper(body=exc.body).model_dump(),
-        }
-        return ORJSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content=content,
-        )
-    except Exception:
-        if content is None:
-            content = repr(exc)
-        logger.exception(f"{request.state.id} - Failed to parse error data: {content}")
-        message = str(exc)
-        return ORJSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content={
-                "object": "error",
-                "error": "validation_error",
-                "message": message,
-                "detail": message,
-                "request_id": request.state.id,
-                "exception": exc.__class__.__name__,
-            },
-        )
-
-
-@app.exception_handler(Exception)
-async def exception_handler(request: Request, exc: Exception):
-    return internal_server_error_response(request, exception=exc)
-
-
-@app.exception_handler(UnexpectedError)
-async def unexpected_error_handler(request: Request, exc: UnexpectedError):
-    return internal_server_error_response(request, exception=exc)
-
-
-@app.exception_handler(ResponseValidationError)
-async def response_validation_error_handler(request: Request, exc: ResponseValidationError):
-    return internal_server_error_response(request, exception=exc)
-
-
-@app.exception_handler(Timeout)
-async def write_lock_timeout_exc_handler(request: Request, exc: Timeout):
-    return server_busy_response(
-        request,
-        "This table is currently busy. Please try again later.",
-        exception=exc,
-        headers={"Retry-After": "10"},
-    )
-
-
-@app.exception_handler(ServerBusyError)
-async def busy_exc_handler(request: Request, exc: ServerBusyError):
-    return server_busy_response(
-        request,
-        "The server is currently busy. Please try again later.",
-        exception=exc,
-        headers={"Retry-After": "30"},
-    )
-
-
-@app.exception_handler(HTTPException)
-async def http_exc_handler(request: Request, exc: HTTPException):
-    return make_response(
-        request=request,
-        message=str(exc),
-        error="http_error",
-        status_code=exc.status_code,
-        detail=None,
-        exception=exc,
-        log=exc.status_code != 404,
-    )
-
-
-if not ENV_CONFIG.is_oss:
-    openapi_schema = app.openapi()
+    }
+if ENV_CONFIG.is_cloud:
     # Add security schemes
     openapi_schema["components"]["securitySchemes"] = {
-        "Authentication": {
-            "type": "http",
-            "scheme": "bearer",
-        },
+        "Authentication": {"type": "http", "scheme": "bearer"},
     }
     openapi_schema["security"] = [{"Authentication": []}]
     openapi_schema["info"]["x-logo"] = {"url": "https://www.jamaibase.com/favicon.svg"}
-    app.openapi_schema = openapi_schema
+app.openapi_schema = openapi_schema
+
+
+class StandaloneApplication(BaseApplication):
+    def __init__(self, app, options=None):
+        self.options = options or {}
+        self.application = app
+        super().__init__()
+
+    def load_config(self):
+        config = {
+            key: value
+            for key, value in self.options.items()
+            if key in self.cfg.settings and value is not None
+        }
+        for key, value in config.items():
+            self.cfg.set(key.lower(), value)
+
+    def load(self):
+        return self.application
+
+
+# Gunicorn post_fork hook
+def post_fork(server, worker):
+    from opentelemetry import metrics, trace
+    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    from owl.utils.loguru_otlp_handler import OTLPHandler
+
+    # from opentelemetry.instrumentation.auto_instrumentation import sitecustomize
+    # trace.set_tracer_provider(trace.get_tracer_provider())
+    # metrics.set_meter_provider(metrics.get_meter_provider())
+
+    # for manual instrumentation
+
+    resource = Resource.create(
+        {
+            "service.name": "owl",
+            "service.instance.id": uuid7_str(),
+        }
+    )
+    # Meter provider configuration
+    reader = PeriodicExportingMetricReader(
+        OTLPMetricExporter(
+            endpoint=f"http://{ENV_CONFIG.opentelemetry_host}:{ENV_CONFIG.opentelemetry_port}"
+        ),
+        export_interval_millis=1000,
+    )
+    provider = MeterProvider(resource=resource, metric_readers=[reader])
+    metrics.set_meter_provider(provider)
+    # Trace provider configuration
+    trace_provider = TracerProvider(resource=resource)
+    trace_provider.add_span_processor(
+        BatchSpanProcessor(
+            OTLPSpanExporter(
+                endpoint=f"http://{ENV_CONFIG.opentelemetry_host}:{ENV_CONFIG.opentelemetry_port}"
+            )
+        )
+    )
+    trace.set_tracer_provider(trace_provider)
+
+    # # for auto-instrumentation
+    # trace.get_tracer_provider()
+    # metrics.get_meter_provider()
+    # Configure the OTLP Exporter
+    otlp_exporter = OTLPLogExporter(
+        endpoint=f"http://{ENV_CONFIG.opentelemetry_host}:{ENV_CONFIG.opentelemetry_port}"
+    )
+
+    # Create an instance of OTLPHandler
+    otlp_handler = OTLPHandler.create(
+        service_name="owl",
+        exporter=otlp_exporter,
+        development_mode=False,  # Set to True for development
+    )
+
+    logger.add(otlp_handler.sink, level="INFO")
+    server.log.info(f"Worker spawned (pid: {worker.pid})")
 
 
 if __name__ == "__main__":
-    import uvicorn
-
-    if os.name == "nt":
-        import asyncio
-        from multiprocessing import freeze_support
-
-        logger.warning("The system is Windows, performing asyncio and multiprocessing patches.")
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        freeze_support()
-
-    uvicorn.run(
-        "owl.entrypoints.api:app",
-        reload=False,
-        host=ENV_CONFIG.owl_host,
-        port=ENV_CONFIG.owl_port,
-        workers=ENV_CONFIG.owl_workers,
-        limit_concurrency=ENV_CONFIG.owl_max_concurrency,
-    )
+    options = {
+        "bind": f"{ENV_CONFIG.host}:{ENV_CONFIG.port}",
+        "workers": ENV_CONFIG.workers,
+        "worker_class": "uvicorn.workers.UvicornWorker",
+        "limit_concurrency": ENV_CONFIG.max_concurrency,
+        "timeout": 600,
+        "graceful_timeout": 60,
+        "max_requests": 2000,
+        "max_requests_jitter": 200,
+        "keepalive": 60,  # AWS ALB and Nginx default to 60 seconds
+        "post_fork": post_fork,
+        "loglevel": "error",
+    }
+    StandaloneApplication(app, options).run()

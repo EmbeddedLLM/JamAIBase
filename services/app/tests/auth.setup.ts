@@ -1,11 +1,12 @@
+import { test as setup } from '@playwright/test';
 import 'dotenv/config';
 import { existsSync } from 'fs';
-import { test as setup } from '@playwright/test';
 
+const ossMode = !process.env.OWL_SERVICE_KEY;
 const authFile = 'playwright/.auth/user.json';
 
 setup('authenticate', async ({ browser, page }) => {
-	if (process.env.PUBLIC_IS_LOCAL === 'false') {
+	if (!ossMode) {
 		if (existsSync(authFile)) {
 			await page.close();
 			const context = await browser.newContext({ storageState: authFile });
@@ -16,12 +17,10 @@ setup('authenticate', async ({ browser, page }) => {
 		const isCredentialsValid = !/.*\/(login)/.test(page.url());
 
 		if (!isCredentialsValid) {
-			await page.getByLabel('Email address').fill(process.env.TEST_ACC_EMAIL!);
-			await page.getByLabel('Password').fill(process.env.TEST_ACC_PW!);
-			await page.getByRole('button', { name: 'Continue', exact: true }).click();
+			await page.getByPlaceholder('Username').fill(process.env.TEST_USER_USERNAME!);
+			await page.getByPlaceholder('Password').fill(process.env.TEST_USER_PASSWORD!);
+			await page.getByRole('button', { name: 'Login', exact: true }).click();
 		}
-
-		await page.goto('/');
 
 		await page.waitForURL(/.*\/(project|new-organization)/);
 

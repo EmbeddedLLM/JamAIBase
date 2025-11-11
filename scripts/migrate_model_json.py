@@ -1,7 +1,7 @@
 import json
 import sys
 
-from owl.protocol import ModelListConfig
+from owl.types import ModelListConfig
 
 
 def transform_json(original_json):
@@ -16,7 +16,7 @@ def transform_json(original_json):
 
                 # Create the ModelDeploymentConfig instance
                 deployment_config = {
-                    "litellm_id": config.get("litellm_id", ""),
+                    "routing_id": config.get("litellm_id", ""),
                     "api_base": config.get("api_base", ""),
                     "provider": provider,
                 }

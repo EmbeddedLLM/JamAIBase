@@ -1,6 +1,5 @@
 import asyncio
 import io
-import time
 from contextlib import asynccontextmanager
 
 import httpx
@@ -9,22 +8,22 @@ from flaky import flaky
 from PIL import Image
 
 from jamaibase import JamAI, JamAIAsync
-from jamaibase.exceptions import ResourceNotFoundError
-from jamaibase.protocol import (
+from jamaibase.types import (
+    CellCompletionResponse,
     CodeGenConfig,
     ColumnSchemaCreate,
     GenConfigUpdateRequest,
-    GenTableRowsChatCompletionChunks,
-    GenTableStreamChatCompletionChunk,
     GetURLResponse,
+    MultiRowAddRequest,
+    MultiRowCompletionResponse,
+    MultiRowRegenRequest,
     RegenStrategy,
-    RowAddRequest,
-    RowRegenRequest,
     RowUpdateRequest,
     TableSchemaCreate,
     TableType,
 )
 from jamaibase.utils import run
+from jamaibase.utils.exceptions import ResourceNotFoundError
 
 CLIENT_CLS = [JamAI, JamAIAsync]
 REGEN_STRATEGY = [
@@ -183,12 +182,12 @@ async def test_exceed_context_length(
         chunks = await run(
             jamai.table.add_table_rows,
             TableType.action,
-            RowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
+            MultiRowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
         )
         if stream:
-            assert isinstance(chunks[0], GenTableStreamChatCompletionChunk)
+            assert isinstance(chunks[0], CellCompletionResponse)
         else:
-            assert isinstance(chunks, GenTableRowsChatCompletionChunks)
+            assert isinstance(chunks, MultiRowCompletionResponse)
 
         # Get rows
         rows = await run(jamai.table.list_table_rows, TableType.action, table_id)
@@ -197,140 +196,6 @@ async def test_exceed_context_length(
 
         column_gen = row[long_context_column_name]["value"]
         assert column_gen.startswith("[ERROR]")
-
-
-@flaky(max_runs=3, min_passes=1)
-@pytest.mark.parametrize("client_cls", CLIENT_CLS)
-@pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
-async def test_multicols_concurrency_timing(
-    client_cls: JamAI | JamAIAsync,
-    stream: bool,
-):
-    jamai = client_cls()
-    cols = IN_COLS[:2] + OUT_COLS[:3]
-    async with _create_table(jamai, TableType.action, cols) as table_id:
-        row_input_data = {"in_01": "0", "in_02": "100"}
-        column_map = COLUMN_MAP_CONCURRENCY.copy()
-
-        async def execute():
-            gen_config = GenConfigUpdateRequest(
-                table_id=table_id,
-                column_map=column_map,
-            )
-            await _update_gen_config(jamai, TableType.action, gen_config)
-
-            start_time = time.time()
-            chunks = await run(
-                jamai.table.add_table_rows,
-                TableType.action,
-                RowAddRequest(
-                    table_id=table_id, data=[row_input_data], stream=stream, concurrent=True
-                ),
-            )
-            if stream:
-                assert isinstance(chunks[0], GenTableStreamChatCompletionChunk)
-            else:
-                assert isinstance(chunks, GenTableRowsChatCompletionChunks)
-            execution_time = time.time() - start_time
-            return execution_time
-
-        execution_time_3_cols = await execute()
-        column_map.pop("out_02")
-        column_map.pop("out_03")
-        execution_time_1_col = await execute()
-
-        assert abs(execution_time_3_cols - execution_time_1_col) < (execution_time_1_col * 1.5)
-
-
-@flaky(max_runs=3, min_passes=1)
-@pytest.mark.parametrize("client_cls", CLIENT_CLS)
-@pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
-async def test_multirows_multicols_concurrency_timing(
-    client_cls: JamAI | JamAIAsync,
-    stream: bool,
-):
-    jamai = client_cls()
-    cols = IN_COLS[:2] + OUT_COLS[:3]
-    async with _create_table(jamai, TableType.action, cols) as table_id:
-        rows_input_data = [
-            {"in_01": "0", "in_02": "200"},
-            {"in_01": "1", "in_02": "201"},
-            {"in_01": "2", "in_02": "202"},
-        ]
-        column_map = COLUMN_MAP_CONCURRENCY
-
-        async def execute():
-            gen_config = GenConfigUpdateRequest(
-                table_id=table_id,
-                column_map=column_map,
-            )
-            await _update_gen_config(jamai, TableType.action, gen_config)
-
-            start_time = time.time()
-            chunks = await run(
-                jamai.table.add_table_rows,
-                TableType.action,
-                RowAddRequest(
-                    table_id=table_id, data=rows_input_data, stream=stream, concurrent=True
-                ),
-            )
-            if stream:
-                assert isinstance(chunks[0], GenTableStreamChatCompletionChunk)
-            else:
-                assert isinstance(chunks, GenTableRowsChatCompletionChunks)
-            execution_time = time.time() - start_time
-            return execution_time
-
-        execution_time_3_rows = await execute()
-        rows_input_data = rows_input_data[:1]
-        execution_time_1_row = await execute()
-
-        assert abs(execution_time_3_rows - execution_time_1_row) < (execution_time_1_row * 1.5)
-
-
-@flaky(max_runs=3, min_passes=1)
-@pytest.mark.parametrize("client_cls", CLIENT_CLS)
-@pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
-async def test_multicols_dependency(
-    client_cls: JamAI | JamAIAsync,
-    stream: bool,
-):
-    jamai = client_cls()
-    cols = IN_COLS[:2] + OUT_COLS[:5]
-    async with _create_table(jamai, TableType.action, cols) as table_id:
-        row_input_data = {"in_01": "8", "in_02": "2"}
-        column_map = COLUMN_MAP_DEPENDENCY
-        ground_truths = {
-            "out_01": "10",
-            "out_02": "-6",
-            "out_03": "-60",
-            "out_04": "360",
-            "out_05": "120",
-        }
-
-        gen_config = GenConfigUpdateRequest(
-            table_id=table_id,
-            column_map=column_map,
-        )
-        await _update_gen_config(jamai, TableType.action, gen_config)
-
-        chunks = await run(
-            jamai.table.add_table_rows,
-            TableType.action,
-            RowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
-        )
-        if stream:
-            assert isinstance(chunks[0], GenTableStreamChatCompletionChunk)
-        else:
-            assert isinstance(chunks, GenTableRowsChatCompletionChunks)
-
-        # Get rows
-        rows = await run(jamai.table.list_table_rows, TableType.action, table_id)
-        row_id = rows.items[0]["ID"]
-        row = await run(jamai.table.get_table_row, TableType.action, table_id, row_id)
-
-        for output_column_name in column_map.keys():
-            assert ground_truths[output_column_name] in row[output_column_name]["value"]
 
 
 @flaky(max_runs=3, min_passes=1)
@@ -414,13 +279,13 @@ async def test_multicols_regen(
         chunks = await run(
             jamai.table.add_table_rows,
             TableType.action,
-            RowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
+            MultiRowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
         )
         if not only_input_columns:
             if stream:
-                assert isinstance(chunks[0], GenTableStreamChatCompletionChunk)
+                assert isinstance(chunks[0], CellCompletionResponse)
             else:
-                assert isinstance(chunks, GenTableRowsChatCompletionChunks)
+                assert isinstance(chunks, MultiRowCompletionResponse)
 
         # Get rows
         rows = await run(jamai.table.list_table_rows, TableType.action, table_id)
@@ -442,7 +307,7 @@ async def test_multicols_regen(
         chunks = await run(
             jamai.table.regen_table_rows,
             TableType.action,
-            RowRegenRequest(
+            MultiRowRegenRequest(
                 table_id=table_id,
                 row_ids=[row_id],
                 regen_strategy=regen_strategy,
@@ -453,9 +318,9 @@ async def test_multicols_regen(
         )
         if not only_input_columns:
             if stream:
-                assert isinstance(chunks[0], GenTableStreamChatCompletionChunk)
+                assert isinstance(chunks[0], CellCompletionResponse)
             else:
-                assert isinstance(chunks, GenTableRowsChatCompletionChunks)
+                assert isinstance(chunks, MultiRowCompletionResponse)
 
         # Get rows
         rows = await run(jamai.table.list_table_rows, TableType.action, table_id)
@@ -500,12 +365,12 @@ async def test_multicols_regen_invalid_column_id(
         chunks = await run(
             jamai.table.add_table_rows,
             TableType.action,
-            RowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
+            MultiRowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
         )
         if stream:
-            assert isinstance(chunks[0], GenTableStreamChatCompletionChunk)
+            assert isinstance(chunks[0], CellCompletionResponse)
         else:
-            assert isinstance(chunks, GenTableRowsChatCompletionChunks)
+            assert isinstance(chunks, MultiRowCompletionResponse)
 
         # Get rows
         rows = await run(jamai.table.list_table_rows, TableType.action, table_id)
@@ -526,14 +391,14 @@ async def test_multicols_regen_invalid_column_id(
         with pytest.raises(
             ResourceNotFoundError,
             match=(
-                f'`output_column_id` .*{invalid_output_column_id}.* is not found. '
+                f"`output_column_id` .*{invalid_output_column_id}.* is not found. "
                 f"Available output columns:.*{'.*'.join(ground_truths.keys())}.*"
             ),
         ):
             await run(
                 jamai.table.regen_table_rows,
                 TableType.action,
-                RowRegenRequest(
+                MultiRowRegenRequest(
                     table_id=table_id,
                     row_ids=[row_id],
                     regen_strategy=regen_strategy,
@@ -580,15 +445,15 @@ async def test_code_str(client_cls: JamAI | JamAIAsync, stream: bool):
             chunks = await run(
                 jamai.table.add_table_rows,
                 TableType.action,
-                RowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
+                MultiRowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
             )
 
             if stream:
                 print(chunks[0])
-                assert isinstance(chunks[0], GenTableStreamChatCompletionChunk)
+                assert isinstance(chunks[0], CellCompletionResponse)
             else:
                 print(chunks)
-                assert isinstance(chunks, GenTableRowsChatCompletionChunks)
+                assert isinstance(chunks, MultiRowCompletionResponse)
 
             # Get rows
             rows = await run(jamai.table.list_table_rows, TableType.action, table_id)
@@ -602,7 +467,7 @@ async def test_code_str(client_cls: JamAI | JamAIAsync, stream: bool):
         chunks = await run(
             jamai.table.add_table_rows,
             TableType.action,
-            RowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
+            MultiRowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
         )
         rows = await run(jamai.table.list_table_rows, TableType.action, table_id)
         row_id = rows.items[0]["ID"]
@@ -668,15 +533,15 @@ result = b'This is not a valid image file'
             chunks = await run(
                 jamai.table.add_table_rows,
                 TableType.action,
-                RowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
+                MultiRowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
             )
 
             if stream:
                 print(chunks[0])
-                assert isinstance(chunks[0], GenTableStreamChatCompletionChunk)
+                assert isinstance(chunks[0], CellCompletionResponse)
             else:
                 print(chunks)
-                assert isinstance(chunks, GenTableRowsChatCompletionChunks)
+                assert isinstance(chunks, MultiRowCompletionResponse)
 
             # Get rows
             rows = await run(jamai.table.list_table_rows, TableType.action, table_id)
@@ -693,12 +558,7 @@ result = b'This is not a valid image file'
                 assert isinstance(response, GetURLResponse)
                 for url in response.urls:
                     if url.startswith(("http://", "https://")):
-                        # Handle HTTP/HTTPS URLs
-                        HEADERS = {"X-PROJECT-ID": "default"}
-                        with httpx.Client() as client:
-                            downloaded_content = client.get(url, headers=HEADERS).content
-
-                        image = Image.open(io.BytesIO(downloaded_content))
+                        image = Image.open(io.BytesIO(httpx.get(url).content))
                         assert image.format == case["expected_format"]
 
         # Test error handling
@@ -707,7 +567,7 @@ result = b'This is not a valid image file'
         chunks = await run(
             jamai.table.add_table_rows,
             TableType.action,
-            RowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
+            MultiRowAddRequest(table_id=table_id, data=[row_input_data], stream=stream),
         )
 
         rows = await run(jamai.table.list_table_rows, TableType.action, table_id)

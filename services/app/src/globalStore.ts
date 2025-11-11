@@ -1,4 +1,4 @@
-import type { AvailableModel, Organization, Project, UploadQueue } from '$lib/types';
+import type { ModelConfig, OrganizationReadRes, Project, UploadQueue } from '$lib/types';
 import { serializer } from '$lib/utils';
 import { persisted } from 'svelte-persisted-store';
 import { writable } from 'svelte/store';
@@ -14,6 +14,11 @@ type SortOptions = {
 	orderBy: string;
 	order: 'asc' | 'desc';
 };
+export const modelConfigSort = persisted<SortOptions & { filter: string }>(
+	'modelConfigSort',
+	{ orderBy: 'created_at', order: 'desc', filter: 'all' },
+	{ serializer }
+);
 export const projectSort = persisted<SortOptions>(
 	'projectSort',
 	{ orderBy: 'updated_at', order: 'desc' },
@@ -35,7 +40,7 @@ export const cTableSort = persisted<SortOptions>(
 	{ serializer }
 );
 
-export const modelsAvailable = writable<AvailableModel[]>([]);
+export const modelsAvailable = writable<ModelConfig[]>([]);
 
 export const uploadQueue = writable<UploadQueue>({
 	activeFile: null,
@@ -45,7 +50,23 @@ export const uploadQueue = writable<UploadQueue>({
 export const uploadController = writable<AbortController | null>(null);
 
 //* Non-local
-export const activeOrganization = writable<Organization | null>(null);
+function createActiveOrgStore() {
+	const { subscribe, set, update } = writable<OrganizationReadRes | null>(null);
+
+	return {
+		subscribe,
+		set,
+		update,
+		setOrgCookie: (id: string | null) => {
+			if (id) {
+				document.cookie = `activeOrganizationId=${id}; path=/; max-age=604800; samesite=strict`;
+			} else {
+				document.cookie = `activeOrganizationId=; path=/; max-age=604800; samesite=strict`;
+			}
+		}
+	};
+}
+export const activeOrganization = createActiveOrgStore();
 export const activeProject = writable<Project | null>(null);
 export const loadingProjectData = writable<{ loading: boolean; error?: string }>({
 	loading: true,

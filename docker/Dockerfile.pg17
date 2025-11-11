@@ -1,0 +1,63 @@
+# Use the official PostgreSQL 17 base image
+FROM postgres:17.4
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install prerequisites for pgvectorscale and PGroonga
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        git \
+        build-essential \
+        pkg-config \
+        libssl-dev \
+        libclang-dev \
+        clang \
+        lsb-release \
+        wget \
+        ca-certificates \
+        jq \
+        postgresql-server-dev-17 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Rust and cargo-pgrx 0.12.5
+# compatible with the version of pgvectorscale
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+    export PATH="$HOME/.cargo/bin:$PATH" && \
+    rustup update && \
+    cargo install --locked cargo-pgrx --version "0.12.5" && \
+    cargo pgrx init --pg17 $(which pg_config)
+
+# Install pgvectorscale
+# 6c01899405c19ab545c4e43881cc07f2cd5dd0d9 is the commit of pgvectorscale main branch as of 2025-03-04 (v0.6)
+RUN export PATH="$HOME/.cargo/bin:$PATH" && \
+    cd /tmp && \
+    git clone https://github.com/timescale/pgvectorscale && \
+    cd pgvectorscale && \
+    git checkout 6c01899405c19ab545c4e43881cc07f2cd5dd0d9 && \
+    cd pgvectorscale && \
+    cargo pgrx install --release
+
+# Install PGroonga
+RUN wget https://apache.jfrog.io/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb && \
+    apt-get install -y -V ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb && \
+    wget https://packages.groonga.org/debian/groonga-apt-source-latest-$(lsb_release --codename --short).deb && \
+    apt-get install -y -V ./groonga-apt-source-latest-$(lsb_release --codename --short).deb && \
+    apt-get update && \
+    apt-get install -y -V postgresql-17-pgdg-pgroonga && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install pgvector
+# OPTFLAGS = "" to avoid optimization (default flag = -march=native)
+RUN cd /tmp && \
+    git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git && \
+    cd pgvector && \
+    make clean && \
+    make OPTFLAGS="" && \
+    make install
+
+# Set the default command to run PostgreSQL
+CMD ["postgres"]

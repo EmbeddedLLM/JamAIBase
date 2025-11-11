@@ -76,7 +76,7 @@ test.describe('Knowledge Table', () => {
 		await modal.waitFor({ state: 'visible' });
 		await modal.locator('input[name="table_id"]').fill('transient-test-knowledge-table');
 		await modal.getByTestId('model-select-btn').click();
-		await modal.getByTestId('model-select-btn').locator('div[role="option"]').first().click();
+		await page.getByTestId('model-select-list').locator('div[role="option"]').first().click();
 		await modal.locator('button:has-text("Create"):visible').click();
 		await modal.waitFor({ state: 'hidden' });
 
@@ -128,7 +128,11 @@ test.describe('Chat Table', () => {
 		await modal.waitFor({ state: 'visible' });
 		await modal.locator('input[name="agent-id"]').fill('transient-test-chat-agent');
 		await modal.locator('button[title="Select model"]').click();
-		await modal.locator('div[role="option"]:visible').first().click();
+		await page
+			.getByTestId('model-select-list')
+			.locator('div[role="option"]:visible')
+			.first()
+			.click();
 		await modal.locator('button:has-text("Add"):visible').click();
 		await modal.waitFor({ state: 'hidden' });
 
@@ -169,7 +173,7 @@ test.describe('Chat Table', () => {
 		await modal.waitFor({ state: 'visible' });
 		await modal.locator('input[name="conversation-id"]').fill('transient-test-chat-conv');
 		await modal.locator('button[title="Select Chat Agent"]').click();
-		await modal
+		await page
 			.locator('div[role="option"]:visible', {
 				has: page.getByText('transient-test-agent', { exact: true })
 			})

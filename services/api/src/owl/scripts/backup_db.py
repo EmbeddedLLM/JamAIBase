@@ -47,7 +47,7 @@ def restore(db_dir: str):
                     )
                 )
                 src_path = join(proj_dir, bak_files[0])
-                dst_path = join(proj_dir, f'{bak_files[0].split("_")[0]}.db')
+                dst_path = join(proj_dir, f"{bak_files[0].split('_')[0]}.db")
                 os.remove(dst_path)
                 copy2(src_path, dst_path)
 
@@ -74,5 +74,5 @@ if __name__ == "__main__":
     os.makedirs(backup_dir, exist_ok=False)
 
     for j, db_file in enumerate(sqlite_files):
-        print(f"(DB {j+1:,d}/{len(sqlite_files):,d}): Processing: {db_file}")
+        print(f"(DB {j + 1:,d}/{len(sqlite_files):,d}): Processing: {db_file}")
         backup_db(db_file, backup_dir)

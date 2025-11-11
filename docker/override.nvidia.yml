@@ -1,0 +1,19 @@
+services:
+  infinity:
+    image: michaelf34/infinity:0.0.70 # Use GPU-compatible image, instead of torch cpu-only.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+  docling:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]

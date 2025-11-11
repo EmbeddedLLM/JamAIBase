@@ -1,0 +1,26 @@
+services:
+  test-llm:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.owl
+    env_file:
+      - ../.env
+    entrypoint:
+      - /bin/bash
+      - -c
+      - uv run coverage run --data-file=db/.coverage --rcfile=api/pyproject.toml -m owl.entrypoints.llm
+    ports:
+      - 6970:6970
+    networks:
+      - jamai
+    volumes:
+      - ${PWD}/docker_data/owl/db:/usr/src/app/db
+    # depends_on:
+    #   rqlite:
+    #     condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail localhost:6970/health || exit 1"]
+      interval: 10s
+      timeout: 2s
+      retries: 20
+      start_period: 10s

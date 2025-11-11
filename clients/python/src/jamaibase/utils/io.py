@@ -1,21 +1,57 @@
-from __future__ import annotations
-
 import csv
 import logging
 import pickle
-from io import BytesIO, StringIO
+from collections import OrderedDict
+from io import StringIO
+from mimetypes import guess_type
+from os.path import splitext
 from typing import Any
 
+import filetype
 import numpy as np
 import orjson
 import pandas as pd
-import srsly
 import toml
+import yaml
 from PIL import ExifTags, Image
 
-from jamaibase.utils.types import JSONInput, JSONOutput
+from jamaibase.types.common import JSONInput, JSONOutput
 
 logger = logging.getLogger(__name__)
+
+EMBED_WHITE_LIST = {
+    "application/pdf": [".pdf"],
+    "application/xml": [".xml"],
+    "application/json": [".json"],
+    "application/jsonl": [".jsonl"],
+    "application/x-ndjson": [".jsonl"],
+    "application/json-lines": [".jsonl"],
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+    "text/markdown": [".md"],
+    "text/plain": [".txt"],
+    "text/html": [".html"],
+    "text/tab-separated-values": [".tsv"],
+    "text/csv": [".csv"],
+    "text/xml": [".xml"],
+}
+DOC_WHITE_LIST = EMBED_WHITE_LIST
+IMAGE_WHITE_LIST = {
+    "image/jpeg": [".jpg", ".jpeg"],
+    "image/png": [".png"],
+    "image/gif": [".gif"],
+    "image/webp": [".webp"],
+}
+AUDIO_WHITE_LIST = {
+    "audio/mpeg": [".mp3"],
+    "audio/wav": [".wav"],
+    "audio/x-wav": [".wav"],
+    "audio/x-pn-wav": [".wav"],
+    "audio/wave": [".wav"],
+    "audio/vnd.wav": [".wav"],
+    "audio/vnd.wave": [".wav"],
+}
 
 
 def load_pickle(file_path: str):
@@ -23,7 +59,7 @@ def load_pickle(file_path: str):
         return pickle.load(f)
 
 
-def dump_pickle(out_path: str, obj: any):
+def dump_pickle(out_path: str, obj: Any):
     with open(out_path, "wb") as f:
         pickle.dump(obj, f)
 
@@ -61,8 +97,8 @@ def json_loads(data: str) -> JSONOutput:
     return orjson.loads(data)
 
 
-def json_dumps(data: JSONInput) -> str:
-    return orjson.dumps(data).decode("utf-8")
+def json_dumps(data: JSONInput, **kwargs) -> str:
+    return orjson.dumps(data, **kwargs).decode("utf-8")
 
 
 def read_yaml(path: str) -> JSONOutput:
@@ -74,7 +110,8 @@ def read_yaml(path: str) -> JSONOutput:
     Returns:
         data (JSONOutput): The data.
     """
-    return srsly.read_yaml(path)
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
 
 
 def dump_yaml(data: JSONInput, path: str, **kwargs) -> str:
@@ -83,12 +120,13 @@ def dump_yaml(data: JSONInput, path: str, **kwargs) -> str:
     Args:
         data (JSONInput): The data.
         path (str): Path to the file.
-        **kwargs: Other keyword arguments to pass into `srsly.write_yaml`.
+        **kwargs: Other keyword arguments to pass into `yaml.dump`.
 
     Returns:
         path (str): Path to the file.
     """
-    srsly.write_yaml(path, data, **kwargs)
+    with open(path, "w") as f:
+        yaml.dump(data, f, **kwargs)
     return path
 
 
@@ -116,6 +154,10 @@ def dump_toml(data: JSONInput, path: str, **kwargs) -> str:
     Returns:
         path (str): Path to the file.
     """
+    # Convert non-dictionary data into a dictionary
+    if not isinstance(data, (dict, OrderedDict)):
+        data = {"value": data}  # Wrap non-dictionary data in a dictionary
+
     with open(path, "w") as f:
         toml.dump(data, f)
     return path
@@ -126,14 +168,14 @@ def csv_to_df(
     column_names: list[str] | None = None,
     sep: str = ",",
     dtype: dict[str, Any] | None = None,
+    **kwargs,
 ) -> pd.DataFrame:
-    has_header = not (isinstance(column_names, list) and len(column_names) > 0)
     df = pd.read_csv(
         StringIO(data),
-        header=0 if has_header else None,
         names=column_names,
         sep=sep,
         dtype=dtype,
+        **kwargs,
     )
     return df
 
@@ -149,6 +191,7 @@ def df_to_csv(
         encoding="utf-8",
         lineterminator="\n",
         decimal=".",
+        header=True,
         index=False,
         quoting=csv.QUOTE_NONNUMERIC,
         quotechar='"',
@@ -176,53 +219,32 @@ def read_image(img_path: str) -> tuple[np.ndarray, bool]:
         return np.asarray(image), is_rotated
 
 
-def generate_image_thumbnail(
-    file_content: bytes,
-    size: tuple[float, float] = (450.0, 450.0),
-) -> bytes:
+# Use the first MIME for each extension
+MIME_WHITE_LIST = {**EMBED_WHITE_LIST, **IMAGE_WHITE_LIST, **AUDIO_WHITE_LIST}
+EXT_TO_MIME = {}
+for mime, exts in MIME_WHITE_LIST.items():
+    for ext in exts:
+        EXT_TO_MIME[ext] = EXT_TO_MIME.get(ext, mime)
+
+
+def guess_mime(source: str | bytes) -> str:
+    if isinstance(source, str):
+        ext = splitext(source)[1].lower()
+        mime = EXT_TO_MIME.get(ext, None)
+        if mime is not None:
+            return mime
     try:
-        with Image.open(BytesIO(file_content)) as img:
-            # Check image mode
-            if img.mode not in ("RGB", "RGBA"):
-                img = img.convert("RGB")
-            # Resize and save
-            img.thumbnail(size=size)
-            with BytesIO() as f:
-                img.save(
-                    f,
-                    format="webp",
-                    lossless=False,
-                    quality=60,
-                    alpha_quality=50,
-                    method=6,
-                    exact=False,
-                )
-                return f.getvalue()
-    except Exception as e:
-        logger.exception(f"Failed to generate thumbnail due to {e.__class__.__name__}: {e}")
-        return b""
-
-
-def generate_audio_thumbnail(file_content: bytes, duration_ms: int = 30000) -> bytes:
-    """
-    Generates a thumbnail audio by extracting a segment from the original audio.
-
-    Args:
-        file_content (bytes): The audio file content.
-        duration_ms (int): Duration of the thumbnail in milliseconds.
-
-    Returns:
-        bytes: The thumbnail audio segment as bytes.
-    """
-    from pydub import AudioSegment
-
-    # Use BytesIO to simulate a file object from the byte content
-    audio = AudioSegment.from_file(BytesIO(file_content))
-
-    # Extract the first `duration_ms` milliseconds
-    thumbnail = audio[:duration_ms]
-
-    # Export the thumbnail to a bytes object
-    with BytesIO() as output:
-        thumbnail.export(output, format="mp3")
-        return output.getvalue()
+        # `filetype` can handle file path and content bytes
+        mime = filetype.guess(source)
+        if mime is not None:
+            return mime.mime
+        if isinstance(source, str):
+            # `mimetypes` can only handle file path
+            mime, _ = guess_type(source)
+            if mime is not None:
+                return mime
+            if source.endswith(".jsonl"):
+                return "application/jsonl"
+    except Exception:
+        logger.warning(f'Failed to sniff MIME type of file "{source}".')
+    return "application/octet-stream"

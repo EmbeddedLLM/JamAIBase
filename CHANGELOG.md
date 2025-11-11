@@ -16,6 +16,90 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### ADDED
+
+API
+
+- Conversation API for JamAI Chat: Chat with agents pre-configured by your organisation admins.
+- Table row update endpoint can now update multiple rows in a single call.
+- Table row list endpoint `/v1/gen_tables/{table_type}/{table_id}/rows` now accepts:
+  - `order_by` string parameter that specifies the column to sort rows by.
+  - `where` string parameter that defines an SQL where clause. Defaults to "" (no filter).
+  - `search_columns` string parameter to restrict the columns that are searched by `search_query`.
+
+### CHANGED (BREAKING)
+
+Python Client
+
+- Some `JamAI` and `JamAIAsync` client methods are deprecated and/or removed.
+
+API
+
+- We unified our DB to migrate from LanceDB + SQLite to Postgres only. For OSS users, please use the provided migration script to migrate your data.
+- Changed endpoint `/v1/model_names` -> `/v1/models/ids`
+- Renamed external keys:
+  - `jina_api_key` -> `jina_ai_api_key`
+  - `together_api_key` -> `together_ai_api_key`
+- Added `OWL_` prefix to API server environment variables.
+- Major changes to internal APIs which affect OSS users
+  - Endpoints are now `/v2`
+  - Most of the path params are converted into query params
+  - Input and output schemas may have changed.
+  - List endpoints param changed from `order_descending` with a default of True to `order_ascending` with a default of True.
+
+### CHANGED
+
+Python Client
+
+- `JamAI` is now a wrapper around `JamAIAsync`.
+- `JamaiException` classes are now subclasses of `Exception` rather than `RuntimeError`.
+- Deprecated `jamaibase.protocol`, use `jamaibase.types` instead.
+- Types / protocol:
+  - Deprecated `AdminOrderBy` enum; use strings instead.
+  - Deprecated `GenTableOrderBy` enum; use strings instead.
+  - Deprecated `ModelInfoResponse`; use `ModelInfoListResponse` instead.
+  - Deprecated `MessageToolCallFunction`; use `ToolCallFunction` instead.
+  - Deprecated `MessageToolCall`; use `ToolCall` instead.
+  - Deprecated `ChatCompletionChoiceDelta`; use `ChatCompletionChoice` instead.
+  - Deprecated `CompletionUsage`; use `ChatCompletionUsage` instead.
+  - Deprecated `ChatCompletionChunk`; use `ChatCompletionChunkResponse` instead.
+  - Deprecated `ChatCompletionChoiceOutput`; use `ChatCompletionMessage` instead.
+  - Deprecated `ChatThread`; use `ChatThreadResponse` instead.
+  - Deprecated `ChatRequestWithTools`; use `ChatRequest` instead.
+  - Deprecated `GenTableStreamReferences`; use `CellReferencesResponse` instead.
+  - Deprecated `GenTableStreamChatCompletionChunk`; use `CellCompletionResponse` instead.
+  - Deprecated `GenTableChatCompletionChunks`; use `RowCompletionResponse` instead.
+  - Deprecated `GenTableRowsChatCompletionChunks`; use `MultiRowCompletionResponse` instead.
+  - Deprecated `RowAddRequest`; use `MultiRowAddRequest` instead.
+  - Deprecated `RowAddRequestWithLimit`; use `MultiRowAddRequestWithLimit` instead.
+  - Deprecated `RowRegenRequest`; use `MultiRowRegenRequest` instead.
+  - Deprecated `RowDeleteRequest`; use `MultiRowDeleteRequest` instead.
+  - All `reindex` parameters are removed. Reindexing now happens immediately.
+
+API
+
+- Improvements:
+  - All extra Knowledge Table columns are now injected into prompt
+  - RAG references are now stored alongside model response
+- Fixed:
+  - Streaming responses from table row add endpoint now returns a final chunk with usage data.
+  - You can now set system prompt and prompt of Generative Tables to empty strings `""` without them being replaced with default prompts.
+
+### REMOVED
+
+API
+
+- Hybrid search endpoint:
+  - Removed parameters: `where`, `nprobes`, `refine_factor`
+
+### DEPRECATED
+
+API
+
+- Generative table endpoints:
+  - `order_descending` in table and row lists endpoints is deprecated and replaced with `order_ascending` with a default of True.
+  - Single row delete and update endpoints are deprecated for their multi-row counterparts.
+
 ## [v0.4.1] (2025-02-26)
 
 ### CHANGED / FIXED
@@ -38,6 +122,9 @@ Python SDK - jamaibase
 - Add `CodeGenConfig` for python code execution #446
 
 TS SDK - jamaibase
+
+- Add `CodeGenConfigSchema` for code execution #446
+- Support audio data type
 
 UI
 
@@ -73,6 +160,7 @@ Python SDK - jamaibase
 TS SDK - jamaibase
 
 - Update the `uploadFile` method in `index.ts` to remove the trailing slash from the API endpoint #462
+- Update client and node enviroment conflict in file upload
 
 UI
 

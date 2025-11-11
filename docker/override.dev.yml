@@ -1,0 +1,65 @@
+services:
+  dragonfly:
+    ports:
+      - 6379:6379
+
+  otel-collector:
+    ports:
+      - 8889:8889 # Prometheus metrics endpoint
+      - 4317:4317 # OTLP gRPC receiver
+      - 4318:4318 # OTLP HTTP receiver
+      - 13133:13133 # health_check extension
+
+  vmauth:
+    ports:
+      - 8427:8427
+
+  vmagent:
+    ports:
+      - 8429:8429
+
+  victoriametrics:
+    ports:
+      - 8428:8428
+
+  victorialogs:
+    ports:
+      - 9428:9428
+
+  clickhouse:
+    ports:
+      - 8123:8123
+      - 19000:9000
+      - 9363:9363
+
+  postgresql:
+    ports:
+      - 5431:5432
+
+  pgbouncer:
+    ports:
+      - 5432:5432
+
+  minio:
+    ports:
+      - 9000:9000
+      - 9001:9001
+
+  docling:
+    ports:
+      - 5001:5001
+
+  owl:
+    ports:
+      - "${API_PORT:-6969}:${OWL_PORT:-6969}"
+    volumes:
+      - ${PWD}/docker_data/owl/db:/usr/src/app/db
+      - ${PWD}/services/api/src:/usr/src/app/api/src
+
+  kopi:
+    ports:
+      - 5569:3000
+
+  frontend:
+    ports:
+      - "${FRONTEND_PORT:-4000}:4000"

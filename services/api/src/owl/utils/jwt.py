@@ -4,13 +4,13 @@ from typing import Any
 import jwt
 from loguru import logger
 
-from jamaibase.exceptions import AuthorizationError
-from owl.configs.manager import ENV_CONFIG
+from owl.configs import ENV_CONFIG
+from owl.utils.exceptions import AuthorizationError
 
 
 def encode_jwt(data: dict[str, Any], expiry: datetime) -> str:
     data.update({"iat": datetime.now(tz=timezone.utc), "exp": expiry})
-    token = jwt.encode(data, f"{ENV_CONFIG.owl_encryption_key_plain}_secret", algorithm="HS256")
+    token = jwt.encode(data, f"{ENV_CONFIG.encryption_key_plain}_secret", algorithm="HS256")
     return token
 
 
@@ -23,7 +23,7 @@ def decode_jwt(
     try:
         data = jwt.decode(
             token,
-            f"{ENV_CONFIG.owl_encryption_key_plain}_secret",
+            f"{ENV_CONFIG.encryption_key_plain}_secret",
             algorithms=["HS256"],
         )
         return data

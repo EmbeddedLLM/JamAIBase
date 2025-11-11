@@ -1,35 +1,36 @@
 <script lang="ts">
-	import { Pagination as PaginationPrimitive } from 'bits-ui';
-	import { cn } from '$lib/utils.js';
-	import { type Props, buttonVariants } from '$lib/components/ui/button/index.js';
+	import { Pagination as PaginationPrimitive } from "bits-ui";
+	import { cn } from "$lib/utils.js";
+	import { type Props, buttonVariants } from "$lib/components/ui/button/index.js";
 
-	type $$Props = PaginationPrimitive.PageProps &
+	let {
+		ref = $bindable(null),
+		class: className,
+		size = "icon",
+		isActive = false,
+		page,
+		children,
+		...restProps
+	}: PaginationPrimitive.PageProps &
 		Props & {
 			isActive: boolean;
-		};
-
-	type $$Events = PaginationPrimitive.PageEvents;
-
-	let className: $$Props['class'] = undefined;
-	export let page: $$Props['page'];
-	export let size: $$Props['size'] = 'icon';
-	export let isActive: $$Props['isActive'] = false;
-
-	export { className as class };
+		} = $props();
 </script>
 
+{#snippet Fallback()}
+	{page.value}
+{/snippet}
+
 <PaginationPrimitive.Page
-	bind:page
+	bind:ref
+	{page}
 	class={cn(
 		buttonVariants({
-			variant: isActive ? 'outline' : 'ghost',
-			size
+			variant: isActive ? "outline" : "ghost",
+			size,
 		}),
 		className
 	)}
-	{...$$restProps}
-	on:click
-	let:builder
->
-	<slot {builder}>{page.value}</slot>
-</PaginationPrimitive.Page>
+	children={children || Fallback}
+	{...restProps}
+/>

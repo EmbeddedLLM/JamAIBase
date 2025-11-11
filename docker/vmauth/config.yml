@@ -1,0 +1,12 @@
+users:
+  - username: owl
+    password: owl-vm
+    url_map:
+      - src_paths:
+          - "/vm/.*"
+        drop_src_path_prefix_parts: 1
+        url_prefix: "http://victoriametrics:8428/"
+      - src_paths:
+          - "/vl/.*"
+        drop_src_path_prefix_parts: 1
+        url_prefix: "http://victorialogs:9428/"

@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import debounce from 'lodash/debounce';
-	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import logger from '$lib/logger';
 	import type { GenTable } from '$lib/types';
 
@@ -17,18 +16,23 @@
 	import KnowledgeTableIcon from '$lib/icons/KnowledgeTableIcon.svelte';
 	import AddIcon from '$lib/icons/AddIcon.svelte';
 
-	export let isSelectingKnowledgeTable: boolean;
-	export let selectedKnowledgeTables: string; //TODO: Add type
+	interface Props {
+		isSelectingKnowledgeTable: boolean;
+		selectedKnowledgeTables: string; //TODO: Add type
+	}
 
-	let searchQuery = '';
+	let { isSelectingKnowledgeTable = $bindable(), selectedKnowledgeTables = $bindable() }: Props =
+		$props();
+
+	let searchQuery = $state('');
 	let searchController: AbortController | null = null;
-	let isLoadingSearch = false;
+	let isLoadingSearch = $state(false);
 
-	let pastKnowledgeTables: GenTable[] = [];
-	let isAddingTable = false;
+	let pastKnowledgeTables: GenTable[] = $state([]);
+	let isAddingTable = $state(false);
 
-	let isLoadingKTables = true;
-	let isLoadingMoreKTables = false;
+	let isLoadingKTables = $state(true);
+	let isLoadingMoreKTables = $state(false);
 	let moreKTablesFinished = false; //FIXME: Bandaid fix for infinite loop caused by loading circle
 	let currentOffset = 0;
 	const limit = 50;
@@ -47,7 +51,7 @@
 		}
 
 		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/knowledge?` +
+			`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/knowledge/list?` +
 				new URLSearchParams({
 					offset: currentOffset.toString(),
 					limit: limit.toString()
@@ -55,7 +59,7 @@
 			{
 				credentials: 'same-origin',
 				headers: {
-					'x-project-id': $page.params.project_id
+					'x-project-id': page.params.project_id
 				}
 			}
 		);
@@ -112,14 +116,14 @@
 
 		try {
 			const response = await fetch(
-				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/knowledge?${new URLSearchParams({
+				`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/knowledge/list?${new URLSearchParams({
 					limit: limit.toString(),
 					search_query: q
 				})}`,
 				{
 					signal: searchController.signal,
 					headers: {
-						'x-project-id': $page.params.project_id
+						'x-project-id': page.params.project_id
 					}
 				}
 			);
@@ -164,10 +168,10 @@
 </script>
 
 <Dialog.Root bind:open={isSelectingKnowledgeTable}>
-	<Dialog.Content class="w-full sm:w-[80vw] h-[90vh] bg-[#FAFBFC] data-dark:bg-[#1E2024]">
+	<Dialog.Content class="h-[90vh] w-full bg-[#FAFBFC] data-dark:bg-[#1E2024] sm:w-[80vw]">
 		<Dialog.Header>Choose Knowledge Table(s)</Dialog.Header>
 
-		<div class="flex items justify-between mb-3 px-4 sm:px-6 pt-3">
+		<div class="items mb-3 flex justify-between gap-1 px-4 pt-3 sm:px-6">
 			<SearchBar
 				bind:searchQuery
 				{isLoadingSearch}
@@ -178,8 +182,8 @@
 
 			<Button
 				aria-label="Create table"
-				on:click={() => (isAddingTable = true)}
-				class="place-self-end lg:place-self-center flex-[0_0_auto] relative flex items-center justify-center gap-1.5 mr-1 sm:mr-0.5 px-2 sm:px-3 py-2 h-min w-min text-xs sm:text-sm aspect-square sm:aspect-auto"
+				onclick={() => (isAddingTable = true)}
+				class="relative mr-1 flex aspect-square h-min w-min flex-[0_0_auto] items-center justify-center gap-1.5 place-self-end px-2 py-2 text-xs sm:mr-0.5 sm:aspect-auto sm:px-3 sm:text-sm lg:place-self-center"
 			>
 				<AddIcon class="h-3.5 w-3.5" />
 				<span class="hidden sm:block">Create table</span>
@@ -187,32 +191,32 @@
 		</div>
 
 		<div
-			on:scroll={debounce(scrollHandler, 300)}
+			onscroll={debounce(scrollHandler, 300)}
 			style="grid-auto-rows: 112px;"
-			class="grid grid-cols-[repeat(auto-fill,_minmax(300px,_1fr))] grid-flow-row gap-2 px-4 sm:px-6 pb-3 h-[calc(100vh-4.25rem)] overflow-auto"
+			class="grid h-[calc(100vh-4.25rem)] grid-flow-row grid-cols-[repeat(auto-fill,_minmax(300px,_1fr))] gap-2 overflow-auto px-4 pb-3 sm:px-6"
 		>
 			{#if isLoadingKTables}
 				{#each Array(12) as _}
 					<Skeleton
-						class="flex flex-col items-center justify-center gap-2 bg-black/[0.09] data-dark:bg-white/[0.1] rounded-lg"
+						class="flex flex-col items-center justify-center gap-2 rounded-lg bg-black/[0.09] data-dark:bg-white/[0.1]"
 					/>
 				{/each}
 			{:else}
 				{#each pastKnowledgeTables as knowledgeTable}
 					<button
-						on:click={() => {
+						onclick={() => {
 							selectedKnowledgeTables = knowledgeTable.id;
 							isSelectingKnowledgeTable = false;
 						}}
 						title={knowledgeTable.id}
-						class="flex flex-col bg-white data-dark:bg-[#42464E] border border-[#E5E5E5] data-dark:border-[#333] rounded-lg"
+						class="flex flex-col rounded-lg border border-[#E5E5E5] bg-white data-dark:border-[#333] data-dark:bg-[#42464E]"
 					>
 						<div
-							class="grow flex items-start p-3 w-full border-b border-[#E5E5E5] data-dark:border-[#333]"
+							class="flex w-full grow items-start border-b border-[#E5E5E5] p-3 data-dark:border-[#333]"
 						>
 							<div class="flex items-start gap-1">
-								<KnowledgeTableIcon class="flex-[0_0_auto] h-5 w-5 text-[#475467]" />
-								<span class="text-sm text-[#344054] break-all line-clamp-2">
+								<KnowledgeTableIcon class="h-5 w-5 flex-[0_0_auto] text-[#475467]" />
+								<span class="line-clamp-2 break-all text-sm text-[#344054]">
 									{knowledgeTable.id}
 								</span>
 							</div>
@@ -225,7 +229,7 @@
 									day: 'numeric',
 									year: 'numeric'
 								})}
-								class="font-medium text-xs text-[#98A2B3] data-dark:text-[#C9C9C9] line-clamp-1"
+								class="line-clamp-1 text-xs font-medium text-[#98A2B3] data-dark:text-[#C9C9C9]"
 							>
 								Last updated
 								<span class="text-[#475467]">
@@ -241,7 +245,7 @@
 				{/each}
 
 				{#if isLoadingMoreKTables}
-					<div class="flex items-center justify-center mx-auto p-4">
+					<div class="mx-auto flex items-center justify-center p-4">
 						<LoadingSpinner class="h-5 w-5 text-secondary" />
 					</div>
 				{/if}
@@ -250,11 +254,11 @@
 
 		<Dialog.Actions>
 			<div class="flex gap-2 overflow-x-auto overflow-y-hidden">
-				<DialogPrimitive.Close asChild let:builder>
-					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
-						Cancel
-					</Button>
-				</DialogPrimitive.Close>
+				<Dialog.Close>
+					{#snippet child({ props })}
+						<Button {...props} variant="link" type="button" class="grow px-6">Cancel</Button>
+					{/snippet}
+				</Dialog.Close>
 			</div>
 		</Dialog.Actions>
 	</Dialog.Content>

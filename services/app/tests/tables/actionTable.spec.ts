@@ -1,13 +1,13 @@
-import 'dotenv/config';
-import { expect, test as base } from '@playwright/test';
 import { faker } from '@faker-js/faker';
+import { test as base, expect } from '@playwright/test';
+import 'dotenv/config';
 import { ProjectPage } from '../pages/project.page';
-import { TableListPage } from '../pages/tableList.page';
 import { TablePage } from '../pages/table.page';
+import { TableListPage } from '../pages/tableList.page';
 
-const { JAMAI_URL, JAMAI_SERVICE_KEY } = process.env;
+const { OWL_URL, OWL_SERVICE_KEY } = process.env;
 const headers = {
-	Authorization: `Bearer ${JAMAI_SERVICE_KEY}`
+	Authorization: `Bearer ${OWL_SERVICE_KEY}`
 };
 
 const test = base.extend<{ tablePage: TablePage; fileTablePage: TablePage }>({
@@ -125,7 +125,7 @@ test.describe('Action Table Page Basic', () => {
 		const tableType = 'action';
 		const tableName = 'test-action-table';
 
-		const deleteTableRes = await fetch(`${JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableName}`, {
+		const deleteTableRes = await fetch(`${OWL_URL}/api/v2/gen_tables/${tableType}/${tableName}`, {
 			method: 'DELETE',
 			headers: {
 				...headers,
@@ -137,7 +137,7 @@ test.describe('Action Table Page Basic', () => {
 			throw await deleteTableRes.json();
 		}
 
-		const createTableRes = await fetch(`${JAMAI_URL}/api/v1/gen_tables/${tableType}`, {
+		const createTableRes = await fetch(`${OWL_URL}/api/v2/gen_tables/${tableType}`, {
 			method: 'POST',
 			headers: {
 				...headers,
@@ -146,7 +146,7 @@ test.describe('Action Table Page Basic', () => {
 			},
 			body: JSON.stringify({
 				id: tableName,
-				version: '0.3.0',
+				version: '0.5.0',
 				cols: [
 					{
 						id: 'Input',
@@ -162,7 +162,7 @@ test.describe('Action Table Page Basic', () => {
 						index: true,
 						gen_config: {
 							object: 'gen_config.llm',
-							model: 'anthropic/claude-3-haiku-20240307',
+							model: 'openai/gpt-4o-mini',
 							multi_turn: false
 						}
 					}
@@ -252,7 +252,7 @@ test.describe('Action Table Page with File Col', () => {
 		const tableType = 'action';
 		const tableName = 'test-action-table-file';
 
-		const deleteTableRes = await fetch(`${JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableName}`, {
+		const deleteTableRes = await fetch(`${OWL_URL}/api/v2/gen_tables/${tableType}/${tableName}`, {
 			method: 'DELETE',
 			headers: {
 				...headers,
@@ -264,7 +264,7 @@ test.describe('Action Table Page with File Col', () => {
 			throw await deleteTableRes.json();
 		}
 
-		const createTableRes = await fetch(`${JAMAI_URL}/api/v1/gen_tables/${tableType}`, {
+		const createTableRes = await fetch(`${OWL_URL}/api/v2/gen_tables/${tableType}`, {
 			method: 'POST',
 			headers: {
 				...headers,
@@ -273,7 +273,7 @@ test.describe('Action Table Page with File Col', () => {
 			},
 			body: JSON.stringify({
 				id: tableName,
-				version: '0.3.0',
+				version: '0.5.0',
 				cols: [
 					{
 						id: 'Input',

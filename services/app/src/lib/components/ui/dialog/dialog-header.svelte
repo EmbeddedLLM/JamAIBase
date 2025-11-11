@@ -1,32 +1,37 @@
 <script lang="ts">
+	import type { HTMLAttributes } from 'svelte/elements';
+	import type { WithElementRef } from 'bits-ui';
 	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import { cn } from '$lib/utils.js';
-	import type { HTMLAttributes } from 'svelte/elements';
 	import CloseIcon from '$lib/icons/CloseIcon.svelte';
 
-	type $$Props = HTMLAttributes<HTMLDivElement> & { disabledClose?: boolean };
-
-	export let disabledClose = false;
-	let className: $$Props['class'] = undefined;
-	export { className as class };
+	let {
+		ref = $bindable(null),
+		class: className,
+		children,
+		disabledClose = false,
+		...restProps
+	}: WithElementRef<HTMLAttributes<HTMLDivElement>> & { disabledClose?: boolean } = $props();
 </script>
 
 <div
 	data-testid="dialog-header"
+	bind:this={ref}
 	class={cn(
-		'relative flex items-center justify-between px-4 py-3 h-min space-y-1.5 text-lg text-[#344054] font-medium text-left bg-white data-dark:bg-[#303338] rounded-t-lg',
+		'relative flex h-min items-center justify-between space-y-1.5 rounded-t-lg bg-white px-4 py-3 text-left text-lg font-medium text-[#344054] data-dark:bg-[#303338]',
 		className
 	)}
-	{...$$restProps}
+	{...restProps}
 >
-	<slot />
+	{@render children?.()}
+
 	<DialogPrimitive.Close
 		disabled={disabledClose}
-		class="flex items-center justify-center h-8 aspect-square hover:bg-accent hover:text-accent-foreground rounded-full ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground"
+		class="flex aspect-square h-8 items-center justify-center rounded-full !bg-transparent ring-offset-background transition-colors hover:!bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-black"
 	>
 		<CloseIcon class="w-6" />
 		<span class="sr-only">Close</span>
 	</DialogPrimitive.Close>
 
-	<hr class="absolute left-0 bottom-0 w-full border-[#F2F4F7] data-dark:border-[#42464E]" />
+	<hr class="absolute bottom-0 left-0 w-full border-[#F2F4F7] data-dark:border-[#42464E]" />
 </div>

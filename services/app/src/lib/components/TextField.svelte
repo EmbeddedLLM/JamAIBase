@@ -1,46 +1,65 @@
 <script lang="ts">
 	import { cn } from '$lib/utils';
 
-	export let showError: boolean = false;
-	export let hideErrorCb: () => void = () => (showError = false);
-	export let labelText: string;
-	export let value: string | number = '';
-	let className: string | undefined | null = undefined;
-	export { className as class };
+	interface Props {
+		showError?: boolean;
+		hideErrorCb?: () => void;
+		labelText: string;
+		value?: string | number;
+		class?: string | undefined | null;
+		trailing?: import('svelte').Snippet;
+		errorText?: import('svelte').Snippet;
+		[key: string]: any;
+	}
+
+	let {
+		showError = $bindable(false),
+		hideErrorCb = () => (showError = false),
+		labelText,
+		value = $bindable(''),
+		class: className = undefined,
+		trailing,
+		errorText,
+		...rest
+	}: Props = $props();
 </script>
 
 <div class={`relative flex flex-col ${showError && 'mb-5'} w-full`}>
 	<span class="material-input-label">
 		{labelText}
 	</span>
-	<!-- svelte-ignore a11y-autofocus -->
+	<!-- svelte-ignore a11y_autofocus -->
 	<input
 		placeholder=" "
 		bind:value
-		on:blur={hideErrorCb}
-		{...$$restProps}
+		onblur={hideErrorCb}
+		{...rest}
 		class={cn(
 			'material-input border-[#999] data-dark:border-[#454545] ',
-			$$slots.trailing ? '!pr-12' : '',
+			trailing ? '!pr-12' : '',
 			className
 		)}
 	/>
 
-	{#if $$slots.trailing}
-		<div class="absolute top-1/2 right-2 -translate-y-1/4">
-			<slot name="trailing" />
+	{#if trailing}
+		<div class="absolute right-2 top-1/2 -translate-y-1/4">
+			{@render trailing?.()}
 		</div>
 	{/if}
 
-	{#if $$slots.errorText}
-		<div class="absolute -bottom-5 left-0 text-xs pointer-events-none">
-			<slot name="errorText" />
+	{#if errorText}
+		<div class="pointer-events-none absolute -bottom-5 left-0 text-xs">
+			{@render errorText?.()}
 		</div>
 	{/if}
 </div>
 
 <style>
 	.material-input {
+		padding: 0;
+	}
+	/* Suppress svelte-check warnings */
+	/* .material-input {
 		@apply p-2;
 		@apply px-0;
 		@apply pt-6;
@@ -50,7 +69,7 @@
 		@apply border-b;
 	}
 
-	:has(.material-input):after {
+	:has(:global(.material-input)):after {
 		position: absolute;
 		display: block;
 		bottom: 0;
@@ -59,7 +78,7 @@
 		content: '';
 	}
 
-	:has(.material-input):after {
+	:has(:global(.material-input)):after {
 		height: 2px;
 		background: linear-gradient(to right, #4169e1, #ff6f61);
 		z-index: 1;
@@ -67,7 +86,7 @@
 		transition: opacity 150ms cubic-bezier(0.4, 0, 0.2, 1);
 	}
 
-	:has(.material-input:focus):after {
+	:has(:global(.material-input:focus)):after {
 		opacity: 1;
 	}
 
@@ -85,15 +104,15 @@
 		transition-duration: 150ms;
 	}
 
-	.material-input-label:has(+ .material-input:focus),
-	.material-input-label:has(+ .material-input:not(:placeholder-shown)) {
+	.material-input-label:has(:global(+ .material-input:focus)),
+	.material-input-label:has(:global(+ .material-input:not(:placeholder-shown))) {
 		@apply text-xs;
 		@apply -translate-y-[140%];
 	}
 
-	.material-input-label:has(+ .material-input:-webkit-autofill),
-	.material-input-label:has(+ .material-input:-webkit-autofill:hover),
-	.material-input-label:has(+ .material-input:-webkit-autofill:focus) {
+	.material-input-label:has(:global(+ .material-input:-webkit-autofill)),
+	.material-input-label:has(:global(+ .material-input:-webkit-autofill:hover)),
+	.material-input-label:has(:global(+ .material-input:-webkit-autofill:focus)) {
 		color: black;
 	}
 
@@ -106,10 +125,10 @@
 		box-shadow: 0 0 0px 1000px #a8cef3 inset;
 		@apply rounded-md;
 		/* @apply dark:[-webkit-box-shadow:0_0_0px_1000px_#253341_inset];
-		@apply dark:[box-shadow:0_0_0px_1000px_#253341_inset]; */
+		@apply dark:[box-shadow:0_0_0px_1000px_#253341_inset]; /
 		transition-property: background-color, border-color;
 		transition-timing-function: ease-in-out;
 		transition-duration: 150ms;
 		color: white;
-	}
+	} */
 </style>

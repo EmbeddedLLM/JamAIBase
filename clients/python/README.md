@@ -12,10 +12,10 @@ The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that y
 
 1. First, [sign up for a free account on JamAI Base Cloud!](https://cloud.jamaibase.com/)
 2. Create a project and give it any name that you want.
-3. Create a Python (>= 3.10) environment and install `jamaibase` (here we use [micromamba](https://mamba.readthedocs.io/en/latest/user_guide/micromamba.html) but you can use other tools such as [conda](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html), virtualenv, etc):
+3. Create a Python (>= 3.11) environment and install `jamaibase` (here we use [micromamba](https://mamba.readthedocs.io/en/latest/user_guide/micromamba.html) but you can use other tools such as [conda](https://conda.io/projects/conda/en/latest/user-guide/getting-started.html), virtualenv, etc):
 
    ```shell
-   $ micromamba create -n jam310 python=3.10 -y
+   $ micromamba create -n jam310 python=3.11 -y
    $ micromamba activate jam310
    $ pip install jamaibase
    ```
@@ -26,7 +26,7 @@ The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that y
    - Project ID can be obtained by browsing to any of your projects.
 
    ```python
-   from jamaibase import JamAI, protocol as p
+   from jamaibase import JamAI, types as t
 
    jamai = JamAI(token="your_pat", project_id="your_project_id")
    ```
@@ -34,7 +34,7 @@ The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that y
    Async is supported too:
 
    ```python
-   from jamaibase import JamAIAsync, protocol as p
+   from jamaibase import JamAIAsync, types as t
 
    jamai = JamAIAsync(token="your_pat", project_id="your_project_id")
    ```
@@ -54,14 +54,7 @@ The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that y
    - `.env` specifies which model to run on the `infinity` service for locally-hosted embedding and reranking models.
    - `.env` also specifies all the third party API keys to be used.
 
-   For OSS mode, in order for you to see and use the other third party models such as OpenAI, you need to provide your own OpenAI API key in `.env` file. You can add one or more providers:
-
-   ```
-   OPENAI_API_KEY=...
-   ANTHROPIC_API_KEY=...
-   COHERE_API_KEY=...
-   TOGETHER_API_KEY=...
-   ```
+   For OSS mode, in order for you to see and use the other third party models such as OpenAI, you need to provide your own OpenAI API key in `.env` file (refer to `.env.example` file).
 
 3. Launch the Docker containers by running one of these:
 
@@ -74,7 +67,7 @@ The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that y
    ```
 
    - By default, frontend and backend are accessible at ports 4000 and 6969.
-   - You can change the ports exposed to host by setting env var in `.env` or shell like so `API_PORT=6970 FRONTEND_PORT=4001 docker compose -f docker/compose.cpu.yml up --quiet-pull -d`
+   - You can change the ports exposed to host by setting env var in `.env` or shell like so `API_PORT=6968 FRONTEND_PORT=4001 docker compose -f docker/compose.cpu.yml up --quiet-pull -d`
 
 4. Try the command below in your terminal, or open your browser and go to `localhost:4000`.
 
@@ -89,7 +82,7 @@ The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that y
    - `api_base` should point to the exposed port of `owl` service.
 
    ```python
-   from jamaibase import JamAI, protocol as p
+   from jamaibase import JamAI, types as t
 
    jamai = JamAI(api_base="http://localhost:6969/api")
    ```
@@ -97,7 +90,7 @@ The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that y
    Async is supported too:
 
    ```python
-   from jamaibase import JamAIAsync, protocol as p
+   from jamaibase import JamAIAsync, types as t
 
    jamai = JamAIAsync(api_base="http://localhost:6969/api")
    ```
@@ -157,16 +150,16 @@ Let's start with creating simple tables. Create a table by defining a schema.
 ```python
 # Create an Action Table
 table = jamai.table.create_action_table(
-    p.ActionTableSchemaCreate(
+    t.ActionTableSchemaCreate(
         id="action-simple",
         cols=[
-            p.ColumnSchemaCreate(id="image", dtype="image"),  # Image input
-            p.ColumnSchemaCreate(id="length", dtype="int"),  # Integer input
-            p.ColumnSchemaCreate(id="question", dtype="str"),
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(id="image", dtype="image"),  # Image input
+            t.ColumnSchemaCreate(id="length", dtype="int"),  # Integer input
+            t.ColumnSchemaCreate(id="question", dtype="str"),
+            t.ColumnSchemaCreate(
                 id="answer",
                 dtype="str",
-                gen_config=p.LLMGenConfig(
+                gen_config=t.LLMGenConfig(
                     model="openai/gpt-4o-mini",  # Leave this out to use a default model
                     system_prompt="You are a concise assistant.",
                     prompt="Image: ${image}\n\nQuestion: ${question}\n\nAnswer the question in ${length} words.",
@@ -182,7 +175,7 @@ print(table)
 
 # Create a Knowledge Table
 table = jamai.table.create_knowledge_table(
-    p.KnowledgeTableSchemaCreate(
+    t.KnowledgeTableSchemaCreate(
         id="knowledge-simple",
         cols=[],
         embedding_model="ellm/BAAI/bge-m3",
@@ -192,14 +185,14 @@ print(table)
 
 # Create a Chat Table
 table = jamai.table.create_chat_table(
-    p.ChatTableSchemaCreate(
+    t.ChatTableSchemaCreate(
         id="chat-simple",
         cols=[
-            p.ColumnSchemaCreate(id="User", dtype="str"),
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(id="User", dtype="str"),
+            t.ColumnSchemaCreate(
                 id="AI",
                 dtype="str",
-                gen_config=p.LLMGenConfig(
+                gen_config=t.LLMGenConfig(
                     model="openai/gpt-4o-mini",  # Leave this out to use a default model
                     system_prompt="You are a pirate.",
                     temperature=0.001,
@@ -228,7 +221,7 @@ text_c = "Identify the subject of the image."
 # Streaming
 completion = jamai.table.add_table_rows(
     "action",
-    p.RowAddRequest(
+    t.MultiRowAddRequest(
         table_id="action-simple",
         data=[dict(length=5, question=text_a)],
         stream=True,
@@ -243,7 +236,7 @@ print("")
 # Non-streaming
 completion = jamai.table.add_table_rows(
     "action",
-    p.RowAddRequest(
+    t.MultiRowAddRequest(
         table_id="action-simple",
         data=[dict(length=5, question=text_b)],
         stream=False,
@@ -255,7 +248,7 @@ print(completion.rows[0].columns["answer"].text)
 upload_response = jamai.file.upload_file("clients/python/tests/files/jpeg/rabbit.jpeg")
 completion = jamai.table.add_table_rows(
     "action",
-    p.RowAddRequest(
+    t.MultiRowAddRequest(
         table_id="action-simple",
         data=[dict(image=upload_response.uri, length=5, question=text_c)],
         stream=True,
@@ -270,7 +263,7 @@ print("")
 # Non-streaming (with image input)
 completion = jamai.table.add_table_rows(
     "action",
-    p.RowAddRequest(
+    t.MultiRowAddRequest(
         table_id="action-simple",
         data=[dict(image=upload_response.uri, length=5, question=text_c)],
         stream=False,
@@ -286,7 +279,7 @@ Next let's try adding to Chat Table:
 # Streaming
 completion = jamai.table.add_table_rows(
     "chat",
-    p.RowAddRequest(
+    t.MultiRowAddRequest(
         table_id="chat-simple",
         data=[dict(User="Who directed Arrival (2016)?")],
         stream=True,
@@ -301,7 +294,7 @@ print("")
 # Non-streaming
 completion = jamai.table.add_table_rows(
     "chat",
-    p.RowAddRequest(
+    t.MultiRowAddRequest(
         table_id="chat-simple",
         data=[dict(User="Who directed Dune (2024)?")],
         stream=False,
@@ -324,7 +317,7 @@ Finally we can add rows to Knowledge Table too:
 # Streaming
 completion = jamai.table.add_table_rows(
     "knowledge",
-    p.RowAddRequest(
+    t.MultiRowAddRequest(
         table_id="knowledge-simple",
         data=[dict(Title="Arrival (2016)", Text=text_a)],
         stream=True,
@@ -335,7 +328,7 @@ assert len(list(completion)) == 0
 # Non-streaming
 completion = jamai.table.add_table_rows(
     "knowledge",
-    p.RowAddRequest(
+    t.MultiRowAddRequest(
         table_id="knowledge-simple",
         data=[dict(Title="Dune (2024)", Text=text_b)],
         stream=False,
@@ -407,18 +400,18 @@ with TemporaryDirectory() as tmp_dir:
 
 # Create an Action Table with RAG
 table = jamai.table.create_action_table(
-    p.ActionTableSchemaCreate(
+    t.ActionTableSchemaCreate(
         id="action-rag",
         cols=[
-            p.ColumnSchemaCreate(id="question", dtype="str"),
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(id="question", dtype="str"),
+            t.ColumnSchemaCreate(
                 id="answer",
                 dtype="str",
-                gen_config=p.LLMGenConfig(
+                gen_config=t.LLMGenConfig(
                     model="openai/gpt-4o-mini",  # Leave this out to use a default model
                     system_prompt="You are a concise assistant.",
                     prompt="${question}",
-                    rag_params=p.RAGParams(
+                    rag_params=t.RAGParams(
                         table_id="knowledge-simple",
                         k=2,
                     ),
@@ -435,7 +428,7 @@ print(table)
 # Ask a question with streaming
 completion = jamai.table.add_table_rows(
     "action",
-    p.RowAddRequest(
+    t.MultiRowAddRequest(
         table_id="action-rag",
         data=[dict(question="Where did I go in 2018?")],
         stream=True,
@@ -444,7 +437,7 @@ completion = jamai.table.add_table_rows(
 for chunk in completion:
     if chunk.output_column_name != "answer":
         continue
-    if isinstance(chunk, p.GenTableStreamReferences):
+    if isinstance(chunk, t.CellReferencesResponse):
         # References that are retrieved from KT
         assert len(chunk.chunks) == 2  # k = 2
         print(chunk.chunks)
@@ -493,7 +486,7 @@ Now that you know how to add rows into tables, let's see how to delete them inst
 rows = jamai.table.list_table_rows("action", "action-simple")
 response = jamai.table.delete_table_rows(
     "action",
-    p.RowDeleteRequest(
+    t.MultiRowDeleteRequest(
         table_id="action-simple",
         row_ids=[row["ID"] for row in rows.items],
     ),
@@ -548,22 +541,22 @@ The full script is as follows:
 
 ```python
 from jamaibase import JamAI
-from jamaibase import protocol as p
+from jamaibase import types as t
 
 
 def create_tables(jamai: JamAI):
     # Create an Action Table
     table = jamai.table.create_action_table(
-        p.ActionTableSchemaCreate(
+        t.ActionTableSchemaCreate(
             id="action-simple",
             cols=[
-                p.ColumnSchemaCreate(id="image", dtype="image"),  # Image input
-                p.ColumnSchemaCreate(id="length", dtype="int"),  # Integer input
-                p.ColumnSchemaCreate(id="question", dtype="str"),
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(id="image", dtype="image"),  # Image input
+                t.ColumnSchemaCreate(id="length", dtype="int"),  # Integer input
+                t.ColumnSchemaCreate(id="question", dtype="str"),
+                t.ColumnSchemaCreate(
                     id="answer",
                     dtype="str",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model="openai/gpt-4o-mini",  # Leave this out to use a default model
                         system_prompt="You are a concise assistant.",
                         prompt="Image: ${image}\n\nQuestion: ${question}\n\nAnswer the question in ${length} words.",
@@ -579,7 +572,7 @@ def create_tables(jamai: JamAI):
 
     # Create a Knowledge Table
     table = jamai.table.create_knowledge_table(
-        p.KnowledgeTableSchemaCreate(
+        t.KnowledgeTableSchemaCreate(
             id="knowledge-simple",
             cols=[],
             embedding_model="ellm/BAAI/bge-m3",
@@ -589,14 +582,14 @@ def create_tables(jamai: JamAI):
 
     # Create a Chat Table
     table = jamai.table.create_chat_table(
-        p.ChatTableSchemaCreate(
+        t.ChatTableSchemaCreate(
             id="chat-simple",
             cols=[
-                p.ColumnSchemaCreate(id="User", dtype="str"),
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(id="User", dtype="str"),
+                t.ColumnSchemaCreate(
                     id="AI",
                     dtype="str",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model="openai/gpt-4o-mini",  # Leave this out to use a default model
                         system_prompt="You are a pirate.",
                         temperature=0.001,
@@ -619,7 +612,7 @@ def add_rows(jamai: JamAI):
     # Streaming
     completion = jamai.table.add_table_rows(
         "action",
-        p.RowAddRequest(
+        t.MultiRowAddRequest(
             table_id="action-simple",
             data=[dict(length=5, question=text_a)],
             stream=True,
@@ -634,7 +627,7 @@ def add_rows(jamai: JamAI):
     # Non-streaming
     completion = jamai.table.add_table_rows(
         "action",
-        p.RowAddRequest(
+        t.MultiRowAddRequest(
             table_id="action-simple",
             data=[dict(length=5, question=text_b)],
             stream=False,
@@ -646,7 +639,7 @@ def add_rows(jamai: JamAI):
     upload_response = jamai.file.upload_file("clients/python/tests/files/jpeg/rabbit.jpeg")
     completion = jamai.table.add_table_rows(
         "action",
-        p.RowAddRequest(
+        t.MultiRowAddRequest(
             table_id="action-simple",
             data=[dict(image=upload_response.uri, length=5, question=text_c)],
             stream=True,
@@ -661,7 +654,7 @@ def add_rows(jamai: JamAI):
     # Non-streaming (with image input)
     completion = jamai.table.add_table_rows(
         "action",
-        p.RowAddRequest(
+        t.MultiRowAddRequest(
             table_id="action-simple",
             data=[dict(image=upload_response.uri, length=5, question=text_c)],
             stream=False,
@@ -673,7 +666,7 @@ def add_rows(jamai: JamAI):
     # Streaming
     completion = jamai.table.add_table_rows(
         "chat",
-        p.RowAddRequest(
+        t.MultiRowAddRequest(
             table_id="chat-simple",
             data=[dict(User="Who directed Arrival (2016)?")],
             stream=True,
@@ -688,7 +681,7 @@ def add_rows(jamai: JamAI):
     # Non-streaming
     completion = jamai.table.add_table_rows(
         "chat",
-        p.RowAddRequest(
+        t.MultiRowAddRequest(
             table_id="chat-simple",
             data=[dict(User="Who directed Dune (2024)?")],
             stream=False,
@@ -700,7 +693,7 @@ def add_rows(jamai: JamAI):
     # Streaming
     completion = jamai.table.add_table_rows(
         "knowledge",
-        p.RowAddRequest(
+        t.MultiRowAddRequest(
             table_id="knowledge-simple",
             data=[dict(Title="Arrival (2016)", Text=text_a)],
             stream=True,
@@ -711,7 +704,7 @@ def add_rows(jamai: JamAI):
     # Non-streaming
     completion = jamai.table.add_table_rows(
         "knowledge",
-        p.RowAddRequest(
+        t.MultiRowAddRequest(
             table_id="knowledge-simple",
             data=[dict(Title="Dune (2024)", Text=text_b)],
             stream=False,
@@ -776,18 +769,18 @@ def rag(jamai: JamAI):
 
     # Create an Action Table with RAG
     table = jamai.table.create_action_table(
-        p.ActionTableSchemaCreate(
+        t.ActionTableSchemaCreate(
             id="action-rag",
             cols=[
-                p.ColumnSchemaCreate(id="question", dtype="str"),
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(id="question", dtype="str"),
+                t.ColumnSchemaCreate(
                     id="answer",
                     dtype="str",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model="openai/gpt-4o-mini",  # Leave this out to use a default model
                         system_prompt="You are a concise assistant.",
                         prompt="${question}",
-                        rag_params=p.RAGParams(
+                        rag_params=t.RAGParams(
                             table_id="knowledge-simple",
                             k=2,
                         ),
@@ -804,7 +797,7 @@ def rag(jamai: JamAI):
     # Ask a question with streaming
     completion = jamai.table.add_table_rows(
         "action",
-        p.RowAddRequest(
+        t.MultiRowAddRequest(
             table_id="action-rag",
             data=[dict(question="Where did I went in 2018?")],
             stream=True,
@@ -813,7 +806,7 @@ def rag(jamai: JamAI):
     for chunk in completion:
         if chunk.output_column_name != "answer":
             continue
-        if isinstance(chunk, p.GenTableStreamReferences):
+        if isinstance(chunk, t.CellReferencesResponse):
             # References that are retrieved from KT
             assert len(chunk.chunks) == 2  # k = 2
             print(chunk.chunks)
@@ -854,7 +847,7 @@ def delete_rows(jamai: JamAI):
     rows = jamai.table.list_table_rows("action", "action-simple")
     response = jamai.table.delete_table_rows(
         "action",
-        p.RowDeleteRequest(
+        t.MultiRowDeleteRequest(
             table_id="action-simple",
             row_ids=[row["ID"] for row in rows.items],
         ),
@@ -971,11 +964,11 @@ Generate chat completions using various models. Supports streaming and non-strea
 
 ```python
 # Streaming
-request = p.ChatRequest(
+request = t.ChatRequest(
     model="openai/gpt-4o-mini",
     messages=[
-        p.ChatEntry.system("You are a concise assistant."),
-        p.ChatEntry.user("What is a llama?"),
+        t.ChatEntry.system("You are a concise assistant."),
+        t.ChatEntry.user("What is a llama?"),
     ],
     temperature=0.001,
     top_p=0.001,
@@ -988,11 +981,11 @@ for chunk in completion:
 print("")
 
 # Non-streaming
-request = p.ChatRequest(
+request = t.ChatRequest(
     model="openai/gpt-4o-mini",
     messages=[
-        p.ChatEntry.system("You are a concise assistant."),
-        p.ChatEntry.user("What is a llama?"),
+        t.ChatEntry.system("You are a concise assistant."),
+        t.ChatEntry.user("What is a llama?"),
     ],
     temperature=0.001,
     top_p=0.001,
@@ -1010,7 +1003,7 @@ Generate embeddings for given input text.
 ```python
 texts = ["What is love?", "What is a llama?"]
 embeddings = jamai.generate_embeddings(
-    p.EmbeddingRequest(
+    t.EmbeddingRequest(
         model="ellm/BAAI/bge-m3",
         input=texts,
     )
@@ -1038,7 +1031,7 @@ print(f"Model: {model.id}  Context length: {model.context_length}")
 # Get specific model info
 models = jamai.model_info(name="openai/gpt-4o")
 print(models.data[0])
-# id='openai/gpt-4o' object='model' name='OpenAI GPT-4' context_length=128000 languages=['en', 'cn'] capabilities=['chat'] owned_by='openai'
+# id='openai/gpt-4o' object='model' name='OpenAI GPT-4' context_length=128000 languages=['en', 'cn'] capabilities=['chat'] owned_by=None
 
 # Filter based on capability: "chat", "embed", "rerank"
 models = jamai.model_info(capabilities=["chat"])
@@ -1094,14 +1087,14 @@ st.title("Simple chat")
 try:
     # Create a Chat Table
     jamai.table.create_chat_table(
-        p.ChatTableSchemaCreate(
+        t.ChatTableSchemaCreate(
             id="chat-simple",
             cols=[
-                p.ColumnSchemaCreate(id="User", dtype="str"),
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(id="User", dtype="str"),
+                t.ColumnSchemaCreate(
                     id="AI",
                     dtype="str",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model="openai/gpt-4o-mini",  # Leave this out to use a default model
                         system_prompt="You are a pirate.",
                         temperature=0.001,
@@ -1128,7 +1121,7 @@ for message in st.session_state.messages:
 def response_generator(_prompt):
     completion = jamai.table.add_table_rows(
         "chat",
-        p.RowAddRequest(
+        t.MultiRowAddRequest(
             table_id="chat-simple",
             data=[dict(User=_prompt)],
             stream=True,

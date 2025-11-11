@@ -1,23 +1,27 @@
 <script lang="ts">
-	import { Select as SelectPrimitive } from 'bits-ui';
+	import { Select as SelectPrimitive, type WithoutChild } from 'bits-ui';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import { cn } from '$lib/utils.js';
 
-	type $$Props = SelectPrimitive.TriggerProps;
-	type $$Events = SelectPrimitive.TriggerEvents;
-
-	let className: $$Props['class'] = undefined;
-	export { className as class };
+	let {
+		ref = $bindable(null),
+		class: className,
+		children,
+		showArrow = true,
+		...restProps
+	}: WithoutChild<SelectPrimitive.TriggerProps> & { showArrow?: boolean } = $props();
 </script>
 
 <SelectPrimitive.Trigger
+	bind:ref
 	class={cn(
-		'flex h-10 w-full items-center justify-between gap-8 rounded-md border border-[#E5E5E5] data-dark:border-[#666] bg-white data-dark:bg-[#202226] px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1',
+		'flex h-10 w-full min-w-full items-center justify-between gap-8 rounded-lg border-transparent bg-[#F2F4F7] px-3 py-2 pl-3 pr-2 text-sm transition-colors placeholder:text-muted-foreground hover:bg-[#e1e2e6] disabled:cursor-not-allowed disabled:opacity-100 data-[placeholder]:italic data-[placeholder]:text-muted-foreground data-dark:bg-[#42464e] [&>span]:line-clamp-1',
 		className
 	)}
-	{...$$restProps}
-	let:builder
-	on:click
-	on:keydown
+	{...restProps}
 >
-	<slot {builder} />
+	{@render children?.()}
+	{#if showArrow}
+		<ChevronDown class="size-4 flex-[0_0_auto]" />
+	{/if}
 </SelectPrimitive.Trigger>

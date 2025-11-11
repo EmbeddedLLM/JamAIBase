@@ -1,5 +1,7 @@
-import 'dotenv/config';
 import { expect, type Locator, type Page } from '@playwright/test';
+import 'dotenv/config';
+
+const ossMode = !process.env.OWL_SERVICE_KEY;
 
 /** Layout with breadcrumbs */
 export class LayoutPage {
@@ -12,7 +14,7 @@ export class LayoutPage {
 	}
 
 	async switchOrganization(organizationName: string) {
-		if (process.env.PUBLIC_IS_LOCAL === 'false') {
+		if (!ossMode) {
 			const orgSelector = this.page.getByTestId('org-selector');
 			await expect(async () => {
 				await this.selectOrgBtn.click();

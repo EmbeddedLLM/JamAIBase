@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 
-	let divCircles: HTMLDivElement[] = [];
+	let divCircles: HTMLDivElement[] = $state([]);
 
 	let interval: NodeJS.Timeout;
 	let index = 0;

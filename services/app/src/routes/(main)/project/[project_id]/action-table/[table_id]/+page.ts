@@ -1,13 +1,14 @@
 import { PUBLIC_JAMAI_URL } from '$env/static/public';
-import { error } from '@sveltejs/kit';
-import logger from '$lib/logger.js';
 import { actionRowsPerPage } from '$lib/constants.js';
+import logger from '$lib/logger.js';
 import type { GenTable, GenTableRow } from '$lib/types.js';
+import { error } from '@sveltejs/kit';
 
 export const load = async ({ depends, fetch, params, parent, url }) => {
 	depends('action-table:slug');
 	await parent();
 	const page = parseInt(url.searchParams.get('page') ?? '1');
+	const orderBy = url.searchParams.get('sort_by');
 	const orderAsc = parseInt(url.searchParams.get('asc') ?? '0');
 
 	if (!params.table_id) {
@@ -16,11 +17,7 @@ export const load = async ({ depends, fetch, params, parent, url }) => {
 
 	const getTable = async () => {
 		const tableDataRes = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/action/${params.table_id}?` +
-				new URLSearchParams({
-					offset: '0',
-					limit: '1'
-				}),
+			`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/action?${new URLSearchParams([['table_id', params.table_id]])}`,
 			{
 				headers: {
 					'x-project-id': params.project_id
@@ -30,7 +27,7 @@ export const load = async ({ depends, fetch, params, parent, url }) => {
 		const tableDataBody = await tableDataRes.json();
 
 		if (!tableDataRes.ok) {
-			if (tableDataRes.status !== 404 && tableDataRes.status !== 422) {
+			if (![403, 404, 422].includes(tableDataRes.status)) {
 				logger.error('ACTIONTBL_TBL_GET', tableDataBody);
 			}
 			return { error: tableDataRes.status, message: tableDataBody };
@@ -42,13 +39,22 @@ export const load = async ({ depends, fetch, params, parent, url }) => {
 	};
 
 	const getRows = async () => {
+		const q = url.searchParams.get('q');
+
+		const searchParams = new URLSearchParams([
+			['table_id', params.table_id],
+			['offset', ((page - 1) * actionRowsPerPage).toString()],
+			['limit', actionRowsPerPage.toString()],
+			['order_by', orderBy ?? 'ID'],
+			['order_ascending', orderAsc === 1 ? 'true' : 'false']
+		]);
+
+		if (q) {
+			searchParams.set('search_query', q);
+		}
+
 		const tableRowsRes = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/action/${params.table_id}/rows?` +
-				new URLSearchParams({
-					offset: ((page - 1) * actionRowsPerPage).toString(),
-					limit: actionRowsPerPage.toString(),
-					order_descending: orderAsc === 1 ? 'false' : 'true'
-				}),
+			`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/action/rows/list?${searchParams}`,
 			{
 				headers: {
 					'x-project-id': params.project_id
@@ -58,7 +64,7 @@ export const load = async ({ depends, fetch, params, parent, url }) => {
 		const tableRowsBody = await tableRowsRes.json();
 
 		if (!tableRowsRes.ok) {
-			if (tableRowsRes.status !== 404 && tableRowsRes.status !== 422) {
+			if (![403, 404, 422].includes(tableRowsRes.status)) {
 				logger.error('ACTIONTBL_TBL_GETROWS', tableRowsBody);
 			}
 			return { error: tableRowsRes.status, message: tableRowsBody };

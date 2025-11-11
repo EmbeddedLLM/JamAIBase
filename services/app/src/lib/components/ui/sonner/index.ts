@@ -1,4 +1,4 @@
 import { toast } from 'svelte-sonner';
-import Sonner from './sonner.svelte';
 import CustomToastDesc from './CustomToastDesc.svelte';
-export { toast, Sonner as Toaster, CustomToastDesc };
+import Sonner from './sonner.svelte';
+export { CustomToastDesc, toast, Sonner as Toaster };

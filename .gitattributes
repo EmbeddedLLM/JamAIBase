@@ -33,12 +33,18 @@
 *.db binary
 *.doc binary
 *.docx binary
+*.gif binary
 *.gz binary
+*.heic* binary
+*.heif* binary
 *.jar binary
 *.jpeg binary
 *.jpg binary
+*.mov binary
+*.mp* binary
 *.npy binary
 *.npz binary
+*.parquet binary
 *.pcd binary
 *.pdf binary
 *.pkl binary
@@ -47,13 +53,16 @@
 *.pptx binary
 *.pth binary
 *.so binary
+*.ttf binary
+*.webp binary
 *.xls binary
 *.xlsx binary
 *.zip binary
 
+# Track with LFS
+# *.pth filter=lfs diff=lfs merge=lfs -text
+# *.parquet filter=lfs diff=lfs merge=lfs -text
+
 # These files should not be processed by Linguist for language detection on GitHub.com
 *.p linguist-detectable=false
 *.gz linguist-detectable=false
-
-# Track with Git LFS
-*.parquet filter=lfs diff=lfs merge=lfs -text

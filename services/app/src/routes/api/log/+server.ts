@@ -1,6 +1,6 @@
+import { enumerateObj } from '$lib/utils.js';
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
-import { enumerateObj } from '$lib/utils.js';
 
 export const POST = async ({ request, locals }) => {
 	const body = await request.json().catch(() => null);
@@ -27,31 +27,31 @@ export const POST = async ({ request, locals }) => {
 	switch (type) {
 		case 'error':
 			console.error(
-				`Logged from client (${locals.user?.sub ?? 'Unknown'}): ${event}\n`,
+				`Logged from client (${locals.user?.id ?? 'Unknown'}): ${event}\n`,
 				stringMessage
 			);
 			break;
 		case 'warn':
 			console.warn(
-				`Logged from client (${locals.user?.sub ?? 'Unknown'}): ${event}\n`,
+				`Logged from client (${locals.user?.id ?? 'Unknown'}): ${event}\n`,
 				stringMessage
 			);
 			break;
 		case 'info':
 			console.info(
-				`Logged from client (${locals.user?.sub ?? 'Unknown'}): ${event}\n`,
+				`Logged from client (${locals.user?.id ?? 'Unknown'}): ${event}\n`,
 				stringMessage
 			);
 			break;
 		case 'log':
 			console.log(
-				`Logged from client (${locals.user?.sub ?? 'Unknown'}): ${event}\n`,
+				`Logged from client (${locals.user?.id ?? 'Unknown'}): ${event}\n`,
 				stringMessage
 			);
 			break;
 		default:
 			console.log(
-				`Logged from client (${locals.user?.sub ?? 'Unknown'}): ${event}\n`,
+				`Logged from client (${locals.user?.id ?? 'Unknown'}): ${event}\n`,
 				stringMessage
 			);
 			break;

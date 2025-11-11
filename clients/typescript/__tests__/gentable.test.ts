@@ -1,7 +1,7 @@
 import JamAI from "@/index";
 import tmp from "tmp";
 
-import { GenTableRowsChatCompletionChunksSchema, GetConversationThreadResponseSchema } from "@/resources/gen_tables/chat";
+import { GetConversationThreadResponseSchema, MultiRowCompletionResponseSchema } from "@/resources/gen_tables/chat";
 import {
     ColumnSchema,
     ColumnSchemaCreate,
@@ -508,7 +508,7 @@ describe("APIClient Gentable", () => {
                 concurrent: true
             });
 
-            const parsedData = GenTableRowsChatCompletionChunksSchema.parse(response);
+            const parsedData = MultiRowCompletionResponseSchema.parse(response);
             expect(parsedData).toEqual(response);
         }
     });
@@ -530,7 +530,7 @@ describe("APIClient Gentable", () => {
                 concurrent: true
             });
 
-            const parsedData = GenTableRowsChatCompletionChunksSchema.parse(response);
+            const parsedData = MultiRowCompletionResponseSchema.parse(response);
             expect(parsedData).toEqual(response);
         }
     });
@@ -1244,7 +1244,7 @@ describe("APIClient Gentable", () => {
             // @TODO
             // verify that the suggestions output is different after regen
 
-            // const parsedregenRowResponseData = GenTableRowsChatCompletionChunksSchema.parse(regenRowResponse);
+            // const parsedregenRowResponseData = MultiRowCompletionResponseSchema.parse(regenRowResponse);
             // expect(parsedregenRowResponseData).toEqual(regenRowResponse);
 
             // const listRowResponse2 = await client.table.listRows({
@@ -1315,7 +1315,7 @@ describe("APIClient Gentable", () => {
                 if (done) {
                     break;
                 }
-                // console.log(GenTableStreamChatCompletionChunkSchema.parse(value));
+                // console.log(ColumnCompletionResponseSchema.parse(value));
             }
         }
     });

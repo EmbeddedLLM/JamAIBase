@@ -12,11 +12,11 @@ import pytest
 from flaky import flaky
 
 from jamaibase import JamAI
-from jamaibase import protocol as p
+from jamaibase import types as t
 from jamaibase.utils.io import csv_to_df, df_to_csv
 
 CLIENT_CLS = [JamAI]
-TABLE_TYPES = [p.TableType.action, p.TableType.knowledge, p.TableType.chat]
+TABLE_TYPES = [t.TableType.action, t.TableType.knowledge, t.TableType.chat]
 
 TABLE_ID_A = "table_a"
 TABLE_ID_B = "table_b"
@@ -65,10 +65,10 @@ def _rerun_on_fs_error_with_delay(err, *args):
 @contextmanager
 def _create_table(
     jamai: JamAI,
-    table_type: p.TableType,
+    table_type: t.TableType,
     table_id: str = TABLE_ID_A,
-    cols: list[p.ColumnSchemaCreate] | None = None,
-    chat_cols: list[p.ColumnSchemaCreate] | None = None,
+    cols: list[t.ColumnSchemaCreate] | None = None,
+    chat_cols: list[t.ColumnSchemaCreate] | None = None,
     embedding_model: str | None = None,
     delete_first: bool = True,
 ):
@@ -77,15 +77,15 @@ def _create_table(
             jamai.table.delete_table(table_type, table_id)
         if cols is None:
             cols = [
-                p.ColumnSchemaCreate(id="good", dtype="bool"),
-                p.ColumnSchemaCreate(id="words", dtype="int"),
-                p.ColumnSchemaCreate(id="stars", dtype="float"),
-                p.ColumnSchemaCreate(id="inputs", dtype="str"),
-                p.ColumnSchemaCreate(id="photo", dtype="image"),
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(id="good", dtype="bool"),
+                t.ColumnSchemaCreate(id="words", dtype="int"),
+                t.ColumnSchemaCreate(id="stars", dtype="float"),
+                t.ColumnSchemaCreate(id="inputs", dtype="str"),
+                t.ColumnSchemaCreate(id="photo", dtype="image"),
+                t.ColumnSchemaCreate(
                     id="summary",
                     dtype="str",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model=_get_chat_model(jamai),
                         system_prompt="You are a concise assistant.",
                         # Interpolate string and non-string input columns
@@ -95,10 +95,10 @@ def _create_table(
                         max_tokens=10,
                     ),
                 ),
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(
                     id="captioning",
                     dtype="str",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model="",
                         system_prompt="You are a concise assistant.",
                         # Interpolate file input column
@@ -111,11 +111,11 @@ def _create_table(
             ]
         if chat_cols is None:
             chat_cols = [
-                p.ColumnSchemaCreate(id="User", dtype="str"),
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(id="User", dtype="str"),
+                t.ColumnSchemaCreate(
                     id="AI",
                     dtype="str",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model=_get_chat_model(jamai),
                         system_prompt="You are a wacky assistant.",
                         temperature=0.001,
@@ -125,25 +125,25 @@ def _create_table(
                 ),
             ]
 
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             table = jamai.table.create_action_table(
-                p.ActionTableSchemaCreate(id=table_id, cols=cols)
+                t.ActionTableSchemaCreate(id=table_id, cols=cols)
             )
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             if embedding_model is None:
                 embedding_model = ""
             table = jamai.table.create_knowledge_table(
-                p.KnowledgeTableSchemaCreate(
+                t.KnowledgeTableSchemaCreate(
                     id=table_id, cols=cols, embedding_model=embedding_model
                 )
             )
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             table = jamai.table.create_chat_table(
-                p.ChatTableSchemaCreate(id=table_id, cols=chat_cols + cols)
+                t.ChatTableSchemaCreate(id=table_id, cols=chat_cols + cols)
             )
         else:
             raise ValueError(f"Invalid table type: {table_type}")
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         yield table
     finally:
         jamai.table.delete_table(table_type, table_id)
@@ -151,7 +151,7 @@ def _create_table(
 
 def _add_row(
     jamai: JamAI,
-    table_type: p.TableType,
+    table_type: t.TableType,
     stream: bool,
     table_name: str = TABLE_ID_A,
     data: dict | None = None,
@@ -175,21 +175,21 @@ def _add_row(
         )
     if chat_data is None:
         chat_data = dict(User="Tell me a joke.")
-    if table_type == p.TableType.action:
+    if table_type == t.TableType.action:
         pass
-    elif table_type == p.TableType.knowledge:
+    elif table_type == t.TableType.knowledge:
         data.update(knowledge_data)
-    elif table_type == p.TableType.chat:
+    elif table_type == t.TableType.chat:
         data.update(chat_data)
     else:
         raise ValueError(f"Invalid table type: {table_type}")
     response = jamai.table.add_table_rows(
         table_type,
-        p.RowAddRequest(table_id=table_name, data=[data], stream=stream),
+        t.MultiRowAddRequest(table_id=table_name, data=[data], stream=stream),
     )
     if stream:
         return response
-    assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+    assert isinstance(response, t.MultiRowCompletionResponse)
     assert len(response.rows) == 1
     return response.rows[0]
 
@@ -201,13 +201,13 @@ def _add_row(
 @pytest.mark.parametrize("delimiter", [","], ids=["comma_delimiter"])
 def test_import_data_complete(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     stream: bool,
     delimiter: str,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
 
         # Complete CSV
         with TemporaryDirectory() as tmp_dir:
@@ -264,7 +264,7 @@ def test_import_data_complete(
             df_to_csv(df, file_path, delimiter)
             response = jamai.import_table_data(
                 table_type,
-                p.TableDataImportRequest(
+                t.TableDataImportRequest(
                     file_path=file_path,
                     table_id=table.id,
                     stream=stream,
@@ -275,14 +275,14 @@ def test_import_data_complete(
                 responses = [r for r in response]
                 assert len(responses) == 0
             else:
-                assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+                assert isinstance(response, t.MultiRowCompletionResponse)
                 assert response.object == "gen_table.completion.rows"
 
         rows = jamai.table.list_table_rows(table_type, table.id, vec_decimals=2)
         assert isinstance(rows.items, list)
         assert len(rows.items) == 4
         for row, d in zip(rows.items[::-1], data, strict=True):
-            if table_type == p.TableType.knowledge:
+            if table_type == t.TableType.knowledge:
                 assert isinstance(row["Text Embed"]["value"], list)
                 assert len(row["Text Embed"]["value"]) > 0
                 assert isinstance(row["Title Embed"]["value"], list)
@@ -291,13 +291,13 @@ def test_import_data_complete(
                 if k not in row and k in chat_data:
                     continue
                 if v == "":
-                    assert (
-                        row[k]["value"] is None
-                    ), f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    assert row[k]["value"] is None, (
+                        f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    )
                 else:
-                    assert (
-                        row[k]["value"] == v
-                    ), f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    assert row[k]["value"] == v, (
+                        f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    )
 
 
 @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
@@ -306,23 +306,23 @@ def test_import_data_complete(
 @pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
 def test_import_data_cast_to_string(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     stream: bool,
 ):
     jamai = client_cls()
-    gen_cfg = p.LLMGenConfig()
+    gen_cfg = t.LLMGenConfig()
     cols = [
-        p.ColumnSchemaCreate(id="bool", dtype="str"),
-        p.ColumnSchemaCreate(id="int", dtype="str"),
-        p.ColumnSchemaCreate(id="float", dtype="str"),
-        p.ColumnSchemaCreate(id="str", dtype="str"),
+        t.ColumnSchemaCreate(id="bool", dtype="str"),
+        t.ColumnSchemaCreate(id="int", dtype="str"),
+        t.ColumnSchemaCreate(id="float", dtype="str"),
+        t.ColumnSchemaCreate(id="str", dtype="str"),
         # p.ColumnSchemaCreate(id="bool_out", dtype="bool", gen_config=gen_cfg),
         # p.ColumnSchemaCreate(id="int_out", dtype="int", gen_config=gen_cfg),
         # p.ColumnSchemaCreate(id="float_out", dtype="float", gen_config=gen_cfg),
-        p.ColumnSchemaCreate(id="str_out", dtype="str", gen_config=gen_cfg),
+        t.ColumnSchemaCreate(id="str_out", dtype="str", gen_config=gen_cfg),
     ]
     with _create_table(jamai, table_type, cols=cols) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
 
         # Complete CSV
         with TemporaryDirectory() as tmp_dir:
@@ -356,7 +356,7 @@ def test_import_data_cast_to_string(
             df_to_csv(df, file_path)
             response = jamai.import_table_data(
                 table_type,
-                p.TableDataImportRequest(
+                t.TableDataImportRequest(
                     file_path=file_path,
                     table_id=table.id,
                     stream=stream,
@@ -366,14 +366,14 @@ def test_import_data_cast_to_string(
                 responses = [r for r in response]
                 assert len(responses) == 0
             else:
-                assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+                assert isinstance(response, t.MultiRowCompletionResponse)
                 assert response.object == "gen_table.completion.rows"
 
         rows = jamai.table.list_table_rows(table_type, table.id, vec_decimals=2)
         assert isinstance(rows.items, list)
         assert len(rows.items) == 1
         for row, d in zip(rows.items[::-1], data, strict=True):
-            if table_type == p.TableType.knowledge:
+            if table_type == t.TableType.knowledge:
                 assert isinstance(row["Text Embed"]["value"], list)
                 assert len(row["Text Embed"]["value"]) > 0
                 assert isinstance(row["Title Embed"]["value"], list)
@@ -381,9 +381,9 @@ def test_import_data_cast_to_string(
             for k, v in d.items():
                 if k not in row and k in chat_data:
                     continue
-                assert row[k]["value"] == str(
-                    v
-                ), f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                assert row[k]["value"] == str(v), (
+                    f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                )
 
 
 @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
@@ -392,23 +392,23 @@ def test_import_data_cast_to_string(
 @pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
 def test_import_data_cast_from_string(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     stream: bool,
 ):
     jamai = client_cls()
-    gen_cfg = p.LLMGenConfig()
+    gen_cfg = t.LLMGenConfig()
     cols = [
-        p.ColumnSchemaCreate(id="bool", dtype="bool"),
-        p.ColumnSchemaCreate(id="int", dtype="int"),
-        p.ColumnSchemaCreate(id="float", dtype="float"),
-        p.ColumnSchemaCreate(id="str", dtype="str"),
+        t.ColumnSchemaCreate(id="bool", dtype="bool"),
+        t.ColumnSchemaCreate(id="int", dtype="int"),
+        t.ColumnSchemaCreate(id="float", dtype="float"),
+        t.ColumnSchemaCreate(id="str", dtype="str"),
         # p.ColumnSchemaCreate(id="bool_out", dtype="bool", gen_config=gen_cfg),
         # p.ColumnSchemaCreate(id="int_out", dtype="int", gen_config=gen_cfg),
         # p.ColumnSchemaCreate(id="float_out", dtype="float", gen_config=gen_cfg),
-        p.ColumnSchemaCreate(id="str_out", dtype="str", gen_config=gen_cfg),
+        t.ColumnSchemaCreate(id="str_out", dtype="str", gen_config=gen_cfg),
     ]
     with _create_table(jamai, table_type, cols=cols) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
 
         # Complete CSV
         with TemporaryDirectory() as tmp_dir:
@@ -442,7 +442,7 @@ def test_import_data_cast_from_string(
             df_to_csv(df, file_path)
             response = jamai.import_table_data(
                 table_type,
-                p.TableDataImportRequest(
+                t.TableDataImportRequest(
                     file_path=file_path,
                     table_id=table.id,
                     stream=stream,
@@ -452,14 +452,14 @@ def test_import_data_cast_from_string(
                 responses = [r for r in response]
                 assert len(responses) == 0
             else:
-                assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+                assert isinstance(response, t.MultiRowCompletionResponse)
                 assert response.object == "gen_table.completion.rows"
 
         rows = jamai.table.list_table_rows(table_type, table.id, vec_decimals=2)
         assert isinstance(rows.items, list)
         assert len(rows.items) == 1
         for row, d in zip(rows.items[::-1], data, strict=True):
-            if table_type == p.TableType.knowledge:
+            if table_type == t.TableType.knowledge:
                 assert isinstance(row["Text Embed"]["value"], list)
                 assert len(row["Text Embed"]["value"]) > 0
                 assert isinstance(row["Title Embed"]["value"], list)
@@ -467,9 +467,9 @@ def test_import_data_cast_from_string(
             for k, v in d.items():
                 if k not in row and k in chat_data:
                     continue
-                assert (
-                    str(row[k]["value"]) == v
-                ), f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                assert str(row[k]["value"]) == v, (
+                    f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                )
 
 
 @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
@@ -478,12 +478,12 @@ def test_import_data_cast_from_string(
 @pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
 def test_import_data_cast_dtype(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     stream: bool,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
 
         # Complete CSV
         with TemporaryDirectory() as tmp_dir:
@@ -524,7 +524,7 @@ def test_import_data_cast_dtype(
             df_to_csv(df, file_path)
             response = jamai.import_table_data(
                 table_type,
-                p.TableDataImportRequest(
+                t.TableDataImportRequest(
                     file_path=file_path,
                     table_id=table.id,
                     stream=stream,
@@ -534,14 +534,14 @@ def test_import_data_cast_dtype(
                 responses = [r for r in response]
                 assert len(responses) == 0
             else:
-                assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+                assert isinstance(response, t.MultiRowCompletionResponse)
                 assert response.object == "gen_table.completion.rows"
 
         rows = jamai.table.list_table_rows(table_type, table.id, vec_decimals=2)
         assert isinstance(rows.items, list)
         assert len(rows.items) == len(data)
         for row, d in zip(rows.items[::-1], gt_data, strict=True):
-            if table_type == p.TableType.knowledge:
+            if table_type == t.TableType.knowledge:
                 assert isinstance(row["Text Embed"]["value"], list)
                 assert len(row["Text Embed"]["value"]) > 0
                 assert isinstance(row["Title Embed"]["value"], list)
@@ -550,13 +550,13 @@ def test_import_data_cast_dtype(
                 if k not in row and k in chat_data:
                     continue
                 if v == "":
-                    assert (
-                        row[k]["value"] is None
-                    ), f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    assert row[k]["value"] is None, (
+                        f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    )
                 else:
-                    assert (
-                        row[k]["value"] == v
-                    ), f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    assert row[k]["value"] == v, (
+                        f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    )
 
 
 @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
@@ -565,12 +565,12 @@ def test_import_data_cast_dtype(
 @pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
 def test_import_data_incomplete(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     stream: bool,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
 
         # CSV without input column
         with TemporaryDirectory() as tmp_dir:
@@ -623,7 +623,7 @@ def test_import_data_incomplete(
             df_to_csv(df, file_path)
             response = jamai.import_table_data(
                 table_type,
-                p.TableDataImportRequest(
+                t.TableDataImportRequest(
                     file_path=file_path,
                     table_id=table.id,
                     stream=stream,
@@ -633,7 +633,7 @@ def test_import_data_incomplete(
                 responses = [r for r in response]
                 assert len(responses) == 0
             else:
-                assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+                assert isinstance(response, t.MultiRowCompletionResponse)
                 assert response.object == "gen_table.completion.rows"
 
         rows = jamai.table.list_table_rows(table_type, table.id, vec_decimals=2)
@@ -642,13 +642,13 @@ def test_import_data_incomplete(
         for row, d in zip(rows.items[::-1], data, strict=True):
             for k in cols:
                 if k not in d:
-                    assert (
-                        row[k]["value"] is None
-                    ), f"Imported data should be None: col=`{k}`  val={row[k]}"
+                    assert row[k]["value"] is None, (
+                        f"Imported data should be None: col=`{k}`  val={row[k]}"
+                    )
                 else:
-                    assert (
-                        row[k]["value"] == d[k]
-                    ), f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{d[k]}`"
+                    assert row[k]["value"] == d[k], (
+                        f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{d[k]}`"
+                    )
 
 
 @flaky(max_runs=3, min_passes=1)
@@ -657,12 +657,12 @@ def test_import_data_incomplete(
 @pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
 def test_import_data_with_generation(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     stream: bool,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
 
         # CSV without output column
         with TemporaryDirectory() as tmp_dir:
@@ -695,7 +695,7 @@ def test_import_data_with_generation(
             df_to_csv(df, file_path)
             response = jamai.import_table_data(
                 table_type,
-                p.TableDataImportRequest(
+                t.TableDataImportRequest(
                     file_path=file_path,
                     table_id=table.id,
                     stream=stream,
@@ -704,7 +704,7 @@ def test_import_data_with_generation(
             if stream:
                 responses = [r for r in response]
                 assert len(responses) > 0
-                assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+                assert all(isinstance(r, t.CellCompletionResponse) for r in responses)
                 assert all(r.object == "gen_table.completion.chunk" for r in responses)
                 assert all(r.output_column_name in ("summary", "captioning") for r in responses)
                 summaries = defaultdict(list)
@@ -715,9 +715,9 @@ def test_import_data_with_generation(
                 summaries = {k: "".join(v) for k, v in summaries.items()}
                 assert len(summaries) == 2
                 assert all(len(v) > 0 for v in summaries.values())
-                assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+                assert all(isinstance(r, t.CellCompletionResponse) for r in responses)
                 assert all(
-                    isinstance(r.usage, p.CompletionUsage)
+                    isinstance(r.usage, t.CompletionUsage)
                     for r in responses
                     if r.output_column_name in ("summary", "captioning")
                 )
@@ -732,12 +732,12 @@ def test_import_data_with_generation(
                     if r.output_column_name in ("summary", "captioning")
                 )
             else:
-                assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+                assert isinstance(response, t.MultiRowCompletionResponse)
                 assert response.object == "gen_table.completion.rows"
                 for row in response.rows:
                     for output_column_name in ("summary", "captioning"):
                         assert len(row.columns[output_column_name].text) > 0
-                        assert isinstance(row.columns[output_column_name].usage, p.CompletionUsage)
+                        assert isinstance(row.columns[output_column_name].usage, t.CompletionUsage)
                         assert isinstance(row.columns[output_column_name].prompt_tokens, int)
                         assert isinstance(row.columns[output_column_name].completion_tokens, int)
 
@@ -749,13 +749,13 @@ def test_import_data_with_generation(
                 if k not in row and k in chat_data:
                     continue
                 if v == "":
-                    assert (
-                        row[k]["value"] is None
-                    ), f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    assert row[k]["value"] is None, (
+                        f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    )
                 else:
-                    assert (
-                        row[k]["value"] == v
-                    ), f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    assert row[k]["value"] == v, (
+                        f"Imported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    )
 
 
 @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
@@ -764,12 +764,12 @@ def test_import_data_with_generation(
 @pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
 def test_import_data_empty(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     stream: bool,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
 
         with TemporaryDirectory() as tmp_dir:
             # Empty
@@ -778,7 +778,7 @@ def test_import_data_empty(
             with pytest.raises(RuntimeError, match="No columns to parse"):
                 response = jamai.import_table_data(
                     table_type,
-                    p.TableDataImportRequest(
+                    t.TableDataImportRequest(
                         file_path=file_path, table_id=table.id, stream=stream
                     ),
                 )
@@ -792,7 +792,7 @@ def test_import_data_empty(
             with pytest.raises(RuntimeError, match="empty"):
                 response = jamai.import_table_data(
                     table_type,
-                    p.TableDataImportRequest(
+                    t.TableDataImportRequest(
                         file_path=file_path, table_id=table.id, stream=stream
                     ),
                 )
@@ -810,15 +810,15 @@ def test_import_data_with_vector(
     client_cls: Type[JamAI],
     stream: bool,
 ):
-    table_type = p.TableType.knowledge
+    table_type = t.TableType.knowledge
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
 
         # Add a row first to figure out the vector length
         response = jamai.table.add_table_rows(
             table_type,
-            p.RowAddRequest(
+            t.MultiRowAddRequest(
                 table_id=table.id,
                 data=[
                     {
@@ -896,7 +896,7 @@ def test_import_data_with_vector(
             df_to_csv(df, file_path)
             response = jamai.import_table_data(
                 table_type,
-                p.TableDataImportRequest(
+                t.TableDataImportRequest(
                     file_path=file_path,
                     table_id=table.id,
                     stream=stream,
@@ -906,7 +906,7 @@ def test_import_data_with_vector(
                 responses = [r for r in response]
                 assert len(responses) == 0
             else:
-                assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+                assert isinstance(response, t.MultiRowCompletionResponse)
                 assert response.object == "gen_table.completion.rows"
 
         rows = jamai.table.list_table_rows(table_type, table.id, vec_decimals=2)
@@ -925,12 +925,12 @@ def test_import_data_with_vector(
 @pytest.mark.parametrize("delimiter", [","], ids=["comma_delimiter"])
 def test_export_data(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     delimiter: str,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         data = [
             {"good": True, "words": 5, "stars": 0.0, "inputs": TEXT, "summary": TEXT},
             {"good": False, "words": 5, "stars": 1.0, "inputs": TEXT, "summary": TEXT},
@@ -959,9 +959,9 @@ def test_export_data(
         for row, d in zip(exported_rows, data, strict=True):
             for k, v in d.items():
                 if k in columns:
-                    assert (
-                        row[k] == v
-                    ), f"Exported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    assert row[k] == v, (
+                        f"Exported data is wrong: col=`{k}`  val={row[k]}  ori=`{v}`"
+                    )
                 else:
                     assert k not in row
 
@@ -972,12 +972,12 @@ def test_export_data(
 @pytest.mark.parametrize("delimiter", [","], ids=["comma_delimiter"])
 def test_export_reordered_columns_data(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     delimiter: str,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         _add_row(
             jamai,
             table_type,
@@ -994,7 +994,7 @@ def test_export_reordered_columns_data(
             "captioning",
             "good",
         ]
-        if table_type == p.TableType.knowledge:
+        if table_type == t.TableType.knowledge:
             new_cols_order = [
                 "Title",
                 "Title Embed",
@@ -1003,12 +1003,12 @@ def test_export_reordered_columns_data(
                 "File ID",
                 "Page",
             ] + new_cols_order
-        if table_type == p.TableType.chat:
+        if table_type == t.TableType.chat:
             new_cols_order = ["User", "AI"] + new_cols_order
 
         jamai.table.reorder_columns(
             table_type=table_type,
-            request=p.ColumnReorderRequest(
+            request=t.ColumnReorderRequest(
                 table_id=TABLE_ID_A,
                 column_names=new_cols_order,
             ),
@@ -1049,13 +1049,13 @@ def test_export_reordered_columns_data(
 @pytest.mark.parametrize("delimiter", [",", "\t"], ids=["comma_delimiter", "tab_delimiter"])
 def test_import_export_data_round_trip(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     stream: bool,
     delimiter: str,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         with TemporaryDirectory() as tmp_dir:
             data = [
                 {
@@ -1105,7 +1105,7 @@ def test_import_export_data_round_trip(
             df_to_csv(df, file_path, delimiter)
             response = jamai.import_table_data(
                 table_type,
-                p.TableDataImportRequest(
+                t.TableDataImportRequest(
                     file_path=file_path,
                     table_id=table.id,
                     stream=stream,
@@ -1114,12 +1114,12 @@ def test_import_export_data_round_trip(
             )
             if stream:
                 responses = [r for r in response]
-                if table_type == p.TableType.chat:
+                if table_type == t.TableType.chat:
                     assert len(responses) > 0
                 else:
                     assert len(responses) == 0
             else:
-                assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+                assert isinstance(response, t.MultiRowCompletionResponse)
                 assert response.object == "gen_table.completion.rows"
 
             csv_data = jamai.export_table_data(table_type, table.id, delimiter=delimiter)
@@ -1133,11 +1133,11 @@ def test_import_export_data_round_trip(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_import_export_round_trip(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         _add_row(jamai, table_type, False)
         _add_row(
             jamai,
@@ -1163,12 +1163,12 @@ def test_import_export_round_trip(
             try:
                 imported_table = jamai.table.import_table(
                     table_type,
-                    p.TableImportRequest(
+                    t.TableImportRequest(
                         file_path=file_path,
                         table_id_dst=table_id_dst,
                     ),
                 )
-                assert isinstance(imported_table, p.TableMetaResponse)
+                assert isinstance(imported_table, t.TableMetaResponse)
                 assert imported_table.id == table_id_dst
                 imported_rows = jamai.table.list_table_rows(table_type, imported_table.id)
                 assert len(imported_rows.items) == len(rows.items)
@@ -1178,10 +1178,7 @@ def test_import_export_round_trip(
                 raw_urls = jamai.file.get_raw_urls(
                     [rows.items[2]["photo"]["value"], imported_rows.items[2]["photo"]["value"]]
                 )
-                raw_files = [
-                    httpx.get(url, headers={"X-PROJECT-ID": "default"}).content
-                    for url in raw_urls.urls
-                ]
+                raw_files = [httpx.get(url).content for url in raw_urls.urls]
                 assert (
                     raw_urls.urls[0] != raw_urls.urls[1]
                 )  # URL is different but file should match
@@ -1200,7 +1197,7 @@ def test_import_export_wrong_table_type(
 ):
     jamai = client_cls()
     with _create_table(jamai, "action") as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         _add_row(jamai, "action", False)
         _add_row(
             jamai,
@@ -1220,7 +1217,7 @@ def test_import_export_wrong_table_type(
             with pytest.raises(RuntimeError):
                 jamai.import_table(
                     "knowledge",
-                    p.TableImportRequest(
+                    t.TableImportRequest(
                         file_path=file_path,
                         table_id_dst=table_id_dst,
                     ),
@@ -1229,7 +1226,7 @@ def test_import_export_wrong_table_type(
             with pytest.raises(RuntimeError):
                 jamai.import_table(
                     "chat",
-                    p.TableImportRequest(
+                    t.TableImportRequest(
                         file_path=file_path,
                         table_id_dst=table_id_dst,
                     ),
@@ -1237,4 +1234,4 @@ def test_import_export_wrong_table_type(
 
 
 if __name__ == "__main__":
-    test_import_export_round_trip(JamAI, p.TableType.action)
+    test_import_export_round_trip(JamAI, t.TableType.action)

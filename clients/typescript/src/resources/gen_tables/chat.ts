@@ -3,11 +3,11 @@ import { ChatCompletionChunkSchema, ChatEntrySchema, ReferencesSchema } from "@/
 import { z } from "zod";
 
 export const GetConversationThreadRequestSchema = z.object({
+    table_type: TableTypesSchema,
     table_id: IdSchema,
     column_id: IdSchema,
-    row_id: z.string().default(""),
-    table_type: TableTypesSchema,
-    include: z.boolean().default(true)
+    row_id: z.string().optional(),
+    include: z.boolean().optional()
 });
 
 export const GetConversationThreadResponseSchema = z.object({
@@ -21,18 +21,18 @@ export const GenTableChatCompletionChunksSchema = z.object({
     row_id: z.string()
 });
 
-export const GenTableRowsChatCompletionChunksSchema = z.object({
+export const MultiRowCompletionResponseSchema = z.object({
     object: z.enum(["gen_table.completion.rows"]),
     rows: z.array(GenTableChatCompletionChunksSchema)
 });
 
-export const GenTableStreamChatCompletionChunkSchema = ChatCompletionChunkSchema.extend({
+export const ColumnCompletionResponseSchema = ChatCompletionChunkSchema.extend({
     object: z.enum(["gen_table.completion.chunk"]),
     output_column_name: z.string(),
     row_id: z.string()
 });
 
-export const GenTableStreamReferencesSchema = ReferencesSchema.extend({
+export const RowReferencesResponseSchema = ReferencesSchema.extend({
     object: z.enum(["gen_table.references"]),
     output_column_name: z.string()
 });
@@ -42,7 +42,7 @@ export type CreateChatTableRequest = z.input<typeof CreateChatTableRequestSchema
 
 export type GetConversationThreadRequest = z.input<typeof GetConversationThreadRequestSchema>;
 export type GetConversationThreadResponse = z.infer<typeof GetConversationThreadResponseSchema>;
-export type GenTableChatCompletionChunks = z.infer<typeof GenTableChatCompletionChunksSchema>;
-export type GenTableRowsChatCompletionChunks = z.infer<typeof GenTableRowsChatCompletionChunksSchema>;
-export type GenTableStreamChatCompletionChunk = z.infer<typeof GenTableStreamChatCompletionChunkSchema>;
-export type GenTableStreamReferences = z.infer<typeof GenTableStreamReferencesSchema>;
+export type RowCompletionResponse = z.infer<typeof GenTableChatCompletionChunksSchema>;
+export type MultiRowCompletionResponse = z.infer<typeof MultiRowCompletionResponseSchema>;
+export type CellCompletionResponse = z.infer<typeof ColumnCompletionResponseSchema>;
+export type CellReferencesResponse = z.infer<typeof RowReferencesResponseSchema>;

@@ -1,13 +1,15 @@
-name: CI (OSS)
+name: CI
 
 on:
   pull_request:
     branches:
       - main
+      - legacy-lancedb
 
   push:
     branches:
       - main
+      - legacy-lancedb
     tags:
       - "v*"
 
@@ -39,7 +41,8 @@ jobs:
     if: ${{ !(needs.check_changes.outputs.has-changes == 'true' || github.event_name == 'push') }}
     strategy:
       matrix:
-        python-version: ["3.10"]
+        jamai-mode: ["oss", "cloud"]
+        test-group: [group1, group2, group3, group4]
     timeout-minutes: 2
     steps:
       - name: No-op
@@ -52,8 +55,9 @@ jobs:
     if: needs.check_changes.outputs.has-changes == 'true' || github.event_name == 'push'
     strategy:
       matrix:
-        python-version: ["3.10"]
-    timeout-minutes: 60
+        jamai-mode: ["oss", "cloud"]
+        test-group: [group1, group2, group3, group4]
+    timeout-minutes: 90
 
     steps:
       - name: Checkout code
@@ -61,14 +65,18 @@ jobs:
         with:
           lfs: true
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
 
       - name: Inspect git version
-        run: |
-          git --version
+        run: git --version
 
       - name: Check Docker Version
         run: docker version
@@ -76,26 +84,34 @@ jobs:
       - name: Check Docker Compose Version
         run: docker compose version
 
-      - name: Remove cloud-only modules and install Python client
-        run: |
-          set -e
-          bash scripts/remove_cloud_modules.sh
-          cd clients/python
-          python -m pip install .[test]
+      - name: Remove cloud-only modules
+        if: matrix.jamai-mode == 'oss'
+        run: bash scripts/remove_cloud_modules.sh
 
-      - name: Install ffmpeg
-        run: |
-          set -e
-          sudo apt-get update -qq && sudo apt-get install ffmpeg libavcodec-extra -y
+      - name: Inspect directory tree
+        run: tree
 
-      - name: Authenticating to the Container registry
-        run: echo $JH_PAT | docker login ghcr.io -u tanjiahuei@gmail.com --password-stdin
-        env:
-          JH_PAT: ${{ secrets.JH_PAT }}
+      - name: Install jamaibase & owl
+        run: |
+          pushd clients/python
+          uv pip install --system -e .[test]
+          popd
+          pushd services/api
+          uv pip install --system -e .[test]
+
+      - name: Inspect jamaibase environment
+        run: |
+          uv pip list
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Edit env file
         run: |
-          set -e
           mv .env.example .env
 
           ORGS=$(printenv | grep API_KEY | xargs -I {} echo {} | cut -d '=' -f 1)
@@ -111,125 +127,439 @@ jobs:
             # Replace the org with the key in the .env file
             sed -i "s/$org=.*/$org=$key/g" .env
           done
-          sed -i "s:EMBEDDING_MODEL=.*:EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2:g" .env
-          sed -i "s:RERANKER_MODEL=.*:RERANKER_MODEL=cross-encoder/ms-marco-TinyBERT-L-2:g" .env
-          echo 'OWL_MODELS_CONFIG=models_ci.json' >> .env
+          echo "OWL_DB_INIT=False" >> .env
+          echo "OWL_COMPUTE_STORAGE_PERIOD_SEC=15" >> .env
+          echo "OWL_STRIPE_WEBHOOK_SECRET_TEST=${OWL_STRIPE_WEBHOOK_SECRET_TEST}" >> .env
+          echo "OWL_STRIPE_PUBLISHABLE_KEY_TEST=${OWL_STRIPE_PUBLISHABLE_KEY_TEST}" >> .env
+          echo 'OWL_SERVICE_KEY=lalala' >> .env
+          echo 'JAMAI_TOKEN=lalala' >> .env
+          echo 'JAMAI_API_BASE=http://localhost:6969/api' >> .env
+          echo 'OWL_FLUSH_CLICKHOUSE_BUFFER_SEC=5' >> .env
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
-          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
-          HYPERBOLIC_API_KEY: ${{ secrets.HYPERBOLIC_API_KEY }}
-          CUSTOM_API_KEY: ${{ secrets.CUSTOM_API_KEY }}
+          OWL_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OWL_COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          OWL_HYPERBOLIC_API_KEY: ${{ secrets.HYPERBOLIC_API_KEY }}
+          OWL_JINA_AI_API_KEY: ${{ secrets.JINA_AI_API_KEY }}
+          OWL_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OWL_TOGETHER_AI_API_KEY: ${{ secrets.TOGETHER_AI_API_KEY }}
+          OWL_ELLM_API_KEY: ${{ secrets.CUSTOM_API_KEY }}
+          OWL_STRIPE_WEBHOOK_SECRET_TEST: ${{ secrets.OWL_STRIPE_WEBHOOK_SECRET_TEST }}
+          OWL_STRIPE_PUBLISHABLE_KEY_TEST: ${{ secrets.OWL_STRIPE_PUBLISHABLE_KEY_TEST }}
 
-      - name: Launch services (OSS)
-        id: launch_oss
+      - name: Launch services
+        id: launch_services
         timeout-minutes: 20
-        run: |
-          set -e
-          docker compose -p jamai -f docker/compose.cpu.yml --profile minio --profile kopi up --quiet-pull -d --wait
+        if: always()
+        run: docker compose -p jm -f docker/compose.ci.yml up --quiet-pull -d --wait
         env:
           COMPOSE_DOCKER_CLI_BUILD: 1
           DOCKER_BUILDKIT: 1
 
-      - name: Inspect owl Python version
-        run: docker exec jamai-owl-1 python -V
+      - name: Inspect owl logs if failed to launch
+        timeout-minutes: 1
+        if: failure() && steps.launch_services.outcome == 'failure'
+        run: docker compose -p jm -f docker/compose.ci.yml logs owl
+
+      - name: Inspect owl UV and Python version
+        run: |
+          docker exec jm-owl-1 uv -V
+          docker exec jm-owl-1 $(docker exec jm-owl-1 uv python find) -V
 
       - name: Inspect owl environment
-        run: docker exec jamai-owl-1 pip list
-
-      - name: Python SDK tests (OSS)
-        id: python_sdk_test_oss
-        if: always() && steps.launch_oss.outcome == 'success'
-        run: |
-          set -e
-          export JAMAI_API_BASE=http://localhost:6969/api
-          python -m pytest -vv \
-            --timeout 300 \
-            --doctest-modules \
-            --junitxml=junit/test-results-${{ matrix.python-version }}.xml \
-            --cov-report=xml \
-            --no-flaky-report \
-            clients/python/tests/oss/
-
-      - name: Inspect owl logs if Python SDK tests failed
-        if: failure() &&  steps.python_sdk_test_oss.outcome == 'failure'
-        timeout-minutes: 1
-        run: docker exec jamai-owl-1 cat /app/api/logs/owl.log
-
-      - name: Upload Pytest Test Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: pytest-results-${{ matrix.python-version }}
-          path: junit/test-results-${{ matrix.python-version }}.xml
-        # Always run this step to publish test results even when there are test failures
         if: always()
+        run: docker exec jm-owl-1 uv pip list
 
-      - name: TS/JS SDK tests (OSS)
-        id: ts_sdk_test_oss
-        if: always() && steps.launch_oss.outcome == 'success'
+      - name: Copy OpenAPI JSON
+        id: copy_openapi
+        if: always() && matrix.test-group == 'group1'
         run: |
-          cd clients/typescript
-          echo "BASEURL=http://localhost:6969" >> __tests__/.env
-          npm install
-          npm run test
+          curl localhost:6969/api/public/openapi.json > openapi.json
 
-      - name: Inspect owl logs if TS/JS SDK tests failed
-        if: failure() &&  steps.ts_sdk_test_oss.outcome == 'failure'
+      - name: Generate OpenAPI Redoc HTML page
+        id: generate_redoc_html
+        if: always() && matrix.test-group == 'group1' && steps.copy_openapi.outcome == 'success'
+        run: |
+          npx @redocly/cli@latest build-docs openapi.json
+          mkdir openapi
+          mv redoc-static.html openapi
+          mv openapi.json openapi
+
+      - name: Upload Redoc HTML
+        id: upload_redoc_html
+        uses: actions/upload-artifact@v4
+        if: always() && matrix.test-group == 'group1' && steps.generate_redoc_html.outcome == 'success'
+        with:
+          name: redoc-html-${{ matrix.jamai-mode }}
+          path: openapi
+
+      - name: Publish Redoc HTML link as PR comment
+        uses: thollander/actions-comment-pull-request@v3
+        if: always() && matrix.test-group == 'group1' && github.event_name == 'pull_request' && steps.upload_redoc_html.outcome == 'success'
+        with:
+          message: |
+            [Link to OpenAPI Redoc HTML (${{ matrix.jamai-mode }})](${{ steps.upload_redoc_html.outputs.artifact-url }})
+          comment-tag: redoc_html_comment_${{ matrix.jamai-mode }}
+
+      - name: Python SDK tests
+        id: python_sdk_test
+        if: always() && steps.launch_services.outcome == 'success'
+        run: |
+          cp .env services/api/.env
+          cd services/api
+
+          if [ "${{ matrix.test-group }}" = "group1" ]; then
+            DIRS=(tests --ignore=tests/gen_table/test_row_ops.py --ignore=tests/gen_table/test_row_ops_v2.py --ignore=tests/routers --ignore=tests/utils)
+          elif [ "${{ matrix.test-group }}" = "group2" ]; then
+            DIRS=(tests/gen_table/test_row_ops.py)
+          elif [ "${{ matrix.test-group }}" = "group3" ]; then
+            DIRS=(tests/gen_table/test_row_ops_v2.py tests/utils)
+          else
+            DIRS=(tests/routers)
+          fi
+
+          coverage run --data-file=coverage/.coverage.${{ matrix.test-group }} --rcfile=pyproject.toml -m \
+            pytest \
+              --timeout 300 \
+              --no-flaky-report \
+              --junitxml=pytest_regular.xml \
+              -m "not (${{ matrix.jamai-mode == 'cloud' && 'oss' || 'cloud' }} or stripe)" \
+              "${DIRS[@]}"
+        env:
+          OWL_DB_PATH: postgresql+psycopg://owlpguser:owlpgpassword@localhost:5432/jamaibase_owl
+          OWL_CLICKHOUSE_HOST: localhost
+          OWL_REDIS_HOST: localhost
+
+      - name: Inspect owl logs
+        if: always() && steps.launch_services.outcome == 'success'
         timeout-minutes: 1
-        run: docker exec jamai-owl-1 cat /app/api/logs/owl.log
+        run: mkdir -p logs && docker compose -p jm -f docker/compose.ci.yml logs owl > logs/owl.log
 
-      - name: Update owl service for S3 test
+      - name: Inspect starling logs
+        if: always() && steps.launch_services.outcome == 'success'
+        timeout-minutes: 1
+        run: mkdir -p logs && docker compose -p jm -f docker/compose.ci.yml logs starling > logs/starling.log
+
+      - name: Test Stripe integration (Cloud only)
+        id: test_stripe
+        if: matrix.jamai-mode == 'cloud' && matrix.test-group == 'group1' && steps.launch_services.outcome == 'success'
         run: |
-          # Update the .env file to include the new environment variable
-          echo 'OWL_FILE_DIR=s3://file' >> .env
-          echo 'S3_ENDPOINT=http://minio:9000' >> .env
-          echo 'S3_ACCESS_KEY_ID=minioadmin' >> .env
-          echo 'S3_SECRET_ACCESS_KEY=minioadmin' >> .env
+          # Shut down owl to allow coverage data to be flushed
+          docker compose -p jm -f docker/compose.ci.yml down
+          # Copy Pytest coverage data
+          sudo cp -r docker_data docker_data_pytest
+          sudo rm -rf docker_data
 
-          # Restart the owl service with the updated environment
-          docker compose -p jamai -f docker/compose.cpu.yml up --quiet-pull -d --wait --no-deps --build --force-recreate owl
+          # Relaunch
+          echo "OWL_STRIPE_API_KEY=${OWL_STRIPE_API_KEY}" >> .env
+          docker compose -p jm -f docker/compose.ci.yml up --quiet-pull -d --wait --force-recreate
 
-      - name: Python SDK tests (File API, OSS)
-        id: python_sdk_test_oss_file
-        if: always() && steps.launch_oss.outcome == 'success'
+          # Install Stripe CLI
+          curl -L https://github.com/stripe/stripe-cli/releases/download/v1.27.0/stripe_1.27.0_linux_x86_64.tar.gz --output stripe.tar.gz
+          tar -xvf stripe.tar.gz
+
+          # Listen for Stripe events and forward them to local endpoint
+          nohup ./stripe listen \
+            --forward-to http://localhost:6969/api/v2/organizations/webhooks/stripe &
+            # --events customer.created,invoice.paid
+          # Give stripe listen a moment to establish the tunnel
+          sleep 5
+
+          # Run tests
+          cd services/api
+          # Use unique coverage file for Stripe tests
+          coverage run --data-file=coverage/.coverage.stripe --rcfile=pyproject.toml -m \
+            pytest \
+              --timeout 300 \
+              --no-flaky-report \
+              --junitxml=pytest_stripe.xml \
+              -m stripe \
+              tests
+        env:
+          STRIPE_API_KEY: ${{ secrets.OWL_STRIPE_API_KEY }}
+          OWL_STRIPE_API_KEY: ${{ secrets.OWL_STRIPE_API_KEY }}
+          OWL_CLICKHOUSE_HOST: localhost
+          OWL_REDIS_HOST: localhost
+
+      - name: Inspect owl logs if Stripe integration failed
+        timeout-minutes: 1
+        if: failure() && matrix.jamai-mode == 'cloud' && steps.test_stripe.outcome == 'failure'
+        run: mkdir -p logs && docker compose -p jm --env-file .env -f docker/compose.ci.yml logs owl > logs/owl_stripe.log
+
+      # - name: TS/JS SDK tests
+      #   id: ts_sdk_test
+      #   if: always() && steps.launch_services.outcome == 'success'
+      #   run: |
+      #     cd clients/typescript
+      #     echo "BASEURL=http://localhost:6969" >> __tests__/.env
+      #     npm install
+      #     npm run test
+
+      - name: Upload logs
+        id: upload_logs
+        uses: actions/upload-artifact@v4
+        if: always() && steps.launch_services.outcome == 'success'
+        with:
+          name: logs-${{ matrix.jamai-mode }}-${{ matrix.test-group }}
+          path: logs
+
+      - name: Publish logs link as PR comment
+        uses: thollander/actions-comment-pull-request@v3
+        if: always() && github.event_name == 'pull_request' && steps.upload_logs.outcome == 'success'
+        with:
+          message: |
+            [Link to logs (${{ matrix.jamai-mode }}, ${{ matrix.test-group }})](${{ steps.upload_logs.outputs.artifact-url }})
+          comment-tag: logs_comment_${{ matrix.jamai-mode }}-${{ matrix.test-group }}
+
+      - name: Upload pytest coverage file
+        uses: actions/upload-artifact@v4
+        if: always() && steps.python_sdk_test.outcome == 'success'
+        with:
+          name: pytest-coverage-data-${{ matrix.jamai-mode }}-${{ matrix.test-group }}
+          path: services/api/coverage
+          include-hidden-files: true
+          if-no-files-found: error
+
+      - name: Merge JUnit XML and Coverage data
+        id: merge_test_data
+        if: always() && steps.launch_services.outcome == 'success'
         run: |
-          set -e
-          export JAMAI_API_BASE=http://localhost:6969/api
-          python -m pytest -vv \
-            --timeout 300 \
-            --doctest-modules \
-            --junitxml=junit/test-results-${{ matrix.python-version }}.xml \
-            --cov-report=xml \
-            --no-flaky-report \
-            clients/python/tests/oss/test_file.py
+          # Shut down owl to allow coverage data to be flushed
+          docker compose -p jm --env-file .env -f docker/compose.ci.yml down
 
-  lance_tests:
-    name: Lance tests
+          # Combine coverage data
+          if [ "${{ matrix.test-group }}" = "group1" ]; then
+            mkdir -p docker_data_pytest/owl/db
+            DIRS="docker_data_pytest/owl/db \
+                  docker_data/owl/db \
+                  services/api/coverage"
+          else
+            DIRS="docker_data/owl/db \
+                  services/api/coverage"
+          fi
+
+          coverage combine --keep --data-file=services/api/coverage/.coverage --rcfile=services/api/pyproject.toml \
+            $DIRS
+
+          # Merge JUnit XML files
+          mkdir -p services/api/junit_xml
+          junitparser merge --glob "services/api/pytest_*.xml" services/api/junit_xml/pytest-${{ matrix.jamai-mode }}-${{ matrix.test-group }}.xml
+      - name: Upload docker data pytest coverage file
+        uses: actions/upload-artifact@v4
+        if: always() && matrix.test-group == 'group1' && steps.test_stripe.outcome == 'success'
+        with:
+          name: docker_data_pytest-coverage-data-${{ matrix.jamai-mode }}
+          path: docker_data_pytest/owl/db
+          include-hidden-files: true
+          if-no-files-found: error
+
+      - name: Upload docker data coverage file
+        uses: actions/upload-artifact@v4
+        if: always() && steps.merge_test_data.outcome == 'success'
+        with:
+          name: docker_data-coverage-data-${{ matrix.jamai-mode }}-${{ matrix.test-group }}
+          path: docker_data/owl/db
+          include-hidden-files: true
+          if-no-files-found: error
+
+      - name: Upload JUnit XML file
+        uses: actions/upload-artifact@v4
+        if: always() && steps.merge_test_data.outcome == 'success'
+        with:
+          name: junit-xml-data-${{ matrix.jamai-mode }}-${{ matrix.test-group }}
+          path: services/api/junit_xml
+
+      - name: Log coverage data files
+        run: |
+          if [ "${{ matrix.test-group }}" = "group1" ]; then
+            find docker_data_pytest/owl/db -type f | head -50
+          fi
+          find docker_data/owl/db -type f | head -50
+          find services/api/coverage -type f | head -50
+          find services/api/junit_xml -type f | head -50
+
+      - name: Generate coverage reports
+        id: generate_coverage_report
+        if: always() && steps.merge_test_data.outcome == 'success'
+        run: |
+          cd services/api
+          coverage html --data-file=coverage/.coverage -d coverage/html
+          coverage xml --data-file=coverage/.coverage -o coverage/coverage.xml
+          coverage report --data-file=coverage/.coverage
+
+      - name: Upload coverage HTML report
+        id: upload_coverage_html
+        uses: actions/upload-artifact@v4
+        if: always() && steps.merge_test_data.outcome == 'success'
+        with:
+          name: pytest-coverage-${{ matrix.jamai-mode }}-${{ matrix.test-group }}
+          path: services/api/coverage/html
+
+  merge_coverage:
+    name: Merge Coverage Reports
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
-    timeout-minutes: 60
-
+    needs: sdk_tests
+    if: always() && (needs.sdk_tests.result == 'success' || needs.sdk_tests.result == 'skipped')
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
 
-      - name: Inspect git version
+      - name: Install jamaibase & owl
         run: |
-          git --version
+          pushd services/api
+          uv pip install --system -e .[test]
 
-      - name: Install owl
+      - name: Skip coverage merge (no tests ran)
+        if: needs.sdk_tests.result == 'skipped'
+        run: echo "Skipping coverage merge - no tests were executed (no changes detected)"
+
+      - name: Download pytest coverage data artifacts
+        uses: actions/download-artifact@v4
+        if: needs.sdk_tests.result == 'success'
+        with:
+          pattern: pytest-coverage-data-*
+          path: ./
+
+      - name: Download docker data pytest coverage data artifacts
+        uses: actions/download-artifact@v4
+        if: needs.sdk_tests.result == 'success'
+        with:
+          pattern: docker_data_pytest-coverage-data-*
+          path: ./
+
+      - name: Download docker data coverage data artifacts
+        uses: actions/download-artifact@v4
+        if: needs.sdk_tests.result == 'success'
+        with:
+          pattern: docker_data-coverage-data-*
+          path: ./
+
+      - name: Download junit xml artifacts
+        uses: actions/download-artifact@v4
+        if: needs.sdk_tests.result == 'success'
+        with:
+          pattern: junit-xml-data-*
+          path: junit-xml-data
+
+      - name: Log coverage data files
+        if: needs.sdk_tests.result == 'success'
         run: |
-          set -e
+          find docker_data_pytest-coverage-data-* -type f | head -50
+          find docker_data-coverage-data-* -type f | head -50
+          find pytest-coverage-data-* -type f | head -50
+          find junit-xml-data -type f | head -50
+
+      - name: Merge Cloud JUnit XML and Coverage data
+        id: merge_cloud_test_data
+        if: needs.sdk_tests.result == 'success'
+        run: |
+          coverage combine --keep --data-file=services/api/coverage/.coverage --rcfile=services/api/pyproject.toml \
+            ./docker_data_pytest-coverage-data-cloud \
+            ./docker_data-coverage-data-cloud-group[1-4] \
+            ./pytest-coverage-data-cloud-group[1-4]
+
+          # Merge JUnit XML files
+          junitparser merge --glob "junit-xml-data/junit-xml-data-cloud-*/pytest_*.xml" junit-xml-data/pytest-cloud.xml
+
+      - name: Generate cloud coverage reports
+        if: always() && steps.merge_cloud_test_data.outcome == 'success'
+        run: |
           cd services/api
-          python -m pip install .[test]
+          coverage xml --data-file=coverage/.coverage -o coverage/coverage-cloud.xml
+          coverage report --data-file=coverage/.coverage
 
-      - name: Run tests
-        run: pytest services/api/tests/test_lance.py
+      - name: Pytest cloud coverage comment
+        uses: MishaKav/pytest-coverage-comment@main
+        if: always() && github.event_name == 'pull_request' && steps.merge_cloud_test_data.outcome == 'success'
+        with:
+          title: Coverage Report (cloud)
+          pytest-xml-coverage-path: services/api/coverage/coverage-cloud.xml
+          junitxml-path: junit-xml-data/pytest-cloud.xml
+          unique-id-for-comment: coverage_report_comment_cloud
+          report-only-changed-files: true
+
+      - name: Merge OSS JUnit XML and Coverage data
+        id: merge_oss_test_data
+        if: needs.sdk_tests.result == 'success'
+        run: |
+          coverage combine --keep --data-file=services/api/coverage/.coverage --rcfile=services/api/pyproject.toml \
+            ./docker_data-coverage-data-oss-group[1-4] \
+            ./pytest-coverage-data-oss-group[1-4]
+
+          # Merge JUnit XML files
+          junitparser merge --glob "junit-xml-data/junit-xml-data-oss-*/pytest_*.xml" junit-xml-data/pytest-oss.xml
+
+      - name: Generate oss coverage reports
+        if: always() && steps.merge_oss_test_data.outcome == 'success'
+        run: |
+          cd services/api
+          coverage xml --data-file=coverage/.coverage -o coverage/coverage-oss.xml
+          coverage report --data-file=coverage/.coverage
+
+      - name: Pytest oss coverage comment
+        uses: MishaKav/pytest-coverage-comment@main
+        if: always() && github.event_name == 'pull_request' && steps.merge_oss_test_data.outcome == 'success'
+        with:
+          title: Coverage Report (oss)
+          pytest-xml-coverage-path: services/api/coverage/coverage-oss.xml
+          junitxml-path: junit-xml-data/pytest-oss.xml
+          unique-id-for-comment: coverage_report_comment_oss
+          report-only-changed-files: true
+
+      - name: Merge All JUnit XML and Coverage data
+        id: merge_all_test_data
+        if: needs.sdk_tests.result == 'success'
+        run: |
+          coverage combine --keep --data-file=services/api/coverage/.coverage --rcfile=services/api/pyproject.toml \
+            ./docker_data_pytest-coverage-data-cloud \
+            ./docker_data-coverage-data-{cloud,oss}-group[1-4] \
+            ./pytest-coverage-data-{cloud,oss}-group[1-4]
+
+          # Merge JUnit XML files
+          junitparser merge --glob "junit-xml-data/junit-xml-data-*/pytest_*.xml" junit-xml-data/pytest.xml
+
+      - name: Generate coverage reports
+        id: generate_coverage_report
+        if: always() && steps.merge_all_test_data.outcome == 'success'
+        run: |
+          cd services/api
+          coverage html --data-file=coverage/.coverage -d coverage/html
+          coverage xml --data-file=coverage/.coverage -o coverage/coverage.xml
+          coverage report --data-file=coverage/.coverage
+
+      - name: Pytest coverage comment
+        uses: MishaKav/pytest-coverage-comment@main
+        if: always() && github.event_name == 'pull_request' && steps.merge_all_test_data.outcome == 'success'
+        with:
+          title: Coverage Report (all)
+          pytest-xml-coverage-path: services/api/coverage/coverage.xml
+          junitxml-path: junit-xml-data/pytest.xml
+          unique-id-for-comment: coverage_report_comment_all
+          report-only-changed-files: true
+
+      - name: Upload all coverage HTML report
+        id: upload_all_coverage_html
+        uses: actions/upload-artifact@v4
+        if: always() && steps.merge_all_test_data.outcome == 'success'
+        with:
+          name: pytest-coverage-all
+          path: services/api/coverage/html
+
+      - name: Publish coverage HTML report link as PR comment
+        uses: thollander/actions-comment-pull-request@v3
+        if: always() && github.event_name == 'pull_request' && steps.upload_all_coverage_html.outcome == 'success'
+        with:
+          message: |
+            [Link to coverage HTML report (All)](${{ steps.upload_all_coverage_html.outputs.artifact-url }})
+          comment-tag: coverage_html_report_comment_all

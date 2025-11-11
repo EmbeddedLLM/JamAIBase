@@ -1,4 +1,5 @@
 {
   "printWidth": 150,
-  "proseWrap": "never"
+  "proseWrap": "never",
+  "trailingComma": "all"
 }

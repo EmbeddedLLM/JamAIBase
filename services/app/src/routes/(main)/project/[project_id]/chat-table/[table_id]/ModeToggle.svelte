@@ -7,17 +7,27 @@
 		checkedChange: { event: MouseEvent; value: boolean };
 	}>();
 
-	let className: string | undefined | null = undefined;
-	export { className as class };
+	interface Props {
+		class?: string | undefined | null;
+		id?: string | undefined;
+		defaultChecked?: boolean;
+		disabled?: boolean | undefined;
+		required?: boolean | undefined;
+		name?: string | undefined;
+		checked?: boolean;
+		validateBeforeChange?: (e: MouseEvent) => boolean;
+	}
 
-	export let id: string | undefined = undefined;
-	export let defaultChecked: boolean = false;
-	export let disabled: boolean | undefined = undefined;
-	export let required: boolean | undefined = undefined;
-	export let name: string | undefined = undefined;
-
-	export let checked: boolean = defaultChecked;
-	export let validateBeforeChange: (e: MouseEvent) => boolean = () => true;
+	let {
+		class: className = undefined,
+		id = undefined,
+		defaultChecked = false,
+		disabled = undefined,
+		required = undefined,
+		name = undefined,
+		checked = $bindable(defaultChecked),
+		validateBeforeChange = () => true
+	}: Props = $props();
 
 	function toggle(e: MouseEvent) {
 		if (validateBeforeChange(e) == false) return;
@@ -31,8 +41,8 @@
 </script>
 
 <button
-	on:click={toggle}
-	on:keydown={preventEnter}
+	onclick={toggle}
+	onkeydown={preventEnter}
 	{id}
 	{disabled}
 	aria-checked={checked}
@@ -41,7 +51,7 @@
 	title="Switch to {checked ? 'chat' : 'table'} mode"
 	value="on"
 	class={cn(
-		'peer relative flex items-center justify-center gap-[7px] sm:gap-[11px] h-8 sm:h-9 w-[64px] sm:w-[72px] shrink-0 rounded-full bg-[#F2F4F7] data-dark:bg-[#282C34] ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed  aria-checked:border-[#4169e1] data-dark:aria-checked:border-[#5b7ee5] overflow-hidden',
+		'peer relative flex h-8 w-[64px] shrink-0 items-center justify-center gap-[7px] overflow-hidden rounded-full bg-[#E4E7EC] ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed aria-checked:border-[#4169e1] data-dark:bg-[#282C34] data-dark:aria-checked:border-[#5b7ee5]  sm:h-9 sm:w-[72px] sm:gap-[11px]',
 		className
 	)}
 >
@@ -65,14 +75,14 @@
 	<MultiturnChatIcon class="h-6 text-[#98A2B3]" />
 
 	<div
-		class="absolute top-1/2 -translate-y-1/2 left-0 flex items-center justify-center h-6 sm:h-7 aspect-square bg-white rounded-full transition-transform {checked
+		class="absolute left-0 top-1/2 flex aspect-square h-6 -translate-y-1/2 items-center justify-center rounded-full bg-white transition-transform sm:h-7 {checked
 			? 'translate-x-1'
 			: 'translate-x-[36px] sm:translate-x-[40px]'}"
 	>
 		<div class="relative text-[#667085]">
 			<MultiturnChatIcon
 				filled
-				class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-6 transition-opacity {checked
+				class="absolute left-1/2 top-1/2 h-6 -translate-x-1/2 -translate-y-1/2 transition-opacity {checked
 					? 'opacity-0'
 					: 'opacity-100'}"
 			/>
@@ -83,7 +93,7 @@
 				viewBox="0 0 17 18"
 				fill="none"
 				xmlns="http://www.w3.org/2000/svg"
-				class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 transition-opacity {checked
+				class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 transition-opacity {checked
 					? 'opacity-100'
 					: 'opacity-0'}"
 			>

@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import { uploadQueue, uploadController } from '$globalStore';
 	import type { UploadQueue } from '$lib/types';
 
@@ -11,18 +10,23 @@
 	import DialogCloseIcon from '$lib/icons/DialogCloseIcon.svelte';
 	import CheckIcon from '$lib/icons/CheckIcon.svelte';
 
-	export let completedUploads: UploadQueue['queue'];
+	interface Props {
+		completedUploads: UploadQueue['queue'];
+	}
 
-	let uploadTabOpen = true;
-	let cancelUploadOpen = false;
+	let { completedUploads = $bindable() }: Props = $props();
 
-	let uploadTabEl: HTMLDivElement;
-	let isMovingTab = false;
+	let uploadTabOpen = $state(true);
+	let cancelUploadOpen = $state(false);
+
+	let uploadTabEl: HTMLDivElement | undefined = $state();
+	let isMovingTab = $state(false);
 	let grabPosX = 0;
 
-	$: totalProgress =
+	let totalProgress = $derived(
 		(completedUploads.length * 100) /
-		($uploadQueue.queue.length + completedUploads.length + ($uploadQueue?.activeFile ? 1 : 0));
+			($uploadQueue.queue.length + completedUploads.length + ($uploadQueue?.activeFile ? 1 : 0))
+	);
 
 	function handleCancelUpload() {
 		$uploadController?.abort();
@@ -49,6 +53,7 @@
 		}
 
 		animationFrameId = requestAnimationFrame(() => {
+			if (!uploadTabEl) return;
 			document.body.style.userSelect = 'none';
 
 			const clientX = e instanceof TouchEvent ? e.touches[0].clientX : e.clientX;
@@ -66,18 +71,18 @@
 </script>
 
 <svelte:window
-	on:resize={() => {
+	onresize={() => {
 		if (uploadTabEl) uploadTabEl.style.right = '';
 	}}
 />
 <svelte:document
-	on:mousemove={handleMoveTab}
-	on:touchmove={handleMoveTab}
-	on:mouseup={() => {
+	onmousemove={handleMoveTab}
+	ontouchmove={handleMoveTab}
+	onmouseup={() => {
 		document.body.style.userSelect = 'unset';
 		isMovingTab = false;
 	}}
-	on:touchend={() => {
+	ontouchend={() => {
 		document.body.style.userSelect = 'unset';
 		isMovingTab = false;
 	}}
@@ -87,16 +92,16 @@
 	<div
 		bind:this={uploadTabEl}
 		id="upload-tab-global"
-		class="fixed z-[100] bottom-0 right-1/2 sm:right-12 translate-x-1/2 sm:translate-x-0 flex flex-col h-[20rem] w-[clamp(0px,25rem,100%)] bg-white data-dark:bg-[#42464e] rounded-t-lg sm:rounded-t-xl shadow-[0px_-1px_10px_0px] shadow-black/25 {!uploadTabOpen &&
+		class="fixed bottom-0 right-1/2 z-[20] flex h-[20rem] w-[clamp(0px,25rem,100%)] translate-x-1/2 flex-col rounded-t-lg bg-white shadow-[0px_-1px_10px_0px] shadow-black/25 data-dark:bg-[#42464e] sm:right-12 sm:translate-x-0 sm:rounded-t-xl {!uploadTabOpen &&
 			'translate-y-[calc(20rem_-_45px)] sm:translate-y-[calc(20rem_-_57px)]'} transition-transform duration-300"
 	>
-		<!-- svelte-ignore a11y-no-static-element-interactions -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
-			on:mousedown={handleGrabTab}
-			on:touchstart={handleGrabTab}
-			class="flex items-center justify-between pl-6 pr-3 py-1 sm:py-2 cursor-move"
+			onmousedown={handleGrabTab}
+			ontouchstart={handleGrabTab}
+			class="flex cursor-move items-center justify-between py-1 pl-6 pr-3 sm:py-2"
 		>
-			<h3 class="font-medium text-sm sm:text-base">
+			<h3 class="text-sm font-medium sm:text-base">
 				Uploaded {completedUploads.length} of {$uploadQueue.queue.length +
 					completedUploads.length +
 					($uploadQueue?.activeFile ? 1 : 0)} file(s)
@@ -106,28 +111,28 @@
 				<Button
 					variant="ghost"
 					aria-label="Minimize uploads"
-					on:click={() => (uploadTabOpen = !uploadTabOpen)}
-					class="p-0 h-8 sm:h-9 aspect-square rounded-full"
+					onclick={() => (uploadTabOpen = !uploadTabOpen)}
+					class="aspect-square h-8 rounded-full p-0 sm:h-9"
 				>
 					<ArrowDownIcon
 						class="w-5 sm:w-6 {!uploadTabOpen &&
-							'rotate-180'} transition-transform duration-300 pointer-events-none"
+							'rotate-180'} pointer-events-none transition-transform duration-300"
 					/>
 				</Button>
 
 				<Button
 					variant="ghost"
 					aria-label="Close and cancel ongoing uploads"
-					on:click={() => {
+					onclick={() => {
 						if ($uploadQueue.queue.length || $uploadQueue.activeFile) {
 							cancelUploadOpen = true;
 						} else {
 							completedUploads = [];
 						}
 					}}
-					class="p-0 h-8 sm:h-9 aspect-square rounded-full"
+					class="aspect-square h-8 rounded-full p-0 sm:h-9"
 				>
-					<CloseIcon class="w-5 sm:w-6 pointer-events-none" />
+					<CloseIcon class="pointer-events-none w-5 sm:w-6" />
 				</Button>
 			</div>
 		</div>
@@ -138,27 +143,27 @@
 			class="total-progress relative h-[5px] w-full appearance-none overflow-hidden"
 		></progress>
 
-		<div role="list" class="grow flex flex-col overflow-auto bg-[#FCFCFC] data-dark:bg-[#202226]">
+		<div role="list" class="flex grow flex-col overflow-auto bg-[#FCFCFC] data-dark:bg-[#202226]">
 			{#each completedUploads as completedUpload}
 				<div
 					data-testid="complete-upload-file"
 					role="listitem"
-					class="p-3 border-b border-[#DDD] data-dark:border-[#454545]"
+					class="border-b border-[#DDD] p-3 data-dark:border-[#454545]"
 				>
-					<div class="flex items-center gap-2 mb-1 px-1">
+					<div class="mb-1 flex items-center gap-2 px-1">
 						<DocumentFilledIcon
-							class="flex-[0_0_auto] h-6 [&>path]:fill-[#8E4585] data-dark:[&>path]:fill-[#CB63BE]"
+							class="h-6 flex-[0_0_auto] [&>path]:fill-[#8E4585] data-dark:[&>path]:fill-[#CB63BE]"
 						/>
 						<span title={completedUpload.file.name} class="mr-auto line-clamp-1 break-all">
 							{completedUpload.file.name}
 						</span>
 						<div
-							class="flex-[0_0_auto] flex items-center justify-center p-1 bg-[#2ECC40] data-dark:bg-[#54D362] rounded-full"
+							class="flex flex-[0_0_auto] items-center justify-center rounded-full bg-[#2ECC40] p-1 data-dark:bg-[#54D362]"
 						>
-							<CheckIcon class="w-3 stroke-white data-dark:stroke-black stroke-[3]" />
+							<CheckIcon class="w-3 stroke-white stroke-[3] data-dark:stroke-black" />
 						</div>
 					</div>
-					<p title={completedUpload.successText} class="text-sm italic px-8 line-clamp-1 break-all">
+					<p title={completedUpload.successText} class="line-clamp-1 break-all px-8 text-sm italic">
 						{completedUpload.successText}
 					</p>
 				</div>
@@ -167,24 +172,24 @@
 				<div
 					data-testid="active-upload-file"
 					role="listitem"
-					class="p-3 border-b border-[#DDD] data-dark:border-[#454545]"
+					class="border-b border-[#DDD] p-3 data-dark:border-[#454545]"
 				>
-					<div class="flex items-center gap-2 mb-1 px-1">
+					<div class="mb-1 flex items-center gap-2 px-1">
 						<DocumentFilledIcon
-							class="flex-[0_0_auto] h-6 [&>path]:fill-[#8E4585] data-dark:[&>path]:fill-[#CB63BE]"
+							class="h-6 flex-[0_0_auto] [&>path]:fill-[#8E4585] data-dark:[&>path]:fill-[#CB63BE]"
 						/>
 						<span title={$uploadQueue.activeFile.file.name} class="mr-auto line-clamp-1 break-all">
 							{$uploadQueue.activeFile.file.name}
 						</span>
 						<div
-							class="flex-[0_0_auto] radial-progress text-secondary [transform:_scale(-1,_1)]"
+							class="radial-progress flex-[0_0_auto] text-secondary [transform:_scale(-1,_1)]"
 							style="--value:{Math.floor($uploadQueue.progress)}; --size:20px; --thickness: 5px;"
 						></div>
 					</div>
 					{#if $uploadQueue.progress === 100}
-						<p class="text-sm italic px-1 pl-8">{$uploadQueue.activeFile.completeText}</p>
+						<p class="px-1 pl-8 text-sm italic">{$uploadQueue.activeFile.completeText}</p>
 					{:else}
-						<p class="text-sm italic px-1 pl-8">{$uploadQueue.progress}%</p>
+						<p class="px-1 pl-8 text-sm italic">{$uploadQueue.progress}%</p>
 					{/if}
 				</div>
 			{/if}
@@ -192,17 +197,17 @@
 				<div
 					data-testid="queued-upload-file"
 					role="listitem"
-					class="px-3 py-4 border-b border-[#DDD] data-dark:border-[#454545]"
+					class="border-b border-[#DDD] px-3 py-4 data-dark:border-[#454545]"
 				>
 					<div class="flex items-center px-1">
 						<DocumentFilledIcon
-							class="flex-[0_0_auto] h-6 [&>path]:fill-[#8E4585] data-dark:[&>path]:fill-[#CB63BE]"
+							class="h-6 flex-[0_0_auto] [&>path]:fill-[#8E4585] data-dark:[&>path]:fill-[#CB63BE]"
 						/>
 						<span title={queuedFile.file.name} class="ml-2 mr-auto line-clamp-1 break-all">
 							{queuedFile.file.name}
 						</span>
-						<div class="flex-[0_0_auto] flex items-center justify-center">
-							<span class="px-1 text-sm text-[#999999] data-dark:text-[#C9C9C9] italic">
+						<div class="flex flex-[0_0_auto] items-center justify-center">
+							<span class="px-1 text-sm italic text-[#999999] data-dark:text-[#C9C9C9]">
 								Queued
 							</span>
 						</div>
@@ -269,38 +274,35 @@
 
 <Dialog.Root bind:open={cancelUploadOpen}>
 	<Dialog.Content class="h-[17rem] w-[clamp(0px,26rem,100%)] bg-white data-dark:bg-[#42464e]">
-		<DialogPrimitive.Close
-			class="absolute top-5 right-5 p-0 flex items-center justify-center h-10 w-10 hover:bg-accent hover:text-accent-foreground rounded-full ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground"
+		<Dialog.Close
+			class="absolute right-5 top-5 flex h-10 w-10 items-center justify-center rounded-full !bg-transparent p-0 ring-offset-background transition-colors hover:!bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-black"
 		>
 			<CloseIcon class="w-7" />
 			<span class="sr-only">Close</span>
-		</DialogPrimitive.Close>
+		</Dialog.Close>
 
-		<div class="grow flex flex-col items-start gap-2 p-8 pb-10">
+		<div class="flex grow flex-col items-start gap-2 p-8 pb-10">
 			<DialogCloseIcon
 				class="mb-1 h-10 [&>path]:fill-red-500 [&>path]:stroke-white data-dark:[&>path]:stroke-[#42464e]"
 			/>
-			<h3 class="font-bold text-2xl">Cancel Upload?</h3>
-			<p class="text-text/60 text-sm">
+			<h3 class="text-2xl font-bold">Cancel Upload?</h3>
+			<p class="text-sm text-text/60">
 				The upload process appears to be unfinished. Do you wish to cancel the upload?
 			</p>
 		</div>
 
-		<Dialog.Actions class="py-3 bg-[#f6f6f6] data-dark:bg-[#303338]">
+		<Dialog.Actions class="bg-[#f6f6f6] py-3 data-dark:bg-[#303338]">
 			<div class="flex gap-2 overflow-x-auto overflow-y-hidden">
-				<Button variant="link" type="button" on:click={handleCancelUpload} class="grow px-6">
+				<Button variant="link" type="button" onclick={handleCancelUpload} class="grow px-6">
 					Cancel Upload
 				</Button>
-				<DialogPrimitive.Close asChild let:builder>
-					<Button
-						builders={[builder]}
-						variant="destructive"
-						type="button"
-						class="grow px-6 rounded-full"
-					>
-						Continue Upload
-					</Button>
-				</DialogPrimitive.Close>
+				<Dialog.Close>
+					{#snippet child({ props })}
+						<Button {...props} variant="destructive" type="button" class="grow px-6">
+							Continue Upload
+						</Button>
+					{/snippet}
+				</Dialog.Close>
 			</div>
 		</Dialog.Actions>
 	</Dialog.Content>
