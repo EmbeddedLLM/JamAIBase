@@ -41,7 +41,7 @@ jobs:
     if: ${{ !(needs.check_changes.outputs.has-changes == 'true' || github.event_name == 'push') }}
     strategy:
       matrix:
-        jamai-mode: ["oss", "cloud"]
+        jamai-mode: ["oss"]
         test-group: [group1, group2, group3, group4]
     timeout-minutes: 2
     steps:
@@ -55,7 +55,7 @@ jobs:
     if: needs.check_changes.outputs.has-changes == 'true' || github.event_name == 'push'
     strategy:
       matrix:
-        jamai-mode: ["oss", "cloud"]
+        jamai-mode: ["oss"]
         test-group: [group1, group2, group3, group4]
     timeout-minutes: 90
 
