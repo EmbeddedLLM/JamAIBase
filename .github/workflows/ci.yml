@@ -61,7 +61,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           lfs: true
 
@@ -246,7 +246,7 @@ jobs:
           # Shut down owl to allow coverage data to be flushed
           docker compose -p jm -f docker/compose.ci.yml down
           # Copy Pytest coverage data
-          sudo cp -r docker_data docker_data_pytest
+          sudo cp -r docker_data docker_data_tmp
           sudo rm -rf docker_data
 
           # Relaunch
@@ -265,8 +265,7 @@ jobs:
           sleep 5
 
           # Run tests
-          cd services/api
-          # Use unique coverage file for Stripe tests
+          pushd services/api
           coverage run --data-file=coverage/.coverage.stripe --rcfile=pyproject.toml -m \
             pytest \
               --timeout 300 \
@@ -274,6 +273,10 @@ jobs:
               --junitxml=pytest_stripe.xml \
               -m stripe \
               tests
+
+          # Move existing coverage data
+          popd
+          mv docker_data_tmp/owl/db/* docker_data/owl/db/. 2>/dev/null || true
         env:
           STRIPE_API_KEY: ${{ secrets.OWL_STRIPE_API_KEY }}
           OWL_STRIPE_API_KEY: ${{ secrets.OWL_STRIPE_API_KEY }}
@@ -327,32 +330,14 @@ jobs:
           docker compose -p jm --env-file .env -f docker/compose.ci.yml down
 
           # Combine coverage data
-          if [ "${{ matrix.test-group }}" = "group1" ]; then
-            mkdir -p docker_data_pytest/owl/db
-            DIRS="docker_data_pytest/owl/db \
-                  docker_data/owl/db \
-                  services/api/coverage"
-          else
-            DIRS="docker_data/owl/db \
-                  services/api/coverage"
-          fi
-
           coverage combine --keep --data-file=services/api/coverage/.coverage --rcfile=services/api/pyproject.toml \
-            $DIRS
+            docker_data/owl/db services/api/coverage
 
           # Merge JUnit XML files
           mkdir -p services/api/junit_xml
           junitparser merge --glob "services/api/pytest_*.xml" services/api/junit_xml/pytest-${{ matrix.jamai-mode }}-${{ matrix.test-group }}.xml
-      - name: Upload docker data pytest coverage file
-        uses: actions/upload-artifact@v4
-        if: always() && matrix.test-group == 'group1' && steps.test_stripe.outcome == 'success'
-        with:
-          name: docker_data_pytest-coverage-data-${{ matrix.jamai-mode }}
-          path: docker_data_pytest/owl/db
-          include-hidden-files: true
-          if-no-files-found: error
 
-      - name: Upload docker data coverage file
+      - name: Upload coverage data
         uses: actions/upload-artifact@v4
         if: always() && steps.merge_test_data.outcome == 'success'
         with:
@@ -370,9 +355,6 @@ jobs:
 
       - name: Log coverage data files
         run: |
-          if [ "${{ matrix.test-group }}" = "group1" ]; then
-            find docker_data_pytest/owl/db -type f | head -50
-          fi
           find docker_data/owl/db -type f | head -50
           find services/api/coverage -type f | head -50
           find services/api/junit_xml -type f | head -50
@@ -399,30 +381,37 @@ jobs:
     runs-on: ubuntu-latest
     needs: sdk_tests
     if: always() && (needs.sdk_tests.result == 'success' || needs.sdk_tests.result == 'skipped')
+    strategy:
+      matrix:
+        jamai-mode: ["oss"]
     steps:
+      - name: Skip coverage merge (no tests ran)
+        if: needs.sdk_tests.result == 'skipped'
+        run: echo "Skipping coverage merge - no tests were executed (no changes detected)"
+
       - name: Checkout code
+        if: needs.sdk_tests.result == 'success'
         uses: actions/checkout@v4
         with:
           lfs: true
 
       - name: Install uv
+        if: needs.sdk_tests.result == 'success'
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
       - name: Set up Python
+        if: needs.sdk_tests.result == 'success'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install jamaibase & owl
+        if: needs.sdk_tests.result == 'success'
         run: |
           pushd services/api
           uv pip install --system -e .[test]
-
-      - name: Skip coverage merge (no tests ran)
-        if: needs.sdk_tests.result == 'skipped'
-        run: echo "Skipping coverage merge - no tests were executed (no changes detected)"
 
       - name: Download pytest coverage data artifacts
         uses: actions/download-artifact@v4
@@ -431,14 +420,7 @@ jobs:
           pattern: pytest-coverage-data-*
           path: ./
 
-      - name: Download docker data pytest coverage data artifacts
-        uses: actions/download-artifact@v4
-        if: needs.sdk_tests.result == 'success'
-        with:
-          pattern: docker_data_pytest-coverage-data-*
-          path: ./
-
-      - name: Download docker data coverage data artifacts
+      - name: Download coverage data artifacts
         uses: actions/download-artifact@v4
         if: needs.sdk_tests.result == 'success'
         with:
@@ -455,74 +437,44 @@ jobs:
       - name: Log coverage data files
         if: needs.sdk_tests.result == 'success'
         run: |
-          find docker_data_pytest-coverage-data-* -type f | head -50
           find docker_data-coverage-data-* -type f | head -50
           find pytest-coverage-data-* -type f | head -50
           find junit-xml-data -type f | head -50
 
-      - name: Merge Cloud JUnit XML and Coverage data
-        id: merge_cloud_test_data
+      - name: Merge JUnit XML and Coverage data (${{ matrix.jamai-mode }})
+        id: merge_coverage
         if: needs.sdk_tests.result == 'success'
         run: |
           coverage combine --keep --data-file=services/api/coverage/.coverage --rcfile=services/api/pyproject.toml \
-            ./docker_data_pytest-coverage-data-cloud \
-            ./docker_data-coverage-data-cloud-group[1-4] \
-            ./pytest-coverage-data-cloud-group[1-4]
+            ./docker_data-coverage-data-${{ matrix.jamai-mode }}-group[1-4] \
+            ./pytest-coverage-data-${{ matrix.jamai-mode }}-group[1-4]
 
           # Merge JUnit XML files
-          junitparser merge --glob "junit-xml-data/junit-xml-data-cloud-*/pytest_*.xml" junit-xml-data/pytest-cloud.xml
+          junitparser merge --glob "junit-xml-data/junit-xml-data-${{ matrix.jamai-mode }}-*/pytest_*.xml" \
+            junit-xml-data/pytest-${{ matrix.jamai-mode }}.xml
 
-      - name: Generate cloud coverage reports
-        if: always() && steps.merge_cloud_test_data.outcome == 'success'
+      - name: Generate coverage report
+        if: always() && steps.merge_coverage.outcome == 'success'
         run: |
           cd services/api
-          coverage xml --data-file=coverage/.coverage -o coverage/coverage-cloud.xml
+          coverage xml --data-file=coverage/.coverage -o coverage/coverage-${{ matrix.jamai-mode }}.xml
           coverage report --data-file=coverage/.coverage
 
-      - name: Pytest cloud coverage comment
+      - name: Pytest coverage comment
         uses: MishaKav/pytest-coverage-comment@main
-        if: always() && github.event_name == 'pull_request' && steps.merge_cloud_test_data.outcome == 'success'
+        if: always() && github.event_name == 'pull_request' && steps.merge_coverage.outcome == 'success'
         with:
-          title: Coverage Report (cloud)
-          pytest-xml-coverage-path: services/api/coverage/coverage-cloud.xml
-          junitxml-path: junit-xml-data/pytest-cloud.xml
-          unique-id-for-comment: coverage_report_comment_cloud
-          report-only-changed-files: true
-
-      - name: Merge OSS JUnit XML and Coverage data
-        id: merge_oss_test_data
-        if: needs.sdk_tests.result == 'success'
-        run: |
-          coverage combine --keep --data-file=services/api/coverage/.coverage --rcfile=services/api/pyproject.toml \
-            ./docker_data-coverage-data-oss-group[1-4] \
-            ./pytest-coverage-data-oss-group[1-4]
-
-          # Merge JUnit XML files
-          junitparser merge --glob "junit-xml-data/junit-xml-data-oss-*/pytest_*.xml" junit-xml-data/pytest-oss.xml
-
-      - name: Generate oss coverage reports
-        if: always() && steps.merge_oss_test_data.outcome == 'success'
-        run: |
-          cd services/api
-          coverage xml --data-file=coverage/.coverage -o coverage/coverage-oss.xml
-          coverage report --data-file=coverage/.coverage
-
-      - name: Pytest oss coverage comment
-        uses: MishaKav/pytest-coverage-comment@main
-        if: always() && github.event_name == 'pull_request' && steps.merge_oss_test_data.outcome == 'success'
-        with:
-          title: Coverage Report (oss)
-          pytest-xml-coverage-path: services/api/coverage/coverage-oss.xml
-          junitxml-path: junit-xml-data/pytest-oss.xml
-          unique-id-for-comment: coverage_report_comment_oss
+          title: Coverage Report (${{ matrix.jamai-mode }})
+          pytest-xml-coverage-path: services/api/coverage/coverage-${{ matrix.jamai-mode }}.xml
+          junitxml-path: junit-xml-data/pytest-${{ matrix.jamai-mode }}.xml
+          unique-id-for-comment: coverage_report_comment_${{ matrix.jamai-mode }}
           report-only-changed-files: true
 
       - name: Merge All JUnit XML and Coverage data
         id: merge_all_test_data
-        if: needs.sdk_tests.result == 'success'
+        if: needs.sdk_tests.result == 'success' && matrix.jamai-mode == 'oss'
         run: |
           coverage combine --keep --data-file=services/api/coverage/.coverage --rcfile=services/api/pyproject.toml \
-            ./docker_data_pytest-coverage-data-cloud \
             ./docker_data-coverage-data-{cloud,oss}-group[1-4] \
             ./pytest-coverage-data-{cloud,oss}-group[1-4]
 
