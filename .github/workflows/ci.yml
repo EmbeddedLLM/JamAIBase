@@ -475,8 +475,8 @@ jobs:
         if: needs.sdk_tests.result == 'success' && matrix.jamai-mode == 'oss'
         run: |
           coverage combine --keep --data-file=services/api/coverage/.coverage --rcfile=services/api/pyproject.toml \
-            ./docker_data-coverage-data-{cloud,oss}-group[1-4] \
-            ./pytest-coverage-data-{cloud,oss}-group[1-4]
+            ./docker_data-coverage-data-oss-group[1-4] \
+            ./pytest-coverage-data-oss-group[1-4]
 
           # Merge JUnit XML files
           junitparser merge --glob "junit-xml-data/junit-xml-data-*/pytest_*.xml" junit-xml-data/pytest.xml
