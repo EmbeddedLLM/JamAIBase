@@ -1127,7 +1127,7 @@ async def import_table(
             project_id=project.id,
             table_type=table_type,
             table_id_dst=data.table_id_dst,
-            reupload_files=not data.migrate,
+            reupload_files=data.reupload or not data.migrate,
             progress_key=data.progress_key,
             verbose=data.migrate,
         )

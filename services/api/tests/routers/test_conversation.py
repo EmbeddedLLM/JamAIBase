@@ -679,26 +679,35 @@ def test_full_lifecycle(setup: ConversationContext):
     list(client.conversations.send_message(send_req))  # consume stream
     messages_after_send = client.conversations.list_messages(conv_id)
     assert messages_after_send.total == 2
-
-    # 3. Regenerate Message
     last_message = messages_after_send.items[-1]
     last_row_id = last_message["ID"]
+
+    # 3. Update the message
+    update_req = MessageUpdateRequest(
+        conversation_id=conv_id,
+        row_id=last_row_id,
+        data={"User": "Suggest a travel destination."},
+    )
+    update_response = client.conversations.update_message(update_req)
+    assert isinstance(update_response, OkResponse)
+
+    # 4. Regenerate Message
     original_ai_content = last_message["AI"]
     regen_req = MessagesRegenRequest(conversation_id=conv_id, row_id=last_row_id)
     list(client.conversations.regen_message(regen_req))  # consume stream
     messages_after_regen = client.conversations.list_messages(conv_id)
     assert messages_after_regen.total == 2
     regenerated_message = messages_after_regen.items[-1]
-    assert regenerated_message["User"] == "Suggest second movie"
+    assert regenerated_message["User"] == "Suggest a travel destination."
     assert regenerated_message["AI"] != original_ai_content
 
-    # 4. Rename
+    # 5. Rename
     new_title = "Best Movie Agent"
     client.conversations.rename_conversation_title(conv_id, new_title)
     updated_table_meta = client.conversations.get_conversation(conv_id)
     assert updated_table_meta.title == new_title
 
-    # 5. Delete
+    # 6. Delete
     client.conversations.delete_conversation(conv_id)
     with pytest.raises(ResourceNotFoundError):
         client.conversations.list_messages(conv_id)

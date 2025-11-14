@@ -488,7 +488,8 @@ def test_reasoning_model_and_agentic_tools(
             gen_config=LLMGenConfig(
                 model=setup.gpt_llm_reasoning_config_id,
                 prompt="${Question}",
-                reasoning_effort="low",
+                reasoning_effort="medium",
+                max_tokens=4096,
             ),
         ),
         ColumnSchemaCreate(
@@ -498,7 +499,8 @@ def test_reasoning_model_and_agentic_tools(
                 model=setup.gpt_llm_reasoning_config_id,
                 prompt="${Question}",
                 tools=[WebSearchTool()],
-                reasoning_effort="low",
+                reasoning_effort="medium",
+                max_tokens=4096,
             ),
         ),
         ColumnSchemaCreate(

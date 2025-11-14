@@ -471,7 +471,6 @@ async def init_db(*, init_max_users: int = 3):
             await organizations_oss.create_organization(
                 request=request,
                 user=user,
-                session=session,
                 body=organizations_oss.OrganizationCreate(
                     name="Admin org",
                     external_keys={

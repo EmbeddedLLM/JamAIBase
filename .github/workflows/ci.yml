@@ -205,7 +205,7 @@ jobs:
         if: always() && steps.launch_services.outcome == 'success'
         run: |
           cp .env services/api/.env
-          cd services/api
+          pushd services/api
 
           if [ "${{ matrix.test-group }}" = "group1" ]; then
             DIRS=(tests --ignore=tests/gen_table/test_row_ops.py --ignore=tests/gen_table/test_row_ops_v2.py --ignore=tests/routers --ignore=tests/utils)
@@ -224,6 +224,12 @@ jobs:
               --junitxml=pytest_regular.xml \
               -m "not (${{ matrix.jamai-mode == 'cloud' && 'oss' || 'cloud' }} or stripe)" \
               "${DIRS[@]}"
+
+          # Shut down owl to allow coverage data to be flushed
+          popd
+          docker compose -p jm -f docker/compose.ci.yml down
+          # Copy Pytest coverage data
+          sudo find docker_data -type f -name '.coverage.*' -exec cp -v -t services/api/coverage/. {} +
         env:
           OWL_DB_PATH: postgresql+psycopg://owlpguser:owlpgpassword@localhost:5432/jamaibase_owl
           OWL_CLICKHOUSE_HOST: localhost
@@ -243,10 +249,6 @@ jobs:
         id: test_stripe
         if: matrix.jamai-mode == 'cloud' && matrix.test-group == 'group1' && steps.launch_services.outcome == 'success'
         run: |
-          # Shut down owl to allow coverage data to be flushed
-          docker compose -p jm -f docker/compose.ci.yml down
-          # Copy Pytest coverage data
-          sudo cp -r docker_data docker_data_tmp
           sudo rm -rf docker_data
 
           # Relaunch
@@ -274,9 +276,11 @@ jobs:
               -m stripe \
               tests
 
-          # Move existing coverage data
+          # Shut down owl to allow coverage data to be flushed
           popd
-          mv docker_data_tmp/owl/db/* docker_data/owl/db/. 2>/dev/null || true
+          docker compose -p jm -f docker/compose.ci.yml down
+          # Move existing coverage data
+          sudo find docker_data -type f -name '.coverage.*' -exec cp -v -t services/api/coverage/. {} +
         env:
           STRIPE_API_KEY: ${{ secrets.OWL_STRIPE_API_KEY }}
           OWL_STRIPE_API_KEY: ${{ secrets.OWL_STRIPE_API_KEY }}
@@ -313,15 +317,6 @@ jobs:
             [Link to logs (${{ matrix.jamai-mode }}, ${{ matrix.test-group }})](${{ steps.upload_logs.outputs.artifact-url }})
           comment-tag: logs_comment_${{ matrix.jamai-mode }}-${{ matrix.test-group }}
 
-      - name: Upload pytest coverage file
-        uses: actions/upload-artifact@v4
-        if: always() && steps.python_sdk_test.outcome == 'success'
-        with:
-          name: pytest-coverage-data-${{ matrix.jamai-mode }}-${{ matrix.test-group }}
-          path: services/api/coverage
-          include-hidden-files: true
-          if-no-files-found: error
-
       - name: Merge JUnit XML and Coverage data
         id: merge_test_data
         if: always() && steps.launch_services.outcome == 'success'
@@ -331,7 +326,7 @@ jobs:
 
           # Combine coverage data
           coverage combine --keep --data-file=services/api/coverage/.coverage --rcfile=services/api/pyproject.toml \
-            docker_data/owl/db services/api/coverage
+            services/api/coverage
 
           # Merge JUnit XML files
           mkdir -p services/api/junit_xml
@@ -341,8 +336,8 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always() && steps.merge_test_data.outcome == 'success'
         with:
-          name: docker_data-coverage-data-${{ matrix.jamai-mode }}-${{ matrix.test-group }}
-          path: docker_data/owl/db
+          name: owl-coverage-${{ matrix.jamai-mode }}-${{ matrix.test-group }}
+          path: services/api/coverage
           include-hidden-files: true
           if-no-files-found: error
 
@@ -352,12 +347,6 @@ jobs:
         with:
           name: junit-xml-data-${{ matrix.jamai-mode }}-${{ matrix.test-group }}
           path: services/api/junit_xml
-
-      - name: Log coverage data files
-        run: |
-          find docker_data/owl/db -type f | head -50
-          find services/api/coverage -type f | head -50
-          find services/api/junit_xml -type f | head -50
 
       - name: Generate coverage reports
         id: generate_coverage_report
@@ -413,18 +402,11 @@ jobs:
           pushd services/api
           uv pip install --system -e .[test]
 
-      - name: Download pytest coverage data artifacts
-        uses: actions/download-artifact@v4
-        if: needs.sdk_tests.result == 'success'
-        with:
-          pattern: pytest-coverage-data-*
-          path: ./
-
       - name: Download coverage data artifacts
         uses: actions/download-artifact@v4
         if: needs.sdk_tests.result == 'success'
         with:
-          pattern: docker_data-coverage-data-*
+          pattern: owl-coverage-*
           path: ./
 
       - name: Download junit xml artifacts
@@ -437,8 +419,7 @@ jobs:
       - name: Log coverage data files
         if: needs.sdk_tests.result == 'success'
         run: |
-          find docker_data-coverage-data-* -type f | head -50
-          find pytest-coverage-data-* -type f | head -50
+          find owl-coverage-* -type f | head -50
           find junit-xml-data -type f | head -50
 
       - name: Merge JUnit XML and Coverage data (${{ matrix.jamai-mode }})
@@ -446,19 +427,27 @@ jobs:
         if: needs.sdk_tests.result == 'success'
         run: |
           coverage combine --keep --data-file=services/api/coverage/.coverage --rcfile=services/api/pyproject.toml \
-            ./docker_data-coverage-data-${{ matrix.jamai-mode }}-group[1-4] \
-            ./pytest-coverage-data-${{ matrix.jamai-mode }}-group[1-4]
+            ./owl-coverage-${{ matrix.jamai-mode }}-group[1-4]
 
           # Merge JUnit XML files
-          junitparser merge --glob "junit-xml-data/junit-xml-data-${{ matrix.jamai-mode }}-*/pytest_*.xml" \
+          junitparser merge --glob "junit-xml-data/junit-xml-data-${{ matrix.jamai-mode }}*/pytest-*.xml" \
             junit-xml-data/pytest-${{ matrix.jamai-mode }}.xml
 
       - name: Generate coverage report
         if: always() && steps.merge_coverage.outcome == 'success'
         run: |
           cd services/api
+          coverage html --data-file=coverage/.coverage -d coverage/html-${{ matrix.jamai-mode }}
           coverage xml --data-file=coverage/.coverage -o coverage/coverage-${{ matrix.jamai-mode }}.xml
           coverage report --data-file=coverage/.coverage
+
+      - name: Upload ${{ matrix.jamai-mode }} coverage HTML report
+        id: upload_coverage_html
+        uses: actions/upload-artifact@v4
+        if: always() && steps.merge_coverage.outcome == 'success'
+        with:
+          name: pytest-coverage-${{ matrix.jamai-mode }}
+          path: services/api/coverage/html-${{ matrix.jamai-mode }}
 
       - name: Pytest coverage comment
         uses: MishaKav/pytest-coverage-comment@main
@@ -475,11 +464,10 @@ jobs:
         if: needs.sdk_tests.result == 'success' && matrix.jamai-mode == 'oss'
         run: |
           coverage combine --keep --data-file=services/api/coverage/.coverage --rcfile=services/api/pyproject.toml \
-            ./docker_data-coverage-data-oss-group[1-4] \
-            ./pytest-coverage-data-oss-group[1-4]
+            ./owl-coverage-oss-group[1-4]
 
           # Merge JUnit XML files
-          junitparser merge --glob "junit-xml-data/junit-xml-data-*/pytest_*.xml" junit-xml-data/pytest.xml
+          junitparser merge --glob "junit-xml-data/junit-xml-data-*/pytest-*.xml" junit-xml-data/pytest.xml
 
       - name: Generate coverage reports
         id: generate_coverage_report
@@ -496,7 +484,6 @@ jobs:
         with:
           title: Coverage Report (all)
           pytest-xml-coverage-path: services/api/coverage/coverage.xml
-          junitxml-path: junit-xml-data/pytest.xml
           unique-id-for-comment: coverage_report_comment_all
           report-only-changed-files: true
 

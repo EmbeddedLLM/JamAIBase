@@ -756,7 +756,7 @@ def test_chat_reasoning_openai(setup: ServingContext, stream: bool):
         setup=setup,
         provider=CloudProvider.OPENAI,
         stream=stream,
-        max_tokens=1000,
+        max_tokens=2000,
     )
     # Test default params
     response = _test_chat_reasoning_cloud(
@@ -775,7 +775,7 @@ def test_chat_reasoning_openai(setup: ServingContext, stream: bool):
     # Test reasoning effort
     med_response = _test_chat_reasoning_cloud(
         routing_id="gpt-5-mini",
-        thinking_budget=512,
+        thinking_budget=1100,
         **kwargs,
     )
     assert len(med_response.content) > 0

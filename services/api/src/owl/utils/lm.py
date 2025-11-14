@@ -228,16 +228,14 @@ class DeploymentRouter:
     def _map_and_log_exception(
         self,
         e: Exception,
+        deployment: Deployment_,
         api_key: str,
         *,
-        messages: list[dict],
+        messages: list[dict] | None = None,
         **hyperparams,
     ) -> Exception:
         messages = [mask_content(m) for m in messages]
         err_mssg = getattr(e, "message", str(e))
-        logger.warning(
-            f'{self.id} - LLM request to model "{self.config.id}" failed. Exception: {e.__class__}: {err_mssg}'
-        )
         if isinstance(e, JamaiException):
             return e
         elif isinstance(e, openai.BadRequestError):
@@ -250,12 +248,20 @@ class DeploymentRouter:
             return BadInputError(err_mssg)
         elif isinstance(e, openai.AuthenticationError):
             return ExternalAuthError(f"Invalid API key: {mask_string(api_key)}")
-        elif isinstance(e, openai.RateLimitError):
+
+        logger.warning(
+            (
+                f'{self.id} - LLM request to model "{self.config.id}" failed. '
+                f"Exception: {e.__class__}: {err_mssg}\n"
+                f"Deployment: {deployment}"
+            )
+        )
+        if isinstance(e, openai.RateLimitError):
             _header = e.response.headers
             limit = int(_header.get("X-RateLimit-Limit", 0))
             remaining = int(_header.get("X-RateLimit-Remaining", 0))
             reset_at = int(_header.get("X-RateLimit-Reset", time() + 30))
-            return RateLimitExceedError(
+            mapped_e = RateLimitExceedError(
                 err_mssg,
                 limit=limit,
                 remaining=remaining,
@@ -273,11 +279,11 @@ class DeploymentRouter:
                 httpx.TimeoutException,  # ReadTimeout, ConnectTimeout, etc
             ),
         ):
-            return ModelOverloadError(
+            mapped_e = ModelOverloadError(
                 f'Model provider for "{self._model_display_id}" is overloaded. Please try again later.'
             )
         elif isinstance(e, (BaseLLMException, openai.OpenAIError)):
-            return BadInputError(err_mssg)
+            mapped_e = BadInputError(err_mssg)
         else:
             body = dict(
                 model=self.config.id,
@@ -288,7 +294,11 @@ class DeploymentRouter:
             logger.exception(
                 f"{self.id} - {self.__class__.__name__} -  Unexpected error !!! {body}"
             )
-            return UnexpectedError(err_mssg)
+            mapped_e = UnexpectedError(err_mssg)
+        logger.warning(
+            f"{self.id} - LLM request failed. Mapped exception: {mapped_e.__class__}: {str(mapped_e)}"
+        )
+        return mapped_e
 
     async def _cooldown_deployment(self, deployment: Deployment_, cooldown_time: timedelta):
         if cooldown_time.total_seconds() <= 0:
@@ -388,7 +398,7 @@ class DeploymentRouter:
             self.request.state.timing["external_call"] = perf_counter() - t0
             logger.info(f'{self.id} - Request completed for model "{self.config.id}".')
         except Exception as e:
-            mapped_e = self._map_and_log_exception(e, api_key, **hyperparams)
+            mapped_e = self._map_and_log_exception(e, deployment, api_key, **hyperparams)
             if isinstance(mapped_e, (ModelOverloadError, RateLimitExceedError)):
                 # Cooldown deployment
                 if len(deployments) > 1:
@@ -396,9 +406,6 @@ class DeploymentRouter:
                         seconds=getattr(mapped_e, "retry_after", self.cooldown)
                     )
                     await self._cooldown_deployment(deployment, cooldown_time)
-            logger.warning(
-                f"{self.id} - LLM request failed. Mapped exception: {mapped_e.__class__}: {str(mapped_e)}"
-            )
             raise mapped_e from e
 
     ### --- Chat Completion --- ###

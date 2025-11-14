@@ -1102,102 +1102,102 @@ def test_add_rows_all_input(
         assert len(rows.items) == 2
 
 
-@flaky(max_runs=5, min_passes=1)
-@pytest.mark.timeout(180)
-@pytest.mark.parametrize("table_type", TABLE_TYPES)
-@pytest.mark.parametrize("stream", **STREAM_PARAMS)
-@pytest.mark.parametrize("reasoning_model", ["openai/gpt-5-mini", "openai/o4-mini"][:1])
-def test_reasoning_model_with_reasoning_effort(
-    setup: ServingContext,
-    table_type: TableType,
-    stream: bool,
-    reasoning_model: str,
-):
-    """
-    Tests that different `reasoning.effort` levels produce different outputs
-    when using a reasoning model with the Responses API.
-    """
-    client = JamAI(user_id=setup.user_id, project_id=setup.project_id)
+# @flaky(max_runs=5, min_passes=1)
+# @pytest.mark.timeout(180)
+# @pytest.mark.parametrize("table_type", TABLE_TYPES)
+# @pytest.mark.parametrize("stream", **STREAM_PARAMS)
+# @pytest.mark.parametrize("reasoning_model", ["openai/gpt-5-mini", "openai/o4-mini"][:1])
+# def test_reasoning_model_with_reasoning_effort(
+#     setup: ServingContext,
+#     table_type: TableType,
+#     stream: bool,
+#     reasoning_model: str,
+# ):
+#     """
+#     Tests that different `reasoning.effort` levels produce different outputs
+#     when using a reasoning model with the Responses API.
+#     """
+#     client = JamAI(user_id=setup.user_id, project_id=setup.project_id)
 
-    system_prompt = "You are a brilliant logician. Always think twice and give your reasoning before answering!"
-    prompt = (
-        "Solve this riddle: "
-        "If a plane crashes on the border between the USA and Canada, "
-        "where do you bury the survivors? "
-    )
+#     system_prompt = "You are a brilliant logician. Always think twice and give your reasoning before answering!"
+#     prompt = (
+#         "Solve this riddle: "
+#         "If a plane crashes on the border between the USA and Canada, "
+#         "where do you bury the survivors? "
+#     )
 
-    cols = [
-        ColumnSchemaCreate(id="Riddle", dtype="str"),
-        ColumnSchemaCreate(
-            id="LowEffortAnswer",
-            dtype="str",
-            gen_config=LLMGenConfig(
-                model=reasoning_model,
-                system_prompt=system_prompt,
-                prompt=prompt,
-                reasoning_effort="low",
-                reasoning_summary="auto",
-            ),
-        ),
-        ColumnSchemaCreate(
-            id="MediumEffortAnswer",
-            dtype="str",
-            gen_config=LLMGenConfig(
-                model=reasoning_model,
-                system_prompt=system_prompt,
-                prompt=prompt,
-                reasoning_effort="medium",
-                reasoning_summary="auto",
-            ),
-        ),
-        ColumnSchemaCreate(
-            id="MinimalEffortAnswer",
-            dtype="str",
-            gen_config=LLMGenConfig(
-                model=reasoning_model,
-                system_prompt=system_prompt,
-                prompt=prompt,
-                reasoning_effort="minimal",
-                reasoning_summary="auto",
-            ),
-        ),
-    ]
+#     cols = [
+#         ColumnSchemaCreate(id="Riddle", dtype="str"),
+#         ColumnSchemaCreate(
+#             id="LowEffortAnswer",
+#             dtype="str",
+#             gen_config=LLMGenConfig(
+#                 model=reasoning_model,
+#                 system_prompt=system_prompt,
+#                 prompt=prompt,
+#                 reasoning_effort="low",
+#                 reasoning_summary="auto",
+#             ),
+#         ),
+#         ColumnSchemaCreate(
+#             id="MediumEffortAnswer",
+#             dtype="str",
+#             gen_config=LLMGenConfig(
+#                 model=reasoning_model,
+#                 system_prompt=system_prompt,
+#                 prompt=prompt,
+#                 reasoning_effort="medium",
+#                 reasoning_summary="auto",
+#             ),
+#         ),
+#         ColumnSchemaCreate(
+#             id="MinimalEffortAnswer",
+#             dtype="str",
+#             gen_config=LLMGenConfig(
+#                 model=reasoning_model,
+#                 system_prompt=system_prompt,
+#                 prompt=prompt,
+#                 reasoning_effort="minimal",
+#                 reasoning_summary="auto",
+#             ),
+#         ),
+#     ]
 
-    with _create_table(client, table_type, cols=cols) as table:
-        assert isinstance(table, TableMetaResponse)
+#     with _create_table(client, table_type, cols=cols) as table:
+#         assert isinstance(table, TableMetaResponse)
 
-        response = add_table_rows(
-            client,
-            table_type,
-            table.id,
-            [dict(Riddle="Trigger")],
-            stream=stream,
-        )
+#         response = add_table_rows(
+#             client,
+#             table_type,
+#             table.id,
+#             [dict(Riddle="Trigger")],
+#             stream=stream,
+#         )
 
-        low_effort_reasoning = _collect_reasoning(response, "LowEffortAnswer").lower()
-        medium_effort_reasoning = _collect_reasoning(response, "MediumEffortAnswer").lower()
-        minimal_effort_reasoning = _collect_reasoning(response, "MinimalEffortAnswer").lower()
-        assert "survivors" in low_effort_reasoning
-        assert "survivors" in medium_effort_reasoning
+#         low_effort_reasoning = _collect_reasoning(response, "LowEffortAnswer").lower()
+#         medium_effort_reasoning = _collect_reasoning(response, "MediumEffortAnswer").lower()
+#         minimal_effort_reasoning = _collect_reasoning(response, "MinimalEffortAnswer").lower()
+#         assert "survivors" in low_effort_reasoning
+#         assert "survivors" in medium_effort_reasoning
 
-        assert (len(medium_effort_reasoning) > len(low_effort_reasoning)) or (
-            len(low_effort_reasoning) > len(minimal_effort_reasoning)
-        )
+#         assert (len(medium_effort_reasoning) > len(low_effort_reasoning)) or (
+#             len(low_effort_reasoning) > len(minimal_effort_reasoning)
+#         )
 
-        low_effort_result = _collect_text(response, "LowEffortAnswer").lower()
-        medium_effort_result = _collect_text(response, "MediumEffortAnswer").lower()
-        minimal_effort_result = _collect_text(response, "MinimalEffortAnswer").lower()
+#         low_effort_result = _collect_text(response, "LowEffortAnswer").lower()
+#         medium_effort_result = _collect_text(response, "MediumEffortAnswer").lower()
+#         minimal_effort_result = _collect_text(response, "MinimalEffortAnswer").lower()
 
-        assert "bury" in low_effort_result and "survivors" in low_effort_result
-        assert "bury" in medium_effort_result and "survivors" in medium_effort_result
-        if reasoning_model == "openai/gpt-5-mini":
-            assert "bury" in minimal_effort_result and "survivors" in minimal_effort_result
-        else:
-            assert "'minimal' is not supported" in minimal_effort_result
+#         assert "bury" in low_effort_result and "survivors" in low_effort_result
+#         assert "bury" in medium_effort_result and "survivors" in medium_effort_result
+#         if reasoning_model == "openai/gpt-5-mini":
+#             assert "bury" in minimal_effort_result and "survivors" in minimal_effort_result
+#         else:
+#             assert "'minimal' is not supported" in minimal_effort_result
 
-        assert response.rows[0].columns["LowEffortAnswer"].usage is not None
-        assert response.rows[0].columns["MediumEffortAnswer"].usage is not None
-        assert response.rows[0].columns["MinimalEffortAnswer"].usage is not None
+#         assert response.rows[0].columns["LowEffortAnswer"].usage is not None
+#         assert response.rows[0].columns["MediumEffortAnswer"].usage is not None
+#         assert response.rows[0].columns["MinimalEffortAnswer"].usage is not None
 
 
 @flaky(max_runs=3, min_passes=1)

@@ -3304,6 +3304,9 @@ class _GenTableClientAsync(_ClientAsync):
                 otherwise OkResponse.
         """
         migrate = kwargs.pop("migrate", False)  # Temporary, may be removed anytime
+        reupload = (
+            kwargs.pop("reupload", False) or not migrate
+        )  # Temporary, may be removed anytime, but if migrate == False then this must be True
         timeout = None if migrate else (kwargs.pop("timeout", None) or self.file_upload_timeout)
         v = "v1" if kwargs.pop("v1", False) else "v2"
         mime_type = "application/octet-stream"
@@ -3317,7 +3320,7 @@ class _GenTableClientAsync(_ClientAsync):
                 files={
                     "file": (filename, f, mime_type),
                 },
-                data=dict(**self._process_body(request), migrate=migrate),
+                data=dict(**self._process_body(request), migrate=migrate, reupload=reupload),
                 timeout=timeout,
                 **kwargs,
             )

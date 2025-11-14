@@ -868,6 +868,10 @@ class TableImportFormData(BaseModel):
         ),
     ]
     migrate: Annotated[bool, Field(description="Whether to import in migration mode.")] = False
+    reupload: Annotated[
+        bool,
+        Field(description="Whether to reupload in migration mode (maybe removed without notice)."),
+    ] = False
 
 
 @router.post(

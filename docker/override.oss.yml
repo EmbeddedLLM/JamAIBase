@@ -1,0 +1,21 @@
+services:
+  vmauth:
+    ports:
+      - 8427:8427
+
+  pgbouncer:
+    ports:
+      - 5432:5432
+
+  minio:
+    ports:
+      - 9000:9000
+      - 9001:9001
+
+  owl:
+    ports:
+      - "${API_PORT:-6969}:${OWL_PORT:-6969}"
+
+  frontend:
+    ports:
+      - "${FRONTEND_PORT:-4000}:4000"

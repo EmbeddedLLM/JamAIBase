@@ -1030,3 +1030,7 @@ class TableImportFormData(BaseModel):
         bool,
         Field(description="Whether to import in migration mode (maybe removed without notice)."),
     ] = False
+    reupload: Annotated[
+        bool,
+        Field(description="Whether to reupload in migration mode (maybe removed without notice)."),
+    ] = False

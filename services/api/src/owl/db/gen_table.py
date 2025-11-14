@@ -2311,6 +2311,11 @@ class GenerativeTableCore:
                 if state.pop("is_null", False):
                     row[col_id[:-1]] = None
                 row[col_id] = state
+            # HACK: special handling for importing v1 knowledge table. To be remove in the future
+            if self.table_type == TableType.KNOWLEDGE:
+                file_id = row.get("File ID", None)
+                if file_id and file_id.startswith("file://file"):
+                    row["File ID"] = file_id.replace("file://file", ENV_CONFIG.file_dir)
 
         # Upload files to S3
         if verbose:
