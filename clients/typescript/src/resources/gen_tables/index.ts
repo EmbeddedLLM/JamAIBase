@@ -9,28 +9,31 @@ import {
     CreateActionTableRequestSchema
 } from "@/resources/gen_tables/action";
 import {
+    CellCompletionResponse,
+    CellReferencesResponse,
+    ColumnCompletionResponseSchema,
     CreateChatTableRequest,
     CreateChatTableRequestSchema,
-    GenTableRowsChatCompletionChunks,
-    GenTableRowsChatCompletionChunksSchema,
-    GenTableStreamChatCompletionChunk,
-    GenTableStreamChatCompletionChunkSchema,
-    GenTableStreamReferences,
-    GenTableStreamReferencesSchema,
     GetConversationThreadRequest,
     GetConversationThreadRequestSchema,
     GetConversationThreadResponse,
-    GetConversationThreadResponseSchema
+    GetConversationThreadResponseSchema,
+    MultiRowCompletionResponse,
+    MultiRowCompletionResponseSchema,
+    RowReferencesResponseSchema
 } from "@/resources/gen_tables/chat";
 import { CreateKnowledgeTableRequest, CreateKnowledgeTableRequestSchema, UploadFileRequest } from "@/resources/gen_tables/knowledge";
 import {
     AddColumnRequest,
     AddColumnRequestSchema,
     AddRowRequest,
-    DeleteRowRequest,
+    AddRowRequestSchema,
     DeleteRowsRequest,
+    DeleteRowsRequestSchema,
     DeleteTableRequest,
+    DeleteTableRequestSchema,
     DropColumnsRequest,
+    DropColumnsRequestSchema,
     DuplicateTableRequest,
     DuplicateTableRequestSchema,
     ExportTableRequest,
@@ -54,33 +57,50 @@ import {
     PageListTableRowsResponse,
     PageListTableRowsResponseSchema,
     RegenRowRequest,
+    RegenRowRequestSchema,
     RenameColumnsRequest,
+    RenameColumnsRequestSchema,
     RenameTableRequest,
+    RenameTableRequestSchema,
     ReorderColumnsRequest,
+    ReorderColumnsRequestSchema,
     TableMetaRequest,
+    TableMetaRequestSchema,
     TableMetaResponse,
     TableMetaResponseSchema,
     UpdateGenConfigRequest,
     UpdateGenConfigRequestSchema,
-    UpdateRowRequest
+    UpdateRowRequest,
+    UpdateRowRequestSchema
 } from "@/resources/gen_tables/tables";
 import { ChunkError } from "@/resources/shared/error";
 import axios, { AxiosResponse } from "axios";
-import { Blob, FormData } from "formdata-node";
+// import { Blob, FormData } from "formdata-node";
+
+async function createFormData() {
+    if (!isRunningInBrowser()) {
+        // Node environment
+        // (import from `formdata-node`)
+        const { FormData } = await import("formdata-node");
+
+        return new FormData();
+    } else {
+        // Browser environment
+        return new FormData();
+    }
+}
 
 export class GenTable extends Base {
     // Helper method to handle stream responses
-    private handleGenTableStreamResponse(
-        response: AxiosResponse<any, any>
-    ): ReadableStream<GenTableStreamChatCompletionChunk | GenTableStreamReferences> {
+    private handleGenTableStreamResponse(response: AxiosResponse<any, any>): ReadableStream<CellCompletionResponse | CellReferencesResponse> {
         this.logWarning(response);
 
         if (response.status != 200) {
             throw new Error(`Received Error Status: ${response.status}`);
         }
 
-        return new ReadableStream<GenTableStreamChatCompletionChunk | GenTableStreamReferences>({
-            async start(controller: ReadableStreamDefaultController<GenTableStreamChatCompletionChunk | GenTableStreamReferences>) {
+        return new ReadableStream<CellCompletionResponse | CellReferencesResponse>({
+            async start(controller: ReadableStreamDefaultController<CellCompletionResponse | CellReferencesResponse>) {
                 response.data.on("data", (data: any) => {
                     data = data.toString();
                     if (data.endsWith("\n\n")) {
@@ -100,9 +120,9 @@ export class GenTable extends Base {
                             try {
                                 const parsedValue = JSON.parse(chunk);
                                 if (parsedValue["object"] === "gen_table.completion.chunk") {
-                                    controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
+                                    controller.enqueue(ColumnCompletionResponseSchema.parse(parsedValue));
                                 } else if (parsedValue["object"] === "gen_table.references") {
-                                    controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
+                                    controller.enqueue(RowReferencesResponseSchema.parse(parsedValue));
                                 } else {
                                     throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
                                 }
@@ -125,9 +145,9 @@ export class GenTable extends Base {
                         try {
                             const parsedValue = JSON.parse(chunk);
                             if (parsedValue["object"] === "gen_table.completion.chunk") {
-                                controller.enqueue(GenTableStreamChatCompletionChunkSchema.parse(parsedValue));
+                                controller.enqueue(ColumnCompletionResponseSchema.parse(parsedValue));
                             } else if (parsedValue["object"] === "gen_table.references") {
-                                controller.enqueue(GenTableStreamReferencesSchema.parse(parsedValue));
+                                controller.enqueue(RowReferencesResponseSchema.parse(parsedValue));
                             } else {
                                 throw new ChunkError(`Unexpected SSE Chunk: ${parsedValue}`);
                             }
@@ -154,39 +174,29 @@ export class GenTable extends Base {
 
     public async listTables(params: ListTableRequest): Promise<PageListTableMetaResponse> {
         const parsedParams = ListTableRequestSchema.parse(params);
-        let getURL = `/api/v1/gen_tables/${params.table_type}`;
-
-        delete (parsedParams as any).table_type;
+        let getURL = `/api/v2/gen_tables/${params.table_type}/list`;
 
         const response = await this.httpClient.get(getURL, {
-            params: {
-                ...parsedParams,
-                search_query: encodeURIComponent(parsedParams.search_query)
-            }
+            params: parsedParams
         });
 
         return this.handleResponse(response, PageListTableMetaResponseSchema);
     }
 
     public async getTable(params: TableMetaRequest): Promise<TableMetaResponse> {
-        let getURL = `/api/v1/gen_tables/${params.table_type}/${params.table_id}`;
+        const parsedParams = TableMetaRequestSchema.parse(params);
+        let getURL = `/api/v2/gen_tables/${params.table_type}`;
 
-        const response = await this.httpClient.get(getURL);
+        const response = await this.httpClient.get(getURL, {
+            params: parsedParams
+        });
         return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async listRows(params: ListTableRowsRequest): Promise<PageListTableRowsResponse> {
         const parsedParams = ListTableRowsRequestSchema.parse(params);
-        const response = await this.httpClient.get(`/api/v1/gen_tables/${parsedParams.table_type}/${parsedParams.table_id}/rows`, {
-            params: {
-                offset: parsedParams.offset,
-                limit: parsedParams.limit,
-                search_query: encodeURIComponent(parsedParams.search_query),
-                columns: parsedParams.columns ? parsedParams.columns?.map(encodeURIComponent) : [],
-                float_decimals: parsedParams.float_decimals,
-                vec_decimals: parsedParams.vec_decimals,
-                order_descending: parsedParams.order_descending
-            },
+        const response = await this.httpClient.get(`/api/v2/gen_tables/${parsedParams.table_type}/rows/list`, {
+            params: parsedParams,
             paramsSerializer: (params) => {
                 return Object.entries(params)
                     .flatMap(([key, value]) => (Array.isArray(value) ? value.map((val) => `${key}=${val}`) : `${key}=${value}`))
@@ -199,12 +209,8 @@ export class GenTable extends Base {
 
     public async getRow(params: GetRowRequest): Promise<GetRowResponse> {
         const parsedParams = GetRowRequestSchema.parse(params);
-        const response = await this.httpClient.get(`/api/v1/gen_tables/${params.table_type}/${params.table_id}/rows/${params.row_id}`, {
-            params: {
-                columns: parsedParams.columns ? parsedParams.columns?.map(encodeURIComponent) : [],
-                float_decimals: parsedParams.float_decimals,
-                vec_decimals: parsedParams.vec_decimals
-            },
+        const response = await this.httpClient.get(`/api/v2/gen_tables/${params.table_type}/rows`, {
+            params: parsedParams,
             paramsSerializer: (params) => {
                 return Object.entries(params)
                     .flatMap(([key, value]) => (Array.isArray(value) ? value.map((val) => `${key}=${val}`) : `${key}=${value}`))
@@ -218,13 +224,9 @@ export class GenTable extends Base {
     public async getConversationThread(params: GetConversationThreadRequest): Promise<GetConversationThreadResponse> {
         const parsedParams = GetConversationThreadRequestSchema.parse(params);
 
-        let getURL = `/api/v1/gen_tables/${parsedParams.table_type}/${parsedParams.table_id}/thread`;
+        let getURL = `/api/v2/gen_tables/${parsedParams.table_type}/thread`;
         const response = await this.httpClient.get(getURL, {
-            params: {
-                column_id: parsedParams.column_id,
-                row_id: parsedParams.row_id,
-                include: parsedParams.include
-            }
+            params: parsedParams
         });
 
         return this.handleResponse(response, GetConversationThreadResponseSchema);
@@ -235,21 +237,15 @@ export class GenTable extends Base {
      */
     public async createActionTable(params: CreateActionTableRequest): Promise<TableMetaResponse> {
         const parsedParams = CreateActionTableRequestSchema.parse(params);
-        const apiURL = "/api/v1/gen_tables/action";
-        const response = await this.httpClient.post(
-            apiURL,
-            {
-                ...parsedParams,
-                stream: false
-            },
-            {}
-        );
+        const apiURL = "/api/v2/gen_tables/action";
+        const response = await this.httpClient.post(apiURL, parsedParams);
+
         return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async createChatTable(params: CreateChatTableRequest): Promise<TableMetaResponse> {
         const parsedParams = CreateChatTableRequestSchema.parse(params);
-        const apiURL = "/api/v1/gen_tables/chat";
+        const apiURL = "/api/v2/gen_tables/chat";
         const response = await this.httpClient.post(apiURL, parsedParams);
 
         return this.handleResponse(response, TableMetaResponseSchema);
@@ -257,7 +253,7 @@ export class GenTable extends Base {
 
     public async createKnowledgeTable(params: CreateKnowledgeTableRequest): Promise<TableMetaResponse> {
         const parsedParams = CreateKnowledgeTableRequestSchema.parse(params);
-        const apiURL = "/api/v1/gen_tables/knowledge";
+        const apiURL = "/api/v2/gen_tables/knowledge";
         const response = await this.httpClient.post(apiURL, parsedParams);
 
         return this.handleResponse(response, TableMetaResponseSchema);
@@ -267,33 +263,35 @@ export class GenTable extends Base {
      *  Gen Table Delete
      */
     public async deleteTable(params: DeleteTableRequest): Promise<OkResponse> {
-        let deleteURL = `/api/v1/gen_tables/${params.table_type}/${params.table_id}`;
-        const response = await this.httpClient.delete(deleteURL);
-
-        return this.handleResponse(response, OkResponseSchema);
-    }
-
-    public async deleteRow(params: DeleteRowRequest): Promise<OkResponse> {
-        let deleteURL = `/api/v1/gen_tables/${params.table_type}/${params.table_id}/rows/${params.row_id}`;
-
+        const parsedParams = DeleteTableRequestSchema.parse(params);
+        let deleteURL = `/api/v2/gen_tables/${params.table_type}`;
         const response = await this.httpClient.delete(deleteURL, {
-            params: {
-                reindex: params?.reindex
-            }
+            params: parsedParams
         });
 
         return this.handleResponse(response, OkResponseSchema);
     }
+
+    // public async deleteRow(params: DeleteRowRequest): Promise<OkResponse> {
+    //     let deleteURL = `/api/v2/gen_tables/${params.table_type}/${params.table_id}/rows/${params.row_id}`;
+
+    //     const response = await this.httpClient.delete(deleteURL, {
+    //         params: {
+    //             reindex: params?.reindex
+    //         }
+    //     });
+
+    //     return this.handleResponse(response, OkResponseSchema);
+    // }
 
     /**
      * @param {string} [params.where] - Optional. SQL where clause. If not provided, will match all rows and thus deleting all table content.
      */
     public async deleteRows(params: DeleteRowsRequest): Promise<OkResponse> {
-        const apiURL = `/api/v1/gen_tables/${params.table_type}/rows/delete`;
-        const response = await this.httpClient.post(apiURL, {
-            table_id: params.table_id,
-            where: params.where // Optional. SQL where clause. If not provided, will match all rows and thus deleting all table content.
-        });
+        const parsedParams = DeleteRowsRequestSchema.parse(params);
+        const apiURL = `/api/v2/gen_tables/${params.table_type}/rows/delete`;
+        const response = await this.httpClient.post(apiURL, parsedParams);
+
         return this.handleResponse(response, OkResponseSchema);
     }
 
@@ -301,8 +299,9 @@ export class GenTable extends Base {
      * Gen Table Update
      */
     public async renameTable(params: RenameTableRequest): Promise<TableMetaResponse> {
-        let postURL = `/api/v1/gen_tables/${params.table_type}/rename/${params.table_id_src}/${params.table_id_dst}`;
-        const response = await this.httpClient.post(postURL, {}, {});
+        const parsedParams = RenameTableRequestSchema.parse(params);
+        let postURL = `/api/v2/gen_tables/${params.table_type}/rename`;
+        const response = await this.httpClient.post(postURL, undefined, { params: parsedParams });
 
         return this.handleResponse(response, TableMetaResponseSchema);
     }
@@ -316,69 +315,41 @@ export class GenTable extends Base {
         }
 
         const parsedParams = DuplicateTableRequestSchema.parse(params);
-
-        let postURL = `/api/v1/gen_tables/${params.table_type}/duplicate/${params.table_id_src}`;
-        const response = await this.httpClient.post(
-            postURL,
-            {},
-            {
-                params: {
-                    table_id_dst: parsedParams.table_id_dst,
-                    include_data: parsedParams.include_data,
-                    create_as_child: parsedParams.create_as_child
-                }
-            }
-        );
+        let postURL = `/api/v2/gen_tables/${params.table_type}/duplicate`;
+        const response = await this.httpClient.post(postURL, undefined, {
+            params: parsedParams
+        });
 
         return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async renameColumns(params: RenameColumnsRequest): Promise<TableMetaResponse> {
-        let postURL = `/api/v1/gen_tables/${params.table_type}/columns/rename`;
-        const response = await this.httpClient.post(
-            postURL,
-            {
-                table_id: params.table_id,
-                column_map: params.column_map
-            },
-            {}
-        );
+        const parsedParams = RenameColumnsRequestSchema.parse(params);
+        let postURL = `/api/v2/gen_tables/${params.table_type}/columns/rename`;
+        const response = await this.httpClient.post(postURL, parsedParams);
 
         return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async reorderColumns(params: ReorderColumnsRequest): Promise<TableMetaResponse> {
-        let postURL = `/api/v1/gen_tables/${params.table_type}/columns/reorder`;
-        const response = await this.httpClient.post(
-            postURL,
-            {
-                table_id: params.table_id,
-                column_names: params.column_names
-            },
-            {}
-        );
+        const parsedParams = ReorderColumnsRequestSchema.parse(params);
+        let postURL = `/api/v2/gen_tables/${params.table_type}/columns/reorder`;
+        const response = await this.httpClient.post(postURL, parsedParams);
 
         return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async dropColumns(params: DropColumnsRequest): Promise<TableMetaResponse> {
-        let postURL = `/api/v1/gen_tables/${params.table_type}/columns/drop`;
-        const response = await this.httpClient.post(
-            postURL,
-            {
-                table_id: params.table_id,
-                column_names: params.column_names
-            },
-            {}
-        );
+        const parsedParams = DropColumnsRequestSchema.parse(params);
+        let postURL = `/api/v2/gen_tables/${params.table_type}/columns/drop`;
+        const response = await this.httpClient.post(postURL, parsedParams);
 
         return this.handleResponse(response, TableMetaResponseSchema);
     }
 
     public async addActionColumns(params: AddActionColumnRequest): Promise<TableMetaResponse> {
         const parsedParams = AddActionColumnRequestSchema.parse(params);
-        let postURL = `/api/v1/gen_tables/action/columns/add`;
-
+        let postURL = `/api/v2/gen_tables/action/columns/add`;
         const response = await this.httpClient.post(postURL, parsedParams);
 
         return this.handleResponse(response, TableMetaResponseSchema);
@@ -386,7 +357,7 @@ export class GenTable extends Base {
 
     public async addKnowledgeColumns(params: AddColumnRequest): Promise<TableMetaResponse> {
         const parsedParams = AddColumnRequestSchema.parse(params);
-        let postURL = `/api/v1/gen_tables/knowledge/columns/add`;
+        let postURL = `/api/v2/gen_tables/knowledge/columns/add`;
         const response = await this.httpClient.post(postURL, parsedParams);
 
         return this.handleResponse(response, TableMetaResponseSchema);
@@ -394,7 +365,7 @@ export class GenTable extends Base {
 
     public async addChatColumns(params: AddColumnRequest): Promise<TableMetaResponse> {
         const parsedParams = AddColumnRequestSchema.parse(params);
-        let postURL = `/api/v1/gen_tables/chat/columns/add`;
+        let postURL = `/api/v2/gen_tables/chat/columns/add`;
         const response = await this.httpClient.post(postURL, parsedParams);
 
         return this.handleResponse(response, TableMetaResponseSchema);
@@ -402,30 +373,20 @@ export class GenTable extends Base {
 
     public async updateGenConfig(params: UpdateGenConfigRequest): Promise<TableMetaResponse> {
         const parsedParams = UpdateGenConfigRequestSchema.parse(params);
-        let postURL = `/api/v1/gen_tables/${params.table_type}/gen_config/update`;
-        const response = await this.httpClient.post(
-            postURL,
-            {
-                table_id: parsedParams.table_id,
-                column_map: parsedParams.column_map
-            },
-            {}
-        );
+        let postURL = `/api/v2/gen_tables/${params.table_type}/gen_config`;
+        const response = await this.httpClient.patch(postURL, parsedParams);
 
         return this.handleResponse(response, TableMetaResponseSchema);
     }
 
-    public async addRowStream(params: AddRowRequest): Promise<ReadableStream<GenTableStreamChatCompletionChunk | GenTableStreamReferences>> {
-        const apiURL = `/api/v1/gen_tables/${params.table_type}/rows/add`;
-
+    public async addRowStream(params: AddRowRequest): Promise<ReadableStream<CellCompletionResponse | CellReferencesResponse>> {
+        const parsedParams = AddRowRequestSchema.parse(params);
+        const apiURL = `/api/v2/gen_tables/${params.table_type}/rows/add`;
         const response = await this.httpClient.post(
             apiURL,
             {
-                table_id: params.table_id,
-                data: params.data,
-                stream: true,
-                reindex: params.reindex,
-                concurrent: params.concurrent
+                ...parsedParams,
+                stream: true
             },
             {
                 responseType: "stream"
@@ -435,35 +396,29 @@ export class GenTable extends Base {
         return this.handleGenTableStreamResponse(response);
     }
 
-    public async addRow(params: AddRowRequest): Promise<GenTableRowsChatCompletionChunks> {
-        const url = `/api/v1/gen_tables/${params.table_type}/rows/add`;
-
+    public async addRow(params: AddRowRequest): Promise<MultiRowCompletionResponse> {
+        const parsedParams = AddRowRequestSchema.parse(params);
+        const url = `/api/v2/gen_tables/${params.table_type}/rows/add`;
         const response = await this.httpClient.post(
             url,
             {
-                table_id: params.table_id,
-                stream: false,
-                data: params.data,
-                reindex: params.reindex,
-                concurrent: params.concurrent
+                ...parsedParams,
+                stream: false
             },
             {}
         );
 
-        return this.handleResponse(response, GenTableRowsChatCompletionChunksSchema);
+        return this.handleResponse(response, MultiRowCompletionResponseSchema);
     }
 
     public async regenRowStream(params: RegenRowRequest) {
-        const apiURL = `/api/v1/gen_tables/${params.table_type}/rows/regen`;
-
+        const parsedParams = RegenRowRequestSchema.parse(params);
+        const apiURL = `/api/v2/gen_tables/${params.table_type}/rows/regen`;
         const response = await this.httpClient.post(
             apiURL,
             {
-                table_id: params.table_id,
-                row_ids: params.row_ids,
-                stream: true,
-                reindex: params.reindex,
-                concurrent: params.concurrent
+                ...parsedParams,
+                stream: true
             },
             {
                 responseType: "stream"
@@ -473,36 +428,46 @@ export class GenTable extends Base {
         return this.handleGenTableStreamResponse(response);
     }
 
-    public async regenRow(params: RegenRowRequest): Promise<GenTableRowsChatCompletionChunks> {
-        const apiURL = `/api/v1/gen_tables/${params.table_type}/rows/regen`;
+    public async regenRow(params: RegenRowRequest): Promise<MultiRowCompletionResponse> {
+        const parsedParams = RegenRowRequestSchema.parse(params);
+        const apiURL = `/api/v2/gen_tables/${params.table_type}/rows/regen`;
         const response = await this.httpClient.post(
             apiURL,
             {
-                table_id: params.table_id,
-                row_ids: params.row_ids,
-                stream: false,
-                reindex: params.reindex,
-                concurrent: params.concurrent
+                ...parsedParams,
+                stream: false
             },
             {}
         );
-        return this.handleResponse(response, GenTableRowsChatCompletionChunksSchema);
+
+        return this.handleResponse(response, MultiRowCompletionResponseSchema);
     }
 
-    public async updateRow(params: UpdateRowRequest): Promise<OkResponse> {
-        const apiURL = `/api/v1/gen_tables/${params.table_type}/rows/update`;
-        const response = await this.httpClient.post(apiURL, {
+    /**
+     * @deprecated Deprecated since 0.4.0, use updateRows instead
+     */
+    public async updateRow(params: UpdateRowRequest & { row_id: string }): Promise<OkResponse> {
+        const apiURL = `/api/v2/gen_tables/${params.table_type}/rows`;
+        const response = await this.httpClient.patch(apiURL, {
             table_id: params.table_id,
-            row_id: params.row_id,
-            data: params.data,
-            reindex: params.reindex
+            data: {
+                [params.row_id]: params.data
+            }
         });
 
         return this.handleResponse(response, OkResponseSchema);
     }
 
+    public async updateRows(params: UpdateRowRequest): Promise<OkResponse> {
+        const parsedParams = UpdateRowRequestSchema.parse(params);
+        const apiURL = `/api/v2/gen_tables/${params.table_type}/rows`;
+        const response = await this.httpClient.patch(apiURL, parsedParams);
+
+        return this.handleResponse(response, OkResponseSchema);
+    }
+
     public async hybridSearch(params: HybridSearchRequest): Promise<HybridSearchResponse> {
-        const apiURL = `/api/v1/gen_tables/${params.table_type}/hybrid_search`;
+        const apiURL = `/api/v2/gen_tables/${params.table_type}/hybrid_search`;
 
         const { table_type, ...requestBody } = params;
 
@@ -520,7 +485,7 @@ export class GenTable extends Base {
         const apiURL = `/api/v1/gen_tables/knowledge/upload_file`;
 
         // Create FormData to send as multipart/form-data
-        const formData = new FormData();
+        const formData = await createFormData();
         if (params.file) {
             formData.append("file", params.file, params.file.name);
         } else if (params.file_path) {
@@ -528,7 +493,10 @@ export class GenTable extends Base {
                 const mimeType = await getMimeType(params.file_path!);
                 const fileName = await getFileName(params.file_path!);
                 const data = await readFile(params.file_path!);
-                const file = new Blob([data], { type: mimeType });
+                const { File } = await import("formdata-node");
+                const file = new File([data], fileName, { type: mimeType });
+
+                // @ts-ignore
                 formData.append("file", file, fileName);
             } else {
                 throw new Error("Pass File instead of file path if you are using this function in client.");
@@ -556,10 +524,10 @@ export class GenTable extends Base {
     }
 
     public async embedFile(params: UploadFileRequest): Promise<OkResponse> {
-        const apiURL = `/api/v1/gen_tables/knowledge/embed_file`;
+        const apiURL = `/api/v2/gen_tables/knowledge/embed_file`;
 
         // Create FormData to send as multipart/form-data
-        const formData = new FormData();
+        const formData = await createFormData();
         if (params.file) {
             formData.append("file", params.file, params.file.name);
         } else if (params.file_path) {
@@ -567,7 +535,10 @@ export class GenTable extends Base {
                 const mimeType = await getMimeType(params.file_path!);
                 const fileName = await getFileName(params.file_path!);
                 const data = await readFile(params.file_path!);
-                const file = new Blob([data], { type: mimeType });
+                const { File } = await import("formdata-node");
+                const file = new File([data], fileName, { type: mimeType });
+
+                // @ts-ignore
                 formData.append("file", file, fileName);
             } else {
                 throw new Error("Pass File instead of file path if you are using this method in client.");
@@ -594,12 +565,10 @@ export class GenTable extends Base {
         return this.handleResponse(response, OkResponseSchema);
     }
 
-    public async importTableData(params: ImportTableRequest): Promise<GenTableRowsChatCompletionChunks> {
-        const apiURL = `/api/v1/gen_tables/${params.table_type}/import_data`;
+    public async importTableData(params: ImportTableRequest): Promise<MultiRowCompletionResponse> {
+        const apiURL = `/api/v2/gen_tables/${params.table_type}/import_data`;
 
-        const delimiter = params.delimiter ? params.delimiter : ",";
-
-        const formData = new FormData();
+        const formData = await createFormData();
         if (params.file) {
             formData.append("file", params.file, params.file.name);
         } else if (params.file_path) {
@@ -607,7 +576,10 @@ export class GenTable extends Base {
                 const mimeType = await getMimeType(params.file_path!);
                 const fileName = await getFileName(params.file_path!);
                 const data = await readFile(params.file_path!);
-                const file = new Blob([data], { type: mimeType });
+                // const file = new Blob([data], { type: mimeType });
+                const { File } = await import("formdata-node");
+                const file = new File([data], fileName, { type: mimeType });
+                // @ts-ignore
                 formData.append("file", file, fileName);
             } else {
                 throw new Error("Pass File instead of file path if you are using this function in client.");
@@ -617,7 +589,7 @@ export class GenTable extends Base {
         }
 
         formData.append("table_id", params.table_id);
-        formData.append("delimiter", delimiter);
+        if (params.delimiter) formData.append("delimiter", params.delimiter);
         formData.append("stream", JSON.stringify(false));
 
         const response = await this.httpClient.post(apiURL, formData, {
@@ -626,17 +598,15 @@ export class GenTable extends Base {
             }
         });
 
-        return this.handleResponse(response, GenTableRowsChatCompletionChunksSchema);
+        return this.handleResponse(response, MultiRowCompletionResponseSchema);
     }
 
-    public async importTableDataStream(
-        params: ImportTableRequest
-    ): Promise<ReadableStream<GenTableStreamChatCompletionChunk | GenTableStreamReferences>> {
-        const apiURL = `/api/v1/gen_tables/${params.table_type}/import_data`;
+    public async importTableDataStream(params: ImportTableRequest): Promise<ReadableStream<CellCompletionResponse | CellReferencesResponse>> {
+        const apiURL = `/api/v2/gen_tables/${params.table_type}/import_data`;
         // const fileName = params.file.name;
         const delimiter = params.delimiter ? params.delimiter : ",";
 
-        const formData = new FormData();
+        const formData = await createFormData();
         if (params.file) {
             formData.append("file", params.file, params.file.name);
         } else if (params.file_path) {
@@ -644,7 +614,10 @@ export class GenTable extends Base {
                 const mimeType = await getMimeType(params.file_path!);
                 const fileName = await getFileName(params.file_path!);
                 const data = await readFile(params.file_path!);
-                const file = new Blob([data], { type: mimeType });
+
+                const { File } = await import("formdata-node");
+                const file = new File([data], fileName, { type: mimeType });
+                // @ts-ignore
                 formData.append("file", file, fileName);
             } else {
                 throw new Error("Pass File instead of file path if you are using this function in client.");
@@ -670,13 +643,10 @@ export class GenTable extends Base {
     public async exportTableData(params: ExportTableRequest): Promise<Uint8Array> {
         const parsedParams = ExportTableRequestSchema.parse(params);
 
-        const apiURL = `/api/v1/gen_tables/${parsedParams.table_type}/${encodeURIComponent(parsedParams.table_id)}/export_data`;
+        const apiURL = `/api/v2/gen_tables/${parsedParams.table_type}/export_data`;
         try {
             const response = await this.httpClient.get(apiURL, {
-                params: {
-                    delimiter: encodeURIComponent(parsedParams.delimiter),
-                    columns: parsedParams.columns ? parsedParams.columns?.map(encodeURIComponent) : []
-                },
+                params: parsedParams,
                 paramsSerializer: (params) => {
                     return Object.entries(params)
                         .flatMap(([key, value]) => (Array.isArray(value) ? value.map((val) => `${key}=${val}`) : `${key}=${value}`))

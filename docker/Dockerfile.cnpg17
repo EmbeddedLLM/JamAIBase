@@ -1,0 +1,76 @@
+# ======================== STAGE 1: BUILDER ========================
+ARG CNPG_IMAGE="ghcr.io/cloudnative-pg/postgresql:17.5-bookworm"
+ARG PG_MAJOR=17
+FROM ${CNPG_IMAGE} AS builder
+
+# Switch to root to install build tools
+USER root
+
+# Install build dependencies for compiling from source
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential pkg-config git \
+        postgresql-server-dev-${PG_MAJOR} \
+        curl libssl-dev libclang-dev clang \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- Install Rust toolchain (as postgres user) ----
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+    export PATH="$HOME/.cargo/bin:$PATH" && \
+    rustup update && \
+    cargo install --locked cargo-pgrx --version 0.12.9 && \
+    cargo pgrx init --pg${PG_MAJOR} $(which pg_config)
+
+# ---- Set build directory ----
+WORKDIR /tmp
+
+# ---- Build pgvector and pgvectorscale from source ----
+RUN git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git && \
+    cd pgvector && make OPTFLAGS="" && make install && cd .. && rm -rf pgvector
+
+# commit: 6af0ee1953ca3dab6dc45011a985cffb2aa865c1 (v0.8.0) ad of 2025-07-17
+RUN export PATH="$HOME/.cargo/bin:$PATH" && \
+    git clone https://github.com/timescale/pgvectorscale.git && \
+    cd pgvectorscale && git checkout 6af0ee1953ca3dab6dc45011a985cffb2aa865c1 && \
+    cd pgvectorscale && cargo pgrx install --release && cd ../.. && rm -rf pgvectorscale
+
+# ======================== STAGE 2: FINAL IMAGE ========================
+# Start from a fresh, clean CNPG image.
+FROM ${CNPG_IMAGE}
+
+USER root
+
+# ---- PART 1: Copy extensions BUILT FROM SOURCE in the builder stage ----
+COPY --from=builder --chown=postgres:postgres \
+     /usr/lib/postgresql/${PG_MAJOR}/lib/*vectorscale* \
+     /usr/lib/postgresql/${PG_MAJOR}/lib/
+COPY --from=builder --chown=postgres:postgres \
+     /usr/share/postgresql/${PG_MAJOR}/extension/*vectorscale* \
+     /usr/share/postgresql/${PG_MAJOR}/extension/
+
+COPY --from=builder --chown=postgres:postgres \
+     /usr/lib/postgresql/${PG_MAJOR}/lib/*vector* \
+     /usr/lib/postgresql/${PG_MAJOR}/lib/
+COPY --from=builder --chown=postgres:postgres \
+     /usr/share/postgresql/${PG_MAJOR}/extension/*vector* \
+     /usr/share/postgresql/${PG_MAJOR}/extension/
+
+# ---- PART 2: Install PRE-PACKAGED extensions with ZERO recommended packages ----
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        wget lsb-release ca-certificates && \
+    wget https://apache.jfrog.io/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb && \
+    # Using 'apt-get install' here is slightly better as it can handle dependencies of the .deb itself
+    apt-get install -y --no-install-recommends ./apache-arrow-apt-source-latest-*.deb && \
+    wget https://packages.groonga.org/debian/groonga-apt-source-latest-$(lsb_release --codename --short).deb && \
+    apt-get install -y --no-install-recommends ./groonga-apt-source-latest-*.deb && \
+    apt-get update && \
+    # apt search groonga && \
+    # Install the final package, again with no recommended extras
+    apt-get install -y --no-install-recommends postgresql-${PG_MAJOR}-pgdg-pgroonga && \
+    # Clean up build-only tools and cache
+    apt-get purge -y --auto-remove wget && \
+    rm -rf /var/lib/apt/lists/* *.deb
+
+# Switch back to the default non-root user for security
+USER postgres

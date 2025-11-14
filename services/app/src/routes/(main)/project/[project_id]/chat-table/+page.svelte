@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { onMount } from 'svelte';
+	import { MediaQuery } from 'svelte/reactivity';
 	import debounce from 'lodash/debounce';
 	import ArrowLeft from 'lucide-svelte/icons/arrow-left';
 	import Trash_2 from 'lucide-svelte/icons/trash-2';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { cTableSort as sortOptions } from '$globalStore';
-	import { pastChatAgents } from '$lib/components/tables/tablesStore';
+	import { pastChatAgents } from '$lib/components/tables/tablesState.svelte';
 	import { agentColors } from '$lib/constants';
 	import logger from '$lib/logger';
 
@@ -33,29 +34,28 @@
 	import ImportIcon from '$lib/icons/ImportIcon.svelte';
 	import ExportIcon from '$lib/icons/ExportIcon.svelte';
 
-	export let data;
-	$: ({ userData } = data);
+	let { data } = $props();
+	let { user } = $derived(data);
 
-	let windowWidth: number;
-	let componentWidth: number;
-	let supportsContainerQuery = true;
-	let selectingFilterAgent = true;
+	const bigScreen = new MediaQuery('min-width: 1024px');
+	let componentWidth: number = $state(0);
+	let supportsContainerQuery = $state(true);
+	let selectingFilterAgent = $state(true);
 
-	let filterByAgent = '_chat_';
+	let filterByAgent = $state('_chat_');
 	let fetchFilteredConvController: AbortController | null = null;
-	let isLoadingFilteredConv = false;
-	let isLoadingMoreFilteredConv = false;
+	let isLoadingFilteredConv = $state(false);
+	let isLoadingMoreFilteredConv = $state(false);
 	let moreFilteredConvFinished = false;
 	let currentOffsetFilteredConv = 0;
 	const limitFilteredConv = 100;
-	let filteredConversations: typeof $pastChatAgents = [];
+	let filteredConversations: typeof $pastChatAgents = $state([]);
 	const sortableFields = [
 		{ id: 'id', title: 'Name', Icon: SortAlphabetIcon },
 		{ id: 'updated_at', title: 'Date modified', Icon: SortByIcon }
 	];
 
 	const filteredConvColorMap = new Map<string, (typeof agentColors)[number]>();
-	$: filteredConversations, mapAgentColors();
 	const mapAgentColors = () => {
 		filteredConversations.forEach((conv) => {
 			if (conv.parent_id && !filteredConvColorMap.get(conv.parent_id))
@@ -67,22 +67,23 @@
 	};
 
 	let fetchAgentsController: AbortController | null = null;
-	let loadingAgentsError: { status: number; message: string; org_id?: string } | null = null;
-	let isLoadingCAgents = true;
-	let isLoadingMoreCAgents = false;
+	let loadingAgentsError: { status: number; message: string; org_id?: string } | null =
+		$state(null);
+	let isLoadingCAgents = $state(true);
+	let isLoadingMoreCAgents = $state(false);
 	let moreCAgentsFinished = false;
 	let currentOffsetAgents = 0;
 	const limitAgents = 100;
 
-	let searchQuery = '';
+	let searchQuery = $state('');
 	let searchController: AbortController | null = null;
-	let isLoadingSearch = false;
+	let isLoadingSearch = $state(false);
 
-	let isAddingAgent = false;
-	let isAddingConversation = false;
-	let isEditingTableID: string | null = null;
-	let isDeletingTable: string | null = null;
-	let isImportingTable: File | null = null;
+	let isAddingAgent = $state(false);
+	let isAddingConversation = $state(false);
+	let isEditingTableID: string | null = $state(null);
+	let isDeletingTable: string | null = $state(null);
+	let isImportingTable: File | null = $state(null);
 
 	onMount(() => {
 		getChatAgents();
@@ -111,7 +112,7 @@
 
 		try {
 			const response = await fetch(
-				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat?` +
+				`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/chat/list?` +
 					new URLSearchParams({
 						offset: currentOffsetAgents.toString(),
 						limit: limitAgents.toString(),
@@ -119,10 +120,7 @@
 					}),
 				{
 					credentials: 'same-origin',
-					signal: fetchAgentsController.signal,
-					headers: {
-						'x-project-id': $page.params.project_id
-					}
+					signal: fetchAgentsController.signal
 				}
 			);
 			currentOffsetAgents += limitAgents;
@@ -187,7 +185,7 @@
 				offset: currentOffsetFilteredConv.toString(),
 				limit: limitFilteredConv.toString(),
 				order_by: $sortOptions.orderBy,
-				order_descending: $sortOptions.order === 'asc' ? 'false' : 'true',
+				order_ascending: $sortOptions.order === 'asc' ? 'true' : 'false',
 				parent_id: filterByAgent,
 				search_query: searchQuery.trim()
 			} as Record<string, string>;
@@ -197,13 +195,10 @@
 			}
 
 			const response = await fetch(
-				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat?` + new URLSearchParams(searchParams),
+				`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/chat/list?` + new URLSearchParams(searchParams),
 				{
 					credentials: 'same-origin',
-					signal: fetchFilteredConvController.signal,
-					headers: {
-						'x-project-id': $page.params.project_id
-					}
+					signal: fetchFilteredConvController.signal
 				}
 			);
 			currentOffsetFilteredConv += limitFilteredConv;
@@ -278,18 +273,15 @@
 
 		try {
 			const response = await fetch(
-				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat?${new URLSearchParams({
+				`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/chat/list?${new URLSearchParams({
 					limit: limitFilteredConv.toString(),
 					order_by: $sortOptions.orderBy,
-					order_descending: $sortOptions.order === 'asc' ? 'false' : 'true',
+					order_ascending: $sortOptions.order === 'asc' ? 'true' : 'false',
 					parent_id: filterByAgent,
 					search_query: q
 				})}`,
 				{
-					signal: searchController.signal,
-					headers: {
-						'x-project-id': $page.params.project_id
-					}
+					signal: searchController.signal
 				}
 			);
 			currentOffsetFilteredConv = limitFilteredConv;
@@ -372,54 +364,57 @@
 			}
 		}
 	};
+
+	$effect(() => {
+		filteredConversations;
+		mapAgentColors();
+	});
 </script>
 
 <svelte:head>
 	<title>Chat Table</title>
 </svelte:head>
 
-<svelte:window bind:innerWidth={windowWidth} />
-
-<div bind:offsetWidth={componentWidth} class="@container grow flex flex-col gap-3 overflow-hidden">
+<div bind:offsetWidth={componentWidth} class="flex grow flex-col gap-3 overflow-hidden @container">
 	{#if !loadingAgentsError}
 		<div
-			class="grow grid grid-cols-2 w-[200%] @2xl:w-auto supports-[not(container-type:inline-size)]:lg:w-auto @2xl:grid-cols-[minmax(300px,3fr)_minmax(0,10fr)] supports-[not(container-type:inline-size)]:lg:grid-cols-[minmax(300px,3fr)_minmax(0,10fr)] h-1 {selectingFilterAgent
+			class="grid h-1 w-[200%] grow grid-cols-2 @2xl:w-auto @2xl:grid-cols-[minmax(300px,3fr)_minmax(0,10fr)] supports-[not(container-type:inline-size)]:lg:w-auto supports-[not(container-type:inline-size)]:lg:grid-cols-[minmax(300px,3fr)_minmax(0,10fr)] {selectingFilterAgent
 				? 'translate-x-0'
 				: '-translate-x-[50%] @2xl:translate-x-0 supports-[not(container-type:inline-size)]:lg:translate-x-0'} transition-transform"
 		>
 			<div
 				inert={(supportsContainerQuery
 					? componentWidth !== undefined && componentWidth < 672
-					: windowWidth !== undefined && windowWidth < 1024) && !selectingFilterAgent}
+					: !bigScreen.current) && !selectingFilterAgent}
 				data-testid="agents-list"
-				class="flex flex-col gap-2 my-2.5 @2xl:my-4 supports-[not(container-type:inline-size)]:lg:my-4 ml-7 mr-7 @2xl:mr-1.5 supports-[not(container-type:inline-size)]:lg:mr-1.5 px-2 py-3 min-h-0 bg-white data-dark:bg-[#303338] border border-[#E5E5E5] data-dark:border-[#484C55] rounded-lg"
+				class="my-2.5 ml-7 mr-7 flex min-h-0 flex-col gap-2 rounded-lg border border-[#E5E5E5] bg-white px-2 py-3 @2xl:my-4 @2xl:mr-1.5 data-dark:border-[#484C55] data-dark:bg-[#303338] supports-[not(container-type:inline-size)]:lg:my-4 supports-[not(container-type:inline-size)]:lg:mr-1.5"
 			>
 				<div class="flex items-center justify-between">
-					<h3 class="ml-1">Agents</h3>
+					<h3 class="ml-1 text-[#344054]">Agents</h3>
 
 					<Button
-						on:click={() => (isAddingAgent = true)}
+						onclick={() => (isAddingAgent = true)}
 						variant="ghost"
 						title="New agent"
-						class="p-0 h-7 w-7 aspect-square"
+						class="aspect-square h-7 w-7 p-0"
 					>
 						<AddIcon class="h-3.5 w-3.5 text-[#667085]" />
 					</Button>
 				</div>
 
 				<div
-					on:scroll={debounce((e) => scrollHandler(e, 'agent'), 300)}
-					class="grow flex flex-col gap-1 overflow-auto"
+					onscroll={debounce((e) => scrollHandler(e, 'agent'), 300)}
+					class="flex grow flex-col gap-1 overflow-auto"
 				>
 					{#if isLoadingCAgents}
 						{#each Array(6) as _}
 							<Skeleton
-								class="flex-[0_0_auto] flex flex-col h-9 w-full bg-black/[0.09] data-dark:bg-white/[0.1] rounded"
+								class="flex h-9 w-full flex-[0_0_auto] flex-col rounded bg-black/[0.09] data-dark:bg-white/[0.1]"
 							/>
 						{/each}
 					{:else}
 						<button
-							on:click={() => {
+							onclick={() => {
 								if (filterByAgent !== '_chat_') {
 									getConvFilterByAgent('_chat_', true);
 								} else {
@@ -427,21 +422,21 @@
 								}
 							}}
 							title="All agents"
-							class="flex-[0_0_auto] flex gap-1 px-2 py-2 w-full text-sm text-start {filterByAgent ===
+							class="flex w-full flex-[0_0_auto] gap-1 px-2 py-2 text-start text-sm {filterByAgent ===
 							'_chat_'
-								? 'text-[#0295FF] bg-[#E3F2FD]'
-								: 'text-[#667085] hover:bg-[#F2F4F7]'} rounded transition-colors"
+								? 'bg-[#FFEFF2] text-[#950048]'
+								: 'text-[#667085] hover:bg-[#F2F4F7]'} rounded-lg transition-colors"
 						>
-							<ChatAgentIcon class="flex-[0_0_auto] h-5" />
+							<!-- <ChatAgentIcon class="h-5 flex-[0_0_auto]" /> -->
 							<span class="line-clamp-1 break-all">All agents</span>
 							{#if filterByAgent === '_chat_'}
-								<CheckIcon class="flex-[0_0_auto] self-center ml-auto h-4 text-[#333]" />
+								<CheckIcon class="ml-auto h-4 flex-[0_0_auto] self-center text-[#950048]" />
 							{/if}
 						</button>
 
 						{#each $pastChatAgents as chatTable (chatTable.id)}
 							<button
-								on:click={() => {
+								onclick={() => {
 									if (filterByAgent !== chatTable.id) {
 										getConvFilterByAgent(chatTable.id, true);
 									} else {
@@ -449,21 +444,21 @@
 									}
 								}}
 								title={chatTable.id}
-								class="flex-[0_0_auto] flex gap-1 px-2 py-2 w-full text-sm {filterByAgent ===
+								class="flex w-full flex-[0_0_auto] gap-1 px-2 py-2 text-sm {filterByAgent ===
 								chatTable.id
-									? 'text-[#0295FF] bg-[#E3F2FD]'
-									: 'text-[#667085] hover:bg-[#F2F4F7]'} rounded transition-colors"
+									? 'bg-[#FFEFF2] text-[#950048]'
+									: 'text-[#667085] hover:bg-[#F2F4F7]'} rounded-lg transition-colors"
 							>
-								<ChatAgentIcon class="flex-[0_0_auto] h-5" />
+								<!-- <ChatAgentIcon class="h-5 flex-[0_0_auto]" /> -->
 								<span class="line-clamp-1 break-all">{chatTable.id}</span>
 								{#if filterByAgent === chatTable.id}
-									<CheckIcon class="self-center ml-auto h-4 text-[#333]" />
+									<CheckIcon class="ml-auto h-4 self-center text-[#950048]" />
 								{/if}
 							</button>
 						{/each}
 
 						{#if isLoadingMoreCAgents}
-							<div class="flex items-center justify-center mx-auto p-2">
+							<div class="mx-auto flex items-center justify-center p-2">
 								<LoadingSpinner class="h-5 w-5 text-secondary" />
 							</div>
 						{/if}
@@ -474,23 +469,23 @@
 			<div
 				inert={(supportsContainerQuery
 					? componentWidth !== undefined && componentWidth < 672
-					: windowWidth !== undefined && windowWidth < 1024) && selectingFilterAgent}
+					: !bigScreen.current) && selectingFilterAgent}
 				data-testid="conv-list"
-				on:scroll={debounce((e) => scrollHandler(e, 'filtered'), 300)}
-				class="flex flex-col gap-1 pl-6 @2xl:pl-0.5 supports-[not(container-type:inline-size)]:lg:pl-0.5 pr-6 py-2.5 @2xl:py-4 supports-[not(container-type:inline-size)]:lg:py-4"
+				onscroll={debounce((e) => scrollHandler(e, 'filtered'), 300)}
+				class="flex flex-col gap-1 py-2.5 pl-6 pr-6 @2xl:py-4 @2xl:pl-0.5 supports-[not(container-type:inline-size)]:lg:py-4 supports-[not(container-type:inline-size)]:lg:pl-0.5"
 			>
 				{#if filterByAgent}
-					<div class="flex items-center gap-2 mx-1">
+					<div class="mx-1 flex items-center gap-2">
 						<Button
 							variant="ghost"
-							on:click={() => (selectingFilterAgent = true)}
-							class="flex @2xl:hidden supports-[not(container-type:inline-size)]:lg:hidden relative p-0 aspect-square group"
+							onclick={() => (selectingFilterAgent = true)}
+							class="group relative flex aspect-square p-0 @2xl:hidden supports-[not(container-type:inline-size)]:lg:hidden"
 						>
 							<ArrowLeft size={20} class="text-[#344054]" />
 
 							<Tooltip
 								arrowSize={5}
-								class="left-[calc(100%+8px)] top-1/2 -translate-y-1/2 z-20 opacity-0 group-hover:opacity-100 transition-opacity after:rotate-90 after:top-1/2 after:left-0 after:-translate-x-[100%] after:-translate-y-1/2"
+								class="left-[calc(100%+8px)] top-1/2 z-20 -translate-y-1/2 opacity-0 transition-opacity after:left-0 after:top-1/2 after:-translate-x-[100%] after:-translate-y-1/2 after:rotate-90 group-hover:opacity-100"
 							>
 								Select agent
 							</Tooltip>
@@ -498,22 +493,24 @@
 
 						<a
 							title={filterByAgent}
-							href="/project/{$page.params.project_id}/chat-table/{filterByAgent}"
-							class="relative flex items-center justify-between px-2 @2xl:px-3 supports-[not(container-type:inline-size)]:lg:px-4 py-[7px] @2xl:py-3 supports-[not(container-type:inline-size)]:lg:py-3 w-full bg-white data-dark:bg-[#303338] border border-[#E5E5E5] data-dark:border-[#484C55] rounded-md @2xl:rounded-lg supports-[not(container-type:inline-size)]:lg:rounded-xl {filterByAgent ===
+							href="/project/{page.params.project_id}/chat-table/{encodeURIComponent(
+								filterByAgent
+							)}"
+							class="relative flex w-full items-center justify-between rounded-md border border-[#E5E5E5] bg-white px-2 py-[7px] @2xl:rounded-lg @2xl:px-3 @2xl:py-3 data-dark:border-[#484C55] data-dark:bg-[#303338] supports-[not(container-type:inline-size)]:lg:rounded-xl supports-[not(container-type:inline-size)]:lg:px-4 supports-[not(container-type:inline-size)]:lg:py-3 {filterByAgent ===
 							'_chat_'
 								? 'pointer-events-none'
 								: ''}"
 						>
 							<div class="flex items-center gap-2">
 								<div
-									class="flex-[0_0_auto] relative h-6 w-6 bg-[#F2F4F7] rounded-sm overflow-hidden"
+									class="relative h-6 w-6 flex-[0_0_auto] overflow-hidden rounded-sm bg-[#F2F4F7]"
 								>
 									<ChatAgentIcon
-										class="absolute -bottom-[3px] left-1/2 -translate-x-1/2 h-[26px] aspect-square text-[#475467]"
+										class="absolute -bottom-[3px] left-1/2 aspect-square h-[26px] -translate-x-1/2 text-[#475467]"
 									/>
 								</div>
 								<span
-									class="font-medium text-sm @2xl:text-base supports-[not(container-type:inline-size)]:lg:text-base text-[#344054] line-clamp-1"
+									class="line-clamp-1 text-sm font-medium text-[#344054] @2xl:text-base supports-[not(container-type:inline-size)]:lg:text-base"
 								>
 									{filterByAgent === '_chat_' ? 'All agents' : filterByAgent}
 								</span>
@@ -521,45 +518,45 @@
 
 							{#if filterByAgent && filterByAgent !== '_chat_'}
 								<DropdownMenu.Root>
-									<DropdownMenu.Trigger asChild let:builder>
-										<Button
-											builders={[builder]}
-											variant="ghost"
-											on:click={(e) => e.preventDefault()}
-											title="Agent settings"
-											class="absolute right-1.5 @2xl:right-3 supports-[not(container-type:inline-size)]:lg:right-4 flex-[0_0_auto] p-0 h-7 w-7 aspect-square"
-										>
-											<MoreVertIcon class="h-[18px] w-[18px]" />
-										</Button>
+									<DropdownMenu.Trigger>
+										{#snippet child({ props })}
+											<Button
+												{...props}
+												variant="ghost"
+												onclick={(e) => e.preventDefault()}
+												title="Agent settings"
+												class="absolute right-1.5 aspect-square h-7 w-7 flex-[0_0_auto] p-0 @2xl:right-3 supports-[not(container-type:inline-size)]:lg:right-4"
+											>
+												<MoreVertIcon class="h-[18px] w-[18px]" />
+											</Button>
+										{/snippet}
 									</DropdownMenu.Trigger>
-									<DropdownMenu.Content alignOffset={-60} transitionConfig={{ x: 5, y: -5 }}>
+									<DropdownMenu.Content align="end">
 										<DropdownMenu.Group>
 											<DropdownMenu.Item
-												on:click={() => (isEditingTableID = filterByAgent)}
+												onclick={() => (isEditingTableID = filterByAgent)}
 												class="text-[#344054] data-[highlighted]:text-[#344054]"
 											>
-												<EditIcon class="h-3.5 w-3.5 mr-2" />
+												<EditIcon class="mr-2 h-3.5 w-3.5" />
 												<span>Rename agent</span>
 											</DropdownMenu.Item>
-											<ExportTableButton
-												let:handleExportTable
-												tableId={filterByAgent}
-												tableType="chat"
-											>
-												<DropdownMenu.Item
-													on:click={handleExportTable}
-													class="text-[#344054] data-[highlighted]:text-[#344054]"
-												>
-													<ExportIcon class="h-3.5 w-3.5 mr-2" />
-													<span>Export agent</span>
-												</DropdownMenu.Item>
+											<ExportTableButton tableId={filterByAgent} tableType="chat">
+												{#snippet children({ handleExportTable })}
+													<DropdownMenu.Item
+														onclick={handleExportTable}
+														class="text-[#344054] data-[highlighted]:text-[#344054]"
+													>
+														<ExportIcon class="mr-2 h-3.5 w-3.5" />
+														<span>Export agent</span>
+													</DropdownMenu.Item>
+												{/snippet}
 											</ExportTableButton>
 											<DropdownMenu.Separator />
 											<DropdownMenu.Item
-												on:click={() => (isDeletingTable = filterByAgent)}
+												onclick={() => (isDeletingTable = filterByAgent)}
 												class="text-destructive data-[highlighted]:text-destructive"
 											>
-												<Trash_2 class="h-3.5 w-3.5 mr-2" />
+												<Trash_2 class="mr-2 h-3.5 w-3.5" />
 												<span>Delete agent</span>
 											</DropdownMenu.Item>
 										</DropdownMenu.Group>
@@ -570,126 +567,122 @@
 					</div>
 
 					<div
-						class="@container grid grid-cols-[minmax(0,auto)_min-content_min-content] h-min items-center px-1 sm:pt-1 overflow-auto sm:overflow-visible [scrollbar-gutter:stable]"
+						class="grid h-min min-w-0 grid-cols-[12rem_min-content_minmax(0,auto)_min-content_min-content] items-center gap-1 overflow-auto px-1 [scrollbar-gutter:stable] sm:overflow-visible sm:pt-1"
 					>
-						<div
-							class="col-span-2 @2xl:col-span-1 supports-[not(container-type:inline-size)]:xl:col-span-1 flex-[0_0_auto] flex items-center gap-1"
-						>
-							<Button
-								aria-label="Create table"
-								on:click={() => (isAddingConversation = true)}
-								class="flex-[0_0_auto] relative flex items-center justify-center gap-1.5 mb-[1px] px-2 xl:px-3 py-2 h-8 sm:h-9 text-xs xl:text-sm aspect-square xl:aspect-auto"
-							>
-								<AddIcon class="h-3.5 w-3.5" />
-								<span class="hidden xl:block">Create table</span>
-							</Button>
-
-							<Button
-								title="Import table"
-								on:click={(e) => e.currentTarget.querySelector('input')?.click()}
-								class="flex items-center gap-2 p-0 2xl:px-3.5 h-8 sm:h-9 text-[#475467] bg-[#F2F4F7] hover:bg-[#E4E7EC] focus-visible:bg-[#E4E7EC] active:bg-[#E4E7EC] aspect-square 2xl:aspect-auto"
-							>
-								<ImportIcon class="h-3.5" />
-
-								<span class="hidden 2xl:block">Import table</span>
-
-								<input
-									id="chat-tbl-import"
-									type="file"
-									accept=".parquet"
-									on:change|preventDefault={(e) =>
-										handleFilesUpload(e, [...(e.currentTarget.files ?? [])])}
-									multiple={false}
-									class="fixed max-h-[0] max-w-0 !p-0 !border-none overflow-hidden"
-								/>
-							</Button>
-						</div>
-
 						<SearchBar
 							bind:searchQuery
 							{isLoadingSearch}
 							debouncedSearch={debouncedSearchTables}
 							label="Search table"
 							placeholder="Search table"
-							class="place-self-end lg:place-self-center {searchQuery
-								? 'sm:w-[13.5rem]'
-								: 'sm:has-[input:focus-visible]:w-[13.5rem]'}"
+							class="w-[12rem]"
 						/>
 
-						<SorterSelect
-							bind:sortOptions={$sortOptions}
-							{sortableFields}
-							{refetchTables}
-							class="col-span-3 @2xl:col-span-1 supports-[not(container-type:inline-size)]:xl:col-span-1"
-						/>
+						<SorterSelect bind:sortOptions={$sortOptions} {sortableFields} {refetchTables} />
+
+						<div></div>
+
+						<Button
+							variant="action"
+							title="Create table"
+							onclick={() => (isAddingConversation = true)}
+							class="flex aspect-square h-8 flex-[0_0_auto] items-center justify-center gap-1.5 px-2 py-2 text-xs xs:aspect-auto xs:h-9 xs:px-3 sm:text-sm"
+						>
+							<AddIcon class="h-3.5 w-3.5" />
+							<!-- <span class="hidden xs:block">Create table</span> -->
+						</Button>
+
+						<Button
+							variant="action"
+							title="Import table"
+							onclick={(e) => e.currentTarget.querySelector('input')?.click()}
+							class="flex aspect-square h-8 w-8 flex-[0_0_auto] items-center gap-2 p-0 xs:h-9 xs:w-9 md:aspect-auto"
+						>
+							<ImportIcon class="h-3.5 w-3.5" />
+
+							<!-- <span class="hidden md:block">Import table</span> -->
+
+							<input
+								tabindex="-1"
+								id="action-tbl-import"
+								type="file"
+								accept=".parquet"
+								onchange={(e) => {
+									e.preventDefault();
+									handleFilesUpload(e, [...(e.currentTarget.files ?? [])]);
+								}}
+								multiple={false}
+								class="fixed max-h-[0] max-w-0 overflow-hidden !border-none !p-0"
+							/>
+						</Button>
 					</div>
 
 					<div
-						on:scroll={debounce((e) => scrollHandler(e, 'filtered'), 300)}
+						onscroll={debounce((e) => scrollHandler(e, 'filtered'), 300)}
 						style="grid-auto-rows: 120px;"
-						class="grow grid grid-cols-[repeat(auto-fill,_minmax(300px,_1fr))] grid-flow-row gap-3 pt-1 px-1 h-1 overflow-auto [scrollbar-gutter:stable]"
+						class="grid h-1 grow grid-flow-row grid-cols-[repeat(auto-fill,_minmax(300px,_1fr))] gap-3 overflow-auto px-1 pt-1 [scrollbar-gutter:stable]"
 					>
 						{#if isLoadingFilteredConv}
-							<div class="col-span-full flex items-center justify-center mx-auto p-4">
+							<div class="col-span-full mx-auto flex items-center justify-center p-4">
 								<LoadingSpinner class="h-5 w-5 text-secondary" />
 							</div>
 						{:else}
 							{#each filteredConversations as chatTable}
 								<a
-									href="/project/{$page.params.project_id}/chat-table/{chatTable.id}"
+									href="/project/{page.params.project_id}/chat-table/{encodeURIComponent(
+										chatTable.id
+									)}"
 									title={chatTable.id}
-									class="flex flex-col bg-white data-dark:bg-[#42464E] border border-[#E4E7EC] data-dark:border-[#333] rounded-lg hover:-translate-y-0.5 hover:shadow-float transition-[transform,box-shadow]"
+									class="flex flex-col rounded-lg border border-[#E4E7EC] bg-white transition-[transform,box-shadow] hover:-translate-y-0.5 hover:shadow-float data-dark:border-[#333] data-dark:bg-[#42464E]"
 								>
-									<div
-										class="grow flex items-start justify-between p-3 border-b border-[#E4E7EC] data-dark:border-[#333]"
-									>
+									<div class="flex w-full grow items-start justify-between p-3">
 										<div class="flex items-start gap-1.5">
-											<ChatTableIcon class="flex-[0_0_auto] h-5 w-5 text-[#475467]" />
-											<span class="text-sm text-[#344054] break-all line-clamp-2">
+											<ChatTableIcon class="h-5 w-5 flex-[0_0_auto] text-[#475467]" />
+											<span class="line-clamp-2 break-all text-sm text-[#344054]">
 												{chatTable.id}
 											</span>
 										</div>
 
 										<DropdownMenu.Root>
-											<DropdownMenu.Trigger asChild let:builder>
-												<Button
-													builders={[builder]}
-													variant="ghost"
-													on:click={(e) => e.preventDefault()}
-													title="Table settings"
-													class="flex-[0_0_auto] p-0 h-7 w-7 aspect-square translate-x-1.5 -translate-y-1.5"
-												>
-													<MoreVertIcon class="h-[18px] w-[18px]" />
-												</Button>
+											<DropdownMenu.Trigger>
+												{#snippet child({ props })}
+													<Button
+														{...props}
+														variant="ghost"
+														onclick={(e) => e.preventDefault()}
+														title="Table settings"
+														class="aspect-square h-7 w-7 flex-[0_0_auto] -translate-y-1.5 translate-x-1.5 p-0"
+													>
+														<MoreVertIcon class="h-[18px] w-[18px]" />
+													</Button>
+												{/snippet}
 											</DropdownMenu.Trigger>
-											<DropdownMenu.Content alignOffset={-50} transitionConfig={{ x: 5, y: -5 }}>
+											<DropdownMenu.Content align="end">
 												<DropdownMenu.Group>
 													<DropdownMenu.Item
-														on:click={() => (isEditingTableID = chatTable.id)}
+														onclick={() => (isEditingTableID = chatTable.id)}
 														class="text-[#344054] data-[highlighted]:text-[#344054]"
 													>
-														<EditIcon class="h-3.5 w-3.5 mr-2" />
+														<EditIcon class="mr-2 h-3.5 w-3.5" />
 														<span>Rename table</span>
 													</DropdownMenu.Item>
-													<ExportTableButton
-														let:handleExportTable
-														tableId={chatTable.id}
-														tableType="chat"
-													>
-														<DropdownMenu.Item
-															on:click={handleExportTable}
-															class="text-[#344054] data-[highlighted]:text-[#344054]"
-														>
-															<ExportIcon class="h-3.5 w-3.5 mr-2" />
-															<span>Export table</span>
-														</DropdownMenu.Item>
+													<ExportTableButton tableId={chatTable.id} tableType="chat">
+														{#snippet children({ handleExportTable })}
+															<DropdownMenu.Item
+																onclick={handleExportTable}
+																class="text-[#344054] data-[highlighted]:text-[#344054]"
+															>
+																<ExportIcon class="mr-2 h-3.5 w-3.5" />
+																<span>Export table</span>
+															</DropdownMenu.Item>
+														{/snippet}
 													</ExportTableButton>
 													<DropdownMenu.Separator />
 													<DropdownMenu.Item
-														on:click={() => (isDeletingTable = chatTable.id)}
+														onclick={() => (isDeletingTable = chatTable.id)}
 														class="text-destructive data-[highlighted]:text-destructive"
 													>
-														<Trash_2 class="h-3.5 w-3.5 mr-2" />
+														<Trash_2 class="mr-2 h-3.5 w-3.5" />
 														<span>Delete table</span>
 													</DropdownMenu.Item>
 												</DropdownMenu.Group>
@@ -704,7 +697,7 @@
 												day: 'numeric',
 												year: 'numeric'
 											})}
-											class="font-medium text-xs text-[#98A2B3] data-dark:text-[#C9C9C9] line-clamp-1"
+											class="line-clamp-1 text-xs font-medium text-[#98A2B3] data-dark:text-[#C9C9C9]"
 										>
 											Last updated
 											<span class="text-[#475467]">
@@ -722,7 +715,7 @@
 												style="background-color: {mappedColors
 													? mappedColors.bg
 													: '#E3F2FD'}; color: {mappedColors ? mappedColors.text : '#0295FF'};"
-												class="w-min px-1 py-0.5 text-xs font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
+												class="w-min select-none whitespace-nowrap rounded-[0.1875rem] px-1 py-0.5 text-xs font-medium"
 											>
 												{chatTable.parent_id}
 											</span>
@@ -732,31 +725,29 @@
 							{/each}
 
 							{#if isLoadingMoreFilteredConv}
-								<div class="flex items-center justify-center mx-auto p-4">
+								<div class="mx-auto flex items-center justify-center p-4">
 									<LoadingSpinner class="h-5 w-5 text-secondary" />
 								</div>
 							{/if}
 						{/if}
 					</div>
 				{:else}
-					<span class="self-center my-auto font-medium text-[#999]">
+					<span class="my-auto self-center font-medium text-[#999]">
 						Select agent to filter conversations
 					</span>
 				{/if}
 			</div>
 		</div>
-	{:else if loadingAgentsError.status === 404 && loadingAgentsError.org_id && userData?.member_of.find((org) => org.organization_id === loadingAgentsError?.org_id)}
-		{@const projectOrg = userData?.member_of.find(
-			(org) => org.organization_id === loadingAgentsError?.org_id
-		)}
+	{:else if loadingAgentsError.status === 404 && loadingAgentsError.org_id && user?.org_memberships?.find((org) => org.organization_id === loadingAgentsError?.org_id)}
+		{@const projectOrg = user?.organizations.find((org) => org.id === loadingAgentsError?.org_id)}
 		<FoundProjectOrgSwitcher {projectOrg} />
 	{:else}
-		<div class="flex items-center justify-center mx-4 my-0 h-full">
+		<div class="mx-4 my-0 flex h-full items-center justify-center">
 			<span class="relative -top-[0.05rem] text-3xl font-extralight">
 				{loadingAgentsError.status}
 			</span>
 			<div
-				class="flex items-center ml-4 pl-4 min-h-10 border-l border-[#ccc] data-dark:border-[#666]"
+				class="ml-4 flex min-h-10 items-center border-l border-[#ccc] pl-4 data-dark:border-[#666]"
 			>
 				<h1>{loadingAgentsError.message}</h1>
 			</div>

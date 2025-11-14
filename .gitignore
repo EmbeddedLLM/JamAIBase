@@ -1,3 +1,18 @@
+# OS
+thumbs.db
+.DS_Store
+
+# Internal references, dependencies, temporary folders & files
+.env
+**/__ref__/
+*.log
+*.lock
+*.db
+*.parquet
+
+# Docker
+/docker_data/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -6,38 +21,19 @@ __pycache__/
 .pytest_cache
 .ipynb_checkpoints
 venv/
-*.npy
-*.geojson
-*.laz
-*.db
-*.parquet
 
-# Internal references, dependencies, temporary folders & files
-/db*/
-file/
-/infinity_cache/
-**/__ref__/
-/dependencies/
-logs/
-*.log
-/datasets/
-/milvus_data/
-/vespa*/
-*.swp
-.env
-*.lock
+# pip
+**/build/
 
 # pytest-cov
+**/coverage.xml
 **/.coverage*
 /junit
 /htmlcov
 /coverage.xml
 
-# jest-cov
-**/coverage/*
-
-# pip
-**/build/
+# ruff
+.ruff_cache/
 
 # OS
 thumbs.db

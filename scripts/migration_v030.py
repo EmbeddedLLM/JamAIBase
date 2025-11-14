@@ -10,7 +10,7 @@ from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 import owl
-from jamaibase.protocol import GEN_CONFIG_VAR_PATTERN, ColumnSchema, LLMGenConfig
+from jamaibase.types import GEN_CONFIG_VAR_PATTERN, ColumnSchema, LLMGenConfig
 
 
 class EnvConfig(BaseSettings):
@@ -53,7 +53,7 @@ def restore(db_dir: str):
                     )
                 )
                 src_path = join(proj_dir, bak_files[0])
-                dst_path = join(proj_dir, f'{bak_files[0].split("_")[0]}.db')
+                dst_path = join(proj_dir, f"{bak_files[0].split('_')[0]}.db")
                 os.remove(dst_path)
                 copy2(src_path, dst_path)
 
@@ -121,7 +121,7 @@ def update_gen_table(db_path: str):
             cols = orjson.loads(record[1])
 
             updated_cols = []
-            print(f"└─ (Table {i+1:,d}/{len(records):,d}) Checking table: {table_id}")
+            print(f"└─ (Table {i + 1:,d}/{len(records):,d}) Checking table: {table_id}")
             for col in cols:
                 col = ColumnSchema.model_validate(col)
                 if db_path.endswith("chat.db") and col.id.lower() == "ai":
@@ -166,7 +166,7 @@ if __name__ == "__main__":
     os.makedirs(backup_dir, exist_ok=False)
 
     for j, db_file in enumerate(sqlite_files):
-        print(f"(DB {j+1:,d}/{len(sqlite_files):,d}): Processing: {db_file}")
+        print(f"(DB {j + 1:,d}/{len(sqlite_files):,d}): Processing: {db_file}")
         backup_db(db_file, backup_dir)
         add_table_meta_columns(db_file)
         update_gen_table(db_file)

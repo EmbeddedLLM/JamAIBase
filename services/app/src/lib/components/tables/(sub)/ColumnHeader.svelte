@@ -1,15 +1,17 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
+	import { tick } from 'svelte';
 	import toUpper from 'lodash/toUpper';
 	import GripVertical from 'lucide-svelte/icons/grip-vertical';
-	import { page } from '$app/stores';
-	import { genTableRows, tableState } from '$lib/components/tables/tablesStore';
+	import { page } from '$app/state';
+	import { getTableState, getTableRowsState } from '$lib/components/tables/tablesState.svelte';
 	import { db } from '$lib/db';
 	import { cn } from '$lib/utils';
-	import { tableStaticCols } from '$lib/constants';
+	import { columnIDPattern, tableStaticCols } from '$lib/constants';
 	import logger from '$lib/logger';
 	import type { GenTable, GenTableCol } from '$lib/types';
 
+	import PlaceholderNewCol from './PlaceholderNewCol.svelte';
 	import { CustomToastDesc, toast } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
 	import { ColumnDropdown } from '$lib/components/tables/(sub)';
@@ -17,22 +19,30 @@
 	import MultiturnChatIcon from '$lib/icons/MultiturnChatIcon.svelte';
 	import MoreVertIcon from '$lib/icons/MoreVertIcon.svelte';
 
-	export let tableType: 'action' | 'knowledge' | 'chat';
-	export let tableData: GenTable;
-	export let refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
-	export let readonly: boolean;
+	const tableState = getTableState();
+	const tableRowsState = getTableRowsState();
+
+	interface Props {
+		tableType: 'action' | 'knowledge' | 'chat';
+		tableData: GenTable;
+		refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
+		readonly: boolean;
+	}
+
+	let { tableType, tableData = $bindable(), refetchTable, readonly }: Props = $props();
 
 	//? Column header click handler
 	let dblClickTimer: ReturnType<typeof setTimeout> | null = null;
 	function handleColumnHeaderClick(column: GenTableCol) {
 		if (!tableData) return;
-		if ($tableState.renamingCol) return;
+		if (tableState.renamingCol) return;
 
 		if (dblClickTimer) {
 			clearTimeout(dblClickTimer);
 			dblClickTimer = null;
 			if (!readonly && !tableStaticCols[tableType].includes(column.id)) {
 				tableState.setRenamingCol(column.id);
+				tick().then(() => document.getElementById('column-id-edit')?.focus());
 			}
 		} else {
 			dblClickTimer = setTimeout(() => {
@@ -49,21 +59,27 @@
 			currentTarget: EventTarget & HTMLInputElement;
 		}
 	) {
-		if (!tableData || !$genTableRows) return;
-		if (!$tableState.renamingCol) return;
+		if (!tableData || !tableRowsState.rows) return;
+		if (!tableState.renamingCol) return;
+
+		if (!columnIDPattern.test(e.currentTarget.value))
+			return toast.error(
+				'Column name must have at least 1 character and up to 46 characters, start with an alphabet or number, and end with an alphabet or number or these symbols: .?!()-. Characters in the middle can include space and these symbols: .?!@#$%^&*_()-.',
+				{ id: 'column-name-invalid' }
+			);
 
 		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/columns/rename`,
+			`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/${tableType}/columns/rename`,
 			{
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
-					'x-project-id': $page.params.project_id
+					'x-project-id': page.params.project_id
 				},
 				body: JSON.stringify({
-					table_id: $page.params.table_id,
+					table_id: page.params.table_id,
 					column_map: {
-						[$tableState.renamingCol]: e.currentTarget.value
+						[tableState.renamingCol]: e.currentTarget.value
 					}
 				})
 			}
@@ -74,7 +90,7 @@
 			tableData = {
 				...tableData,
 				cols: tableData.cols.map((col) =>
-					col.id === $tableState.renamingCol ? { ...col, id: e.currentTarget.value } : col
+					col.id === tableState.renamingCol ? { ...col, id: e.currentTarget.value } : col
 				)
 			};
 			tableState.setRenamingCol(null);
@@ -113,7 +129,7 @@
 	}
 
 	function handleColResize(e: MouseEvent) {
-		if ($tableState.resizingCol) {
+		if (tableState.resizingCol) {
 			const clientX = e.clientX;
 			const tableGrid = document
 				.querySelector('[data-testid="table-area"]')
@@ -125,17 +141,16 @@
 					parseFloat(getComputedStyle(tableGrid).paddingLeft);
 				const pageScrollX = tableGrid.scrollLeft;
 				const column = document.querySelector(
-					`[role="columnheader"][title="${$tableState.resizingCol.columnID}"]`
+					`[role="columnheader"][title="${tableState.resizingCol.columnID}"]`
 				);
 
 				const columnLeftX =
 					(column?.getBoundingClientRect().left ?? 0) + pageScrollX - tableOffsetLeft;
-				const columnRightX =
-					clientX - $tableState.resizingCol.diffX + pageScrollX - tableOffsetLeft;
+				const columnRightX = clientX - tableState.resizingCol.diffX + pageScrollX - tableOffsetLeft;
 				const columnWidth = columnRightX - columnLeftX;
 
 				tableState.setColSize(
-					$tableState.resizingCol.columnID,
+					tableState.resizingCol.columnID,
 					columnWidth < 100 ? 100 : columnWidth
 				);
 				tableState.setTemplateCols(tableData.cols);
@@ -144,44 +159,46 @@
 	}
 
 	//? Reorder columns
-	let isReorderLoading = false;
+	let isReorderLoading = $state(false);
 	let dragMouseCoords: {
 		x: number;
 		y: number;
 		startX: number;
 		startY: number;
 		width: number;
-	} | null = null;
-	let draggingColumn: GenTable['cols'][number] | null = null;
-	let draggingColumnIndex: number | null = null;
-	let hoveredColumnIndex: number | null = null;
+	} | null = $state(null);
+	let draggingColumn: GenTable['cols'][number] | null = $state(null);
+	let draggingColumnIndex: number | null = $state(null);
+	let hoveredColumnIndex: number | null = $state(null);
 
-	$: if (
-		tableData &&
-		draggingColumnIndex != null &&
-		hoveredColumnIndex != null &&
-		draggingColumnIndex != hoveredColumnIndex
-	) {
-		[tableData.cols[draggingColumnIndex], tableData.cols[hoveredColumnIndex]] = [
-			tableData.cols[hoveredColumnIndex],
-			tableData.cols[draggingColumnIndex]
-		];
+	$effect(() => {
+		if (
+			tableData &&
+			draggingColumnIndex != null &&
+			hoveredColumnIndex != null &&
+			draggingColumnIndex != hoveredColumnIndex
+		) {
+			[tableData.cols[draggingColumnIndex], tableData.cols[hoveredColumnIndex]] = [
+				tableData.cols[hoveredColumnIndex],
+				tableData.cols[draggingColumnIndex]
+			];
 
-		draggingColumnIndex = hoveredColumnIndex;
-	}
+			draggingColumnIndex = hoveredColumnIndex;
+		}
+	});
 
 	async function handleSaveOrder() {
-		if (!tableData || !$genTableRows) return;
+		if (!tableData || !tableRowsState.rows) return;
 		if (isReorderLoading) return;
 		isReorderLoading = true;
 
 		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/columns/reorder`,
+			`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/${tableType}/columns/reorder`,
 			{
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
-					'x-project-id': $page.params.project_id
+					'x-project-id': page.params.project_id
 				},
 				body: JSON.stringify({
 					table_id: tableData.id,
@@ -203,7 +220,7 @@
 					requestID: responseBody.request_id
 				}
 			});
-			tableData = (await $page.data.table)?.data;
+			tableData = (await page.data.table)?.data;
 		} else {
 			refetchTable();
 		}
@@ -213,14 +230,14 @@
 </script>
 
 <svelte:document
-	on:mousemove={handleColResize}
-	on:mouseup={() => {
-		if ($tableState.resizingCol) {
+	onmousemove={handleColResize}
+	onmouseup={() => {
+		if (tableState.resizingCol) {
 			db[`${tableType}_table`].put({
 				id: tableData.id,
-				columns: $tableState.colSizes
+				columns: $state.snapshot(tableState.colSizes)
 			});
-			$tableState.resizingCol = null;
+			tableState.resizingCol = null;
 		}
 	}}
 />
@@ -228,42 +245,44 @@
 {#each tableData.cols as column, index (column.id)}
 	{@const colType = !column.gen_config ? 'input' : 'output'}
 	{@const isCustomCol = column.id !== 'ID' && column.id !== 'Updated at'}
-	<!-- svelte-ignore a11y-interactive-supports-focus -->
-	<!-- svelte-ignore a11y-click-events-have-key-events -->
+	<!-- svelte-ignore a11y_interactive_supports_focus -->
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div
 		role="columnheader"
 		title={column.id}
-		on:click={() => handleColumnHeaderClick(column)}
-		on:dragover={(e) => {
+		onclick={() => handleColumnHeaderClick(column)}
+		ondragover={(e) => {
 			if (isCustomCol) {
 				e.preventDefault();
 				hoveredColumnIndex = index;
 			}
 		}}
 		class={cn(
-			'relative [&>*]:z-[-5] flex items-center gap-1 [&:not(:last-child)]:border-r border-[#E4E7EC] data-dark:border-[#333] cursor-default',
+			'relative flex cursor-default items-center gap-1 border-[#E4E7EC] data-dark:border-[#333] [&:not(:last-child)]:border-r [&>*]:z-[-5]',
 			isCustomCol && !readonly ? 'px-1' : 'pl-2 pr-1',
-			$tableState.columnSettings.column?.id == column.id &&
-				$tableState.columnSettings.isOpen &&
+			tableState.columnSettings.column?.id == column.id &&
+				tableState.columnSettings.isOpen &&
 				'bg-[#30A8FF33]',
-			draggingColumn?.id == column.id && 'opacity-0'
+			draggingColumn?.id == column.id && 'opacity-0',
+			tableState.renamingCol && 'pointer-events-none'
 		)}
 	>
 		{#if isCustomCol}
 			<button
 				tabindex={-1}
 				aria-label="Resize column"
-				on:click|stopPropagation
-				on:dblclick|stopPropagation={() => {
-					$tableState = { ...$tableState, colSizes: {} };
+				onclick={(e) => e.stopPropagation()}
+				ondblclick={(e) => {
+					e.stopPropagation();
+					tableState.colSizes = {};
 					tableState.setTemplateCols(tableData.cols);
 					db[`${tableType}_table`].put({
 						id: tableData.id,
 						columns: {}
 					});
 				}}
-				on:mousedown={(e) => startColResize(e, column.id)}
-				class="absolute !z-10 -right-[3px] top-0 bottom-0 w-[6px] hover:bg-[#F2F4F7] transition-colors cursor-ew-resize"
+				onmousedown={(e) => startColResize(e, column.id)}
+				class="absolute -right-[3px] bottom-0 top-0 !z-10 w-[6px] cursor-ew-resize transition-colors hover:bg-[#F2F4F7]"
 			></button>
 		{/if}
 
@@ -271,8 +290,8 @@
 			<button
 				title="Drag to reorder columns"
 				disabled={isReorderLoading}
-				on:click|stopPropagation
-				on:dragstart={(e) => {
+				onclick={(e) => e.stopPropagation()}
+				ondragstart={(e) => {
 					//@ts-ignore
 					let rect = e.target.getBoundingClientRect();
 					dragMouseCoords = {
@@ -286,12 +305,12 @@
 					draggingColumn = column;
 					draggingColumnIndex = index;
 				}}
-				on:drag={(e) => {
+				ondrag={(e) => {
 					if (e.clientX === 0 && e.clientY === 0) return;
 					//@ts-ignore
 					dragMouseCoords = { ...dragMouseCoords, x: e.clientX, y: e.clientY };
 				}}
-				on:dragend={() => {
+				ondragend={() => {
 					dragMouseCoords = null;
 					draggingColumn = null;
 					draggingColumnIndex = null;
@@ -306,42 +325,42 @@
 		{/if}
 
 		{#if column.id !== 'ID' && column.id !== 'Updated at'}
-			{#if !$tableState.colSizes[column.id] || $tableState.colSizes[column.id] >= 150}
+			{#if !tableState.colSizes[column.id] || tableState.colSizes[column.id] >= 150}
 				<span
-					style="background-color: {colType === 'input'
-						? '#E9EDFA'
-						: '#FFEAD5'}; color: {colType === 'input' ? '#6686E7' : '#FD853A'};"
-					class="w-min mr-1 px-0.5 py-1 text-xxs sm:text-xs whitespace-nowrap rounded-[0.1875rem] select-none flex items-center"
+					style="background-color: {colType === 'input' ? '#7995E9' : '#FD853A'};"
+					class:pr-1={column.gen_config?.object !== 'gen_config.llm' ||
+						!column.gen_config.multi_turn}
+					class="mr-1 flex w-min select-none items-center whitespace-nowrap rounded-lg px-0.5 py-1 text-xxs text-white sm:text-xs"
 				>
-					<span class="capitalize font-medium px-1">
+					<span class="px-1 font-medium capitalize">
 						{colType}
 					</span>
-					{#if !$tableState.colSizes[column.id] || $tableState.colSizes[column.id] >= 220}
+					{#if !tableState.colSizes[column.id] || tableState.colSizes[column.id] >= 220}
 						<span
-							class="bg-white w-min px-1 font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
+							style="color: {colType === 'input' ? '#7995E9' : '#FD853A'};"
+							class="w-min select-none whitespace-nowrap rounded-md bg-white px-1 font-medium"
 						>
 							{column.dtype}
 						</span>
 					{/if}
 
 					{#if column.gen_config?.object === 'gen_config.llm' && column.gen_config.multi_turn}
-						<hr class="ml-1 h-3 border-l border-[#FD853A]" />
+						<hr class="ml-1 h-3 border-l border-white" />
 						<div class="relative h-4 w-[18px]">
-							<MultiturnChatIcon class="absolute h-[18px] -translate-y-px" />
+							<MultiturnChatIcon class="absolute h-[18px] -translate-y-px text-white" />
 						</div>
 					{/if}
 				</span>
 			{/if}
 		{/if}
 
-		{#if $tableState.renamingCol === column.id}
-			<!-- svelte-ignore a11y-autofocus -->
+		{#if tableState.renamingCol === column.id}
+			<!-- svelte-ignore a11y_autofocus -->
 			<input
 				type="text"
 				id="column-id-edit"
-				autofocus
 				value={column.id}
-				on:keydown={(e) => {
+				onkeydown={(e) => {
 					if (e.key === 'Enter') {
 						e.preventDefault();
 
@@ -350,8 +369,8 @@
 						tableState.setRenamingCol(null);
 					}
 				}}
-				on:blur={() => setTimeout(() => tableState.setRenamingCol(null), 100)}
-				class="w-full bg-transparent border-0 outline outline-1 outline-[#4169e1] data-dark:outline-[#5b7ee5] rounded-[2px]"
+				onblur={() => setTimeout(() => tableState.setRenamingCol(null), 100)}
+				class="pointer-events-auto w-full rounded-[2px] border-0 bg-transparent outline outline-1 outline-[#4169e1] data-dark:outline-[#5b7ee5]"
 			/>
 		{:else}
 			<span
@@ -369,36 +388,41 @@
 	</div>
 {/each}
 
-{#if dragMouseCoords && draggingColumn}
-	{@const colType = !draggingColumn.gen_config /* || Object.keys(column.gen_config).length === 0 */
-		? 'input'
-		: 'output'}
-	<Portal>
+{#if tableState.addingCol}
+	<PlaceholderNewCol {tableType} {tableData} {refetchTable} />
+{/if}
+
+<Portal>
+	{#if dragMouseCoords && draggingColumn}
+		{@const colType =
+			!draggingColumn.gen_config /* || Object.keys(column.gen_config).length === 0 */
+				? 'input'
+				: 'output'}
 		<div
 			data-testid="dragged-column"
 			inert
 			style="top: {dragMouseCoords.y - dragMouseCoords.startY - 15}px; left: {dragMouseCoords.x -
 				dragMouseCoords.startX -
 				15}px; width: {dragMouseCoords.width}px;"
-			class="fixed z-[9999] flex items-center gap-1 px-1 h-[36px] bg-white data-dark:bg-[#42464E] border border-[#E4E7EC] data-dark:border-[#333] pointer-events-none"
+			class="pointer-events-none fixed z-[9999] flex h-[36px] items-center gap-1 border border-[#E4E7EC] bg-white px-1 data-dark:border-[#333] data-dark:bg-[#42464E]"
 		>
 			<button>
 				<GripVertical size={18} />
 			</button>
 
-			{#if !$tableState.colSizes[draggingColumn.id] || $tableState.colSizes[draggingColumn.id] >= 150}
+			{#if !tableState.colSizes[draggingColumn.id] || tableState.colSizes[draggingColumn.id] >= 150}
 				<span
 					style="background-color: {colType === 'input'
 						? '#E9EDFA'
 						: '#FFEAD5'}; color: {colType === 'input' ? '#6686E7' : '#FD853A'};"
-					class="w-min mr-1 px-0.5 py-1 text-xxs sm:text-xs whitespace-nowrap rounded-[0.1875rem] select-none flex items-center"
+					class="mr-1 flex w-min select-none items-center whitespace-nowrap rounded-[0.1875rem] px-0.5 py-1 text-xxs sm:text-xs"
 				>
-					<span class="capitalize font-medium px-1">
+					<span class="px-1 font-medium capitalize">
 						{colType}
 					</span>
-					{#if !$tableState.colSizes[draggingColumn.id] || $tableState.colSizes[draggingColumn.id] >= 220}
+					{#if !tableState.colSizes[draggingColumn.id] || tableState.colSizes[draggingColumn.id] >= 220}
 						<span
-							class="bg-white w-min px-1 font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
+							class="w-min select-none whitespace-nowrap rounded-[0.1875rem] bg-white px-1 font-medium"
 						>
 							{draggingColumn.dtype}
 						</span>
@@ -413,13 +437,13 @@
 				</span>
 			{/if}
 
-			<span class="font-medium text-xs sm:text-sm text-[#666] data-dark:text-white line-clamp-1">
+			<span class="line-clamp-1 text-xs font-medium text-[#666] data-dark:text-white sm:text-sm">
 				{draggingColumn.id}
 			</span>
 
-			<Button variant="ghost" title="Column settings" class="ml-auto p-0 h-7 w-7 aspect-square">
+			<Button variant="ghost" title="Column settings" class="ml-auto aspect-square h-7 w-7 p-0">
 				<MoreVertIcon class="h-[18px] w-[18px]" />
 			</Button>
 		</div>
-	</Portal>
-{/if}
+	{/if}
+</Portal>

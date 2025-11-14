@@ -1,0 +1,6 @@
+include:
+  - path:
+      - compose.base.yml
+      - override.dev.yml
+  - path:
+      - compose.test-llm.yml

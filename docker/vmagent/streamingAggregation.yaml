@@ -1,0 +1,73 @@
+- match: "flower.task.runtime.seconds_bucket"
+  interval: 1m
+  without: [service.instance.id, worker]
+  outputs: [total]
+  keep_metric_names: true
+
+- match: '{__name__=~"flower.task.runtime.seconds_(count|sum)"}'
+  interval: 1m
+  without: [service.instance.id, worker]
+  outputs: [total]
+  keep_metric_names: true
+
+- match: '{__name__=~"http.+_bucket"}'
+  interval: 1m
+  without: [service.instance.id, http.server_name, http.host]
+  outputs: [total]
+  keep_metric_names: true
+
+- match: '{__name__=~"http.+_(count|sum)"}'
+  interval: 1m
+  without: [service.instance.id, http.server_name, http.host]
+  outputs: [total]
+  keep_metric_names: true
+
+- match: "db.client.connections.usage"
+  interval: 1m
+  without: [service.instance.id]
+  outputs: [total]
+  keep_metric_names: true
+
+- match: "http.server.active_requests"
+  interval: 1m
+  without: [service.instance.id, http.server_name, http.host]
+  outputs: [total]
+  keep_metric_names: true
+
+- match:
+    - "request_count"
+  interval: 1m
+  without: [service.instance.id]
+  outputs: [total]
+  keep_metric_names: true
+# - match: "storage_usage"
+#   interval: 5m
+#   without: [service.instance.id]
+#   outputs: [max]
+#   flush_on_shutdown: true
+#   keep_metric_names: true
+
+# - match:
+#     - "bandwidth_usage"
+#   interval: 5m
+#   without: [service.instance.id]
+#   outputs: [total]
+#   flush_on_shutdown: true
+#   keep_metric_names: true
+
+# - match:
+#     - "llm_token_usage"
+#     - "embedding_token_usage"
+#     - "reranker_search_usage"
+#     - "spent"
+#   interval: 1m
+#   without: [service.instance.id]
+#   outputs: [total]
+#   flush_on_shutdown: true
+#   keep_metric_names: true
+# output_relabel_configs:
+#   - action: replace
+#     source_labels: [__name__]
+#     regex: "^([^:]+):.*$"
+#     target_label: __name__
+#     replacement: "${1}_agg"

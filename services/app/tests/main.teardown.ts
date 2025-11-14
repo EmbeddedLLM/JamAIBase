@@ -1,39 +1,46 @@
+import type { User } from '$lib/types';
+import { test as teardown } from '@playwright/test';
 import 'dotenv/config';
 import fs from 'fs';
-import { test as teardown } from '@playwright/test';
-import type { UserRead } from '$lib/types';
 
-const { JAMAI_URL, JAMAI_SERVICE_KEY, TEST_ACC_USERID } = process.env;
+const { OWL_URL, OWL_SERVICE_KEY, TEST_USER_ID } = process.env;
 
 teardown('delete setup', async () => {
 	const headers = {
-		Authorization: `Bearer ${JAMAI_SERVICE_KEY}`
+		Authorization: `Bearer ${OWL_SERVICE_KEY}`
 	};
 
-	const userInfoRes = await fetch(`${JAMAI_URL}/api/admin/backend/v1/users/${TEST_ACC_USERID}`, {
-		headers
-	});
-	const userInfoBody = await userInfoRes.json();
-	if (!userInfoRes.ok) throw new Error(userInfoBody);
-
-	const testOrgs = (userInfoBody as UserRead).member_of.filter((org) =>
-		/test-org/.test(org.organization_name)
+	const userInfoRes = await fetch(
+		`${OWL_URL}/api/v2/users?${new URLSearchParams([['user_id', TEST_USER_ID!]])}`,
+		{
+			headers: {
+				...headers,
+				'x-user-id': process.env.TEST_USER_ID!
+			}
+		}
 	);
+	const userInfoBody = await userInfoRes.json();
+	if (!userInfoRes.ok) throw JSON.stringify(userInfoBody);
+
+	const testOrgs = (userInfoBody as User).organizations.filter((org) => /test-org/.test(org.name));
 
 	if (testOrgs.length === 0) {
 		console.warn('Playwright test organization not found, skipping delete step');
 	} else {
 		for (const testOrg of testOrgs) {
 			const deleteOrgRes = await fetch(
-				`${JAMAI_URL}/api/admin/backend/v1/organizations/${testOrg?.organization_id}`,
+				`${OWL_URL}/api/v2/organizations?${new URLSearchParams([['organization_id', testOrg.id]])}`,
 				{
 					method: 'DELETE',
-					headers
+					headers: {
+						...headers,
+						'x-user-id': process.env.TEST_USER_ID!
+					}
 				}
 			);
 			if (!deleteOrgRes.ok) {
 				const deleteOrgBody = await deleteOrgRes.json();
-				throw new Error(deleteOrgBody);
+				throw JSON.stringify(deleteOrgBody);
 			}
 		}
 	}

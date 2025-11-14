@@ -26,12 +26,10 @@ export class Templates extends Base {
     public async listTemplates(params: IListTemplatesRequest = {}): Promise<IListTemplatesResponse> {
         const parsedParams = ListTemplatesRequestSchema.parse(params);
 
-        let getURL = `/api/public/v1/templates`;
+        let getURL = `/api/v2/templates/list`;
 
         const response = await this.httpClient.get(getURL, {
-            params: {
-                search_query: encodeURIComponent(parsedParams.search_query)
-            }
+            params: parsedParams
         });
 
         return this.handleResponse(response, ListTemplatesResponseSchema);
@@ -39,38 +37,40 @@ export class Templates extends Base {
 
     public async getTemplate(params: IGetTemplateRequest): Promise<IGetTemplateResponse> {
         const parsedParams = GetTemplateRequestSchema.parse(params);
-        let getURL = `/api/public/v1/templates/${parsedParams.template_id}`;
+        let getURL = `/api/v2/templates`;
 
-        const response = await this.httpClient.get(getURL);
+        const response = await this.httpClient.get(getURL, {
+            params: parsedParams
+        });
 
         return this.handleResponse(response, GetTemplateResponseSchema);
     }
 
     public async listTables(params: IListTablesRequest): Promise<IListTablesResponse> {
         const parsedParams = ListTablesRequestSchema.parse(params);
-        let getURL = `/api/public/v1/templates/${parsedParams.template_id}/gen_tables/${parsedParams.table_type}`;
+        let getURL = `/api/v2/templates/gen_tables/${parsedParams.table_type}/list`;
 
-        const response = await this.httpClient.get(getURL);
+        const response = await this.httpClient.get(getURL, {
+            params: parsedParams
+        });
 
         return this.handleResponse(response, ListTablesResponseSchema);
     }
 
     public async getTable(params: IGetTableRequest): Promise<IGetTableResponse> {
         const parsedParams = GetTableRequestSchema.parse(params);
-        let getURL = `/api/public/v1/templates/${parsedParams.template_id}/gen_tables/${parsedParams.table_type}/${parsedParams.table_id}`;
+        let getURL = `/api/v2/templates/gen_tables/${parsedParams.table_type}`;
 
-        const response = await this.httpClient.get(getURL);
+        const response = await this.httpClient.get(getURL, {
+            params: parsedParams
+        });
 
         return this.handleResponse(response, GetTableResponseSchema);
     }
 
     public async listTableRows(params: IListTableRowsRequest): Promise<IListTableRowsResponse> {
         const parsedParams = ListTableRowsRequestSchema.parse(params);
-        let getURL = `/api/public/v1/templates/${parsedParams.template_id}/gen_tables/${parsedParams.table_type}/${parsedParams.table_id}/rows`;
-
-        delete (parsedParams as any).template_id;
-        delete (parsedParams as any).table_type;
-        delete (parsedParams as any).table_id;
+        let getURL = `/api/v2/templates/gen_tables/${parsedParams.table_type}/rows/list`;
 
         const response = await this.httpClient.get(getURL, {
             params: parsedParams

@@ -1,20 +1,32 @@
 <script lang="ts">
-	let className: string | undefined | null = undefined;
-	export { className as class };
+	
 
-	export let placeholder: string | undefined = undefined;
-	export let id: string | undefined = undefined;
-	export let disabled: boolean = false;
-	export let value: string | number = '';
+	interface Props {
+		class?: string | undefined | null;
+		placeholder?: string | undefined;
+		id?: string | undefined;
+		disabled?: boolean;
+		value?: string | number;
+		[key: string]: any
+	}
+
+	let {
+		class: className = undefined,
+		placeholder = undefined,
+		id = undefined,
+		disabled = false,
+		value = $bindable(''),
+		...rest
+	}: Props = $props();
 </script>
 
 <div class="flex flex-col">
-	<input {...$$restProps} {placeholder} {disabled} {id} bind:value type="range" class={className} />
+	<input {...rest} {placeholder} {disabled} {id} bind:value type="range" class={className} />
 
-	{#if $$restProps.min && $$restProps.max}
+	{#if rest.min && rest.max}
 		<div class="flex justify-between text-xs text-gray-400">
-			<span>{$$restProps.min}</span>
-			<span>{$$restProps.max}</span>
+			<span>{rest.min}</span>
+			<span>{rest.max}</span>
 		</div>
 	{/if}
 </div>

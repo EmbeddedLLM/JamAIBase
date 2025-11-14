@@ -4,7 +4,7 @@ from typing import Type
 import pytest
 
 from jamaibase import JamAI, JamAIAsync
-from jamaibase.protocol import LLMModelConfig, ModelDeploymentConfig, ModelListConfig, OkResponse
+from jamaibase.types import LLMModelConfig, ModelDeploymentConfig, ModelListConfig, OkResponse
 from jamaibase.utils import run
 
 CLIENT_CLS = [JamAI, JamAIAsync]
@@ -60,7 +60,7 @@ async def test_get_set_org_model_config(
             context_length=8000,
             languages=["mul"],
             capabilities=["chat"],
-            owned_by="ellm",
+            owned_by=ORG_ID,
         )
     )
     async with _set_org_model_config(jamai, ORG_ID, new_config) as response:

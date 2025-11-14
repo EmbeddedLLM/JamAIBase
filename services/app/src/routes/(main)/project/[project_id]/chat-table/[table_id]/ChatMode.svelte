@@ -1,18 +1,30 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { onMount, tick } from 'svelte';
+	import { v4 as uuidv4 } from 'uuid';
+	import { ArrowDownToLine, AudioLines } from '@lucide/svelte';
 	import { browser } from '$app/environment';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import showdown from 'showdown';
 	//@ts-expect-error - no types
 	import showdownHtmlEscape from 'showdown-htmlescape';
 	import '../../../../../../showdown-theme.css';
-	import { tableState } from '$lib/components/tables/tablesStore';
+	import { getTableState } from '$lib/components/tables/tablesState.svelte';
 	import { codeblock, codehighlight, table as tableExtension } from '$lib/showdown';
+	import { fileColumnFiletypes } from '$lib/constants';
+	import { cn } from '$lib/utils';
 	import logger from '$lib/logger';
-	import type { GenTable, GenTableStreamEvent, Thread } from '$lib/types';
+	import type {
+		ChatReferences,
+		ChatThreads,
+		Conversation,
+		GenTable,
+		GenTableStreamEvent,
+		Thread
+	} from '$lib/types';
 
 	import RowStreamIndicator from '$lib/components/preset/RowStreamIndicator.svelte';
+	import { ChatFilePreview, ChatThumbsFetch } from '$lib/components/chat';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
@@ -21,11 +33,23 @@
 	import MultiturnChatIcon from '$lib/icons/MultiturnChatIcon.svelte';
 	import TuneIcon from '$lib/icons/TuneIcon.svelte';
 
-	export let tableData: GenTable | undefined;
-	export let thread: Thread[][];
-	export let threadLoaded: boolean;
-	export let generationStatus: boolean;
-	export let refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
+	const tableState = getTableState();
+
+	interface Props {
+		tableData: GenTable | undefined;
+		tableThread: ChatThreads['threads'];
+		threadLoaded: boolean;
+		generationStatus: string | null;
+		refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
+	}
+
+	let {
+		tableData,
+		tableThread = $bindable(),
+		threadLoaded,
+		generationStatus = $bindable(),
+		refetchTable
+	}: Props = $props();
 
 	/* let thread: ChatRequest['messages'] = [];
 	$: table, resetThread();
@@ -44,58 +68,126 @@
 		extensions: [showdownHtmlEscape, codeblock, codehighlight, tableExtension]
 	});
 
-	let loadedStreams: Record<string, string[]> = {};
-	let latestStreams: Record<string, string> = {};
+	let loadedStreams: Record<string, string[]> = $state({});
+	let latestStreams: Record<string, string> = $state({});
 
-	let showRawTexts = false;
+	let showRawTexts = $state(false);
 
-	let chatWindow: HTMLDivElement;
+	let chatWindow: HTMLDivElement | null = $state(null);
 	let isLoading = true;
 
 	//Chatbar
-	let chatForm: HTMLFormElement;
-	let chat: HTMLTextAreaElement;
+	let chatForm: HTMLFormElement | null = $state(null);
+	let chat: HTMLTextAreaElement | null = $state(null);
 
-	let chatMessage = '';
-	let isResizing = false;
-	let isResized = false;
+	let chatMessage = $state('');
+	let isResizing = $state(false);
+	let isResized = $state(false);
+
+	let longestThreadCol = $derived(
+		Object.keys(tableThread).reduce(
+			(a, b) =>
+				Array.isArray(tableThread[b].thread) &&
+				(!a || tableThread[b].thread.length > tableThread[a].thread.length)
+					? b
+					: a,
+			''
+		)
+	);
+	let displayedLoadedStreams = $derived(
+		Object.keys(loadedStreams).filter((colID) => {
+			// Filter out columns to display
+			const col = tableData?.cols?.find((col) => col.id === colID);
+			return col?.gen_config?.object === 'gen_config.llm' && col.gen_config.multi_turn;
+		})
+	);
+
+	let uris: { [rowID: string]: { [colID: string]: string } } = $derived({
+		...Object.fromEntries(
+			Object.entries(tableThread)
+				.map(([col, thread]) =>
+					thread.thread
+						.map((val) =>
+							typeof val.content === 'string'
+								? []
+								: [
+										[
+											val.row_id,
+											Object.fromEntries(
+												val.content
+													.map((content) =>
+														content.type === 'text' ? [] : [[content.column_name, content.uri]]
+													)
+													.flat()
+											)
+										]
+									]
+						)
+						.flat()
+				)
+				.flat()
+		)
+		// ...{
+		// 	new: Object.fromEntries(
+		// 		Object.entries(chatState.uploadColumns).map(([col, val]) => [col, val.uri])
+		// 	)
+		// }
+	});
+	let rowThumbs: { [uri: string]: string } = $state({});
+	let showFilePreview = $state<string | null>(null);
 
 	function resizeChat() {
-		if (isResized) return; //? Prevents textarea from resizing by typing when chatbar is resized by user
+		if (isResized || !chat) return; //? Prevents textarea from resizing by typing when chatbar is resized by user
 		chat.style.height = '3rem';
-		chat.style.height = (chat.scrollHeight >= 180 ? 180 : chat.scrollHeight) + 'px';
+		chat.style.height = Math.min(chat.scrollHeight, 180) + 'px';
 	}
 
 	function interceptSubmit(e: KeyboardEvent) {
 		if (e.key === 'Enter' && !e.shiftKey) {
 			e.preventDefault();
 			isResized = false;
-			chatForm.requestSubmit();
+			chatForm?.requestSubmit();
 		}
 	}
 
-	async function handleChatSubmit() {
-		if (!tableData || !thread) return;
+	async function handleChatSubmit(e: Event) {
+		e.preventDefault();
+		if (!chat || !chatWindow) return;
+		if (!tableData || !threadLoaded) return;
 		if (generationStatus || !chatMessage.trim()) return;
-		const cachedChatMessage = chatMessage;
+		const cachedPrompt = chatMessage;
 		chatMessage = '';
 
 		// chatMessage = '';
 		chat.style.height = '3rem';
 
 		//? Add user message to the chat
-		thread = [
-			...thread,
-			[
+		tableThread = Object.fromEntries(
+			Object.entries(tableThread).map(([outCol, thread]) => [
+				outCol,
 				{
-					column_id: '',
-					role: 'user',
-					content: cachedChatMessage
+					...thread,
+					thread: [
+						...thread.thread,
+						{
+							row_id: uuidv4(),
+							role: 'user',
+							content: [
+								{
+									type: 'text' as const,
+									text: cachedPrompt
+								}
+							],
+							name: null,
+							user_prompt: cachedPrompt,
+							references: null
+						}
+					]
 				}
-			]
-		];
+			])
+		);
 
-		generationStatus = true;
+		generationStatus = 'new';
 		loadedStreams = Object.fromEntries(
 			tableData.cols
 				.map((col) =>
@@ -120,18 +212,18 @@
 		chatWindow.scrollTop = chatWindow.scrollHeight;
 
 		//? Send message to the server
-		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/chat/rows/add`, {
+		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/chat/rows/add`, {
 			method: 'POST',
 			headers: {
 				Accept: 'text/event-stream',
 				'Content-Type': 'application/json',
-				'x-project-id': $page.params.project_id
+				'x-project-id': page.params.project_id
 			},
 			body: JSON.stringify({
-				table_id: $page.params.table_id,
+				table_id: page.params.table_id,
 				data: [
 					{
-						User: cachedChatMessage
+						User: cachedPrompt
 					}
 				],
 				stream: true
@@ -149,108 +241,151 @@
 					requestID: responseBody.request_id
 				}
 			});
-			thread = thread.slice(0, -1);
-			chatMessage = cachedChatMessage;
+			tableThread = Object.fromEntries(
+				Object.entries(tableThread).map(([outCol, thread]) => [
+					outCol,
+					{
+						...thread,
+						thread: thread.thread.slice(0, -1)
+					}
+				])
+			);
+			chatMessage = cachedPrompt;
 		} else {
 			const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
 
-			let isStreaming = true;
-			let lastMessage = '';
-			while (isStreaming) {
+			let row_id = '';
+			let references: Record<string, ChatReferences> | null = null;
+			let buffer = '';
+			// eslint-disable-next-line no-constant-condition
+			while (true) {
 				try {
 					const { value, done } = await reader.read();
 					if (done) break;
 
-					if (value.endsWith('\n\n')) {
-						const lines = (lastMessage + value)
-							.split('\n\n')
-							.filter((i) => i.trim())
-							.flatMap((line) => line.split('\n')); //? Split by \n to handle collation
+					buffer += value;
+					const lines = buffer.split('\n'); //? Split by \n to handle collation
+					buffer = lines.pop() || '';
 
-						lastMessage = '';
-
-						for (const line of lines) {
-							const sumValue = line.replace(/^data: /, '').replace(/data: \[DONE\]\s+$/, '');
-
-							if (sumValue.trim() == '[DONE]') break;
-
-							let parsedValue;
-							try {
-								parsedValue = JSON.parse(sumValue) as GenTableStreamEvent;
-							} catch (err) {
-								console.error('Error parsing:', sumValue);
-								logger.error('CHATTBL_CHAT_ADDSTREAMPARSE', { parsing: sumValue, error: err });
-								continue;
-							}
-
-							if (parsedValue.object == 'gen_table.completion.chunk') {
-								if (parsedValue.choices[0].finish_reason) {
-									switch (parsedValue.choices[0].finish_reason) {
-										case 'error': {
-											logger.error('CHATTBL_CHAT_ADDSTREAM', parsedValue);
-											console.error('STREAMING_ERROR', parsedValue);
-											alert(`Error while streaming: ${parsedValue.choices[0].message.content}`);
-											break;
+					let parsedEvent:
+						| { event: 'metadata'; data: Conversation }
+						| { event: undefined; data: GenTableStreamEvent }
+						| undefined = undefined;
+					for (const line of lines) {
+						if (line === '') {
+							if (parsedEvent) {
+								if (parsedEvent.event) {
+									// n/a
+								} else if (parsedEvent.data.object === 'gen_table.completion.chunk') {
+									if (parsedEvent.data.choices[0].finish_reason) {
+										switch (parsedEvent.data.choices[0].finish_reason) {
+											case 'error': {
+												logger.error('CHAT_MESSAGE_ADDSTREAM', parsedEvent.data);
+												console.error('STREAMING_ERROR', parsedEvent.data);
+												alert(
+													`Error while streaming: ${parsedEvent.data.choices[0].message.content}`
+												);
+												break;
+											}
 										}
+									} else {
+										row_id = parsedEvent.data.row_id;
+
+										if (loadedStreams[parsedEvent.data.output_column_name]) {
+											if ((parsedEvent.data.choices[0].message.content ?? '').includes('\n')) {
+												loadedStreams[parsedEvent.data.output_column_name] = [
+													...loadedStreams[parsedEvent.data.output_column_name],
+													latestStreams[parsedEvent.data.output_column_name] +
+														(parsedEvent.data.choices[0]?.message?.content ?? '')
+												];
+												latestStreams[parsedEvent.data.output_column_name] = '';
+											} else {
+												latestStreams[parsedEvent.data.output_column_name] +=
+													parsedEvent.data.choices[0]?.message?.content ?? '';
+											}
+										}
+
+										scrollToBotttom();
 									}
+								} else if (parsedEvent.data.object === 'gen_table.references') {
+									references = {
+										...(references ?? {}),
+										[parsedEvent.data.output_column_name]:
+											parsedEvent.data as unknown as ChatReferences
+									};
 								} else {
-									if (loadedStreams[parsedValue.output_column_name]) {
-										if ((parsedValue.choices[0].message.content ?? '').includes('\n')) {
-											loadedStreams[parsedValue.output_column_name] = [
-												...loadedStreams[parsedValue.output_column_name],
-												latestStreams[parsedValue.output_column_name] +
-													(parsedValue.choices[0]?.message?.content ?? '')
-											];
-											latestStreams[parsedValue.output_column_name] = '';
-										} else {
-											latestStreams[parsedValue.output_column_name] +=
-												parsedValue.choices[0]?.message?.content ?? '';
-										}
-									}
+									console.warn('Unknown event data:', parsedEvent.data);
 								}
 							} else {
-								console.warn('Unknown message:', parsedValue);
+								console.warn('Unknown event object:', parsedEvent);
 							}
+						} else if (line.startsWith('data: ')) {
+							if (line.slice(6) === '[DONE]') break;
+							//@ts-expect-error missing type
+							parsedEvent = { ...(parsedEvent ?? {}), data: JSON.parse(line.slice(6)) };
+						} else if (line.startsWith('event: ')) {
+							//@ts-expect-error missing type
+							parsedEvent = { ...(parsedEvent ?? {}), event: line.slice(7) };
 						}
-					} else {
-						lastMessage += value;
 					}
 				} catch (err) {
-					logger.error('CHATTBL_ROW_ADDSTREAM', err);
+					logger.error('CHAT_MESSAGE_ADDSTREAM', err);
 					console.error(err);
 					break;
 				}
 			}
 
-			thread = [
-				...thread,
-				Object.keys(loadedStreams)
-					.filter((colID) => {
-						// Filter out columns to display
-						const col = tableData?.cols?.find((col) => col.id === colID);
-						return (
-							col?.gen_config?.object === 'gen_config.llm' &&
-							col.gen_config.multi_turn &&
-							/\${User}/g.test(col.gen_config.prompt ?? '')
-						);
-					})
-					.map((key) => ({
-						column_id: key,
-						role: 'assistant',
-						content: [...loadedStreams[key], latestStreams[key]].join('')
-					}))
-			];
+			loadedStreams = Object.fromEntries(
+				Object.entries(loadedStreams).map(([col, streams]) => [
+					col,
+					[...streams, latestStreams[col]]
+				])
+			);
+
+			tableThread = Object.fromEntries(
+				Object.entries(tableThread).map(([outCol, thread]) => {
+					const loadedStreamCol = loadedStreams[outCol];
+					const colReferences = references?.[outCol] ?? null;
+					const userPrompt = thread.thread.at(-1)!;
+
+					return [
+						outCol,
+						{
+							...thread,
+							thread: [
+								...thread.thread.slice(0, -1),
+								{
+									...userPrompt,
+									row_id
+								},
+								{
+									row_id,
+									role: 'assistant',
+									content: [
+										{
+											type: 'text',
+											text: loadedStreamCol.join('')
+										}
+									],
+									name: null,
+									user_prompt: null,
+									references: colReferences
+								}
+							]
+						}
+					];
+				})
+			);
 			loadedStreams = {};
 			latestStreams = {};
+			generationStatus = null;
 
 			refetchTable();
 		}
-
-		generationStatus = false;
 	}
 
 	onMount(() => {
-		chatWindow.scrollTop = chatWindow.scrollHeight;
+		if (chatWindow) chatWindow.scrollTop = chatWindow.scrollHeight;
 	});
 
 	const scrollToBotttom = async () => {
@@ -266,9 +401,13 @@
 			chatWindow.scrollTop = chatWindow.scrollHeight;
 		}
 	};
-	$: loadedStreams, scrollToBotttom();
+	$effect(() => {
+		loadedStreams;
+		scrollToBotttom();
+	});
 
 	function handleResize(e: MouseEvent) {
+		if (!chat) return;
 		if (!isResizing) return;
 
 		const chatBottomSpace = 24;
@@ -302,13 +441,44 @@
 			}
 		}
 	}
+
+	async function getRawFile(fileUri: string) {
+		if (!fileUri) return;
+
+		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/owl/files/url/raw`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({
+				uris: [fileUri]
+			})
+		});
+		const responseBody = await response.json();
+
+		if (response.ok) {
+			window.open(responseBody.urls[0], '_blank');
+		} else {
+			if (response.status !== 404) {
+				logger.error('GETRAW', responseBody);
+			}
+			toast.error('Failed to get raw file', {
+				id: responseBody.message || JSON.stringify(responseBody),
+				description: CustomToastDesc as any,
+				componentProps: {
+					description: responseBody.message || JSON.stringify(responseBody),
+					requestID: responseBody.request_id
+				}
+			});
+		}
+	}
 </script>
 
 <svelte:document
-	on:mousemove={handleResize}
-	on:mouseup={() => (isResizing = false)}
-	on:click={handleCustomBtnClick}
-	on:keydown={(e) => {
+	onmousemove={handleResize}
+	onmouseup={() => (isResizing = false)}
+	onclick={handleCustomBtnClick}
+	onkeydown={(e) => {
 		if (
 			//@ts-ignore
 			e.target.tagName !== 'INPUT' &&
@@ -326,241 +496,258 @@
 	bind:this={chatWindow}
 	data-testid="chat-window"
 	id="chat-window"
-	class="@container/chat relative grow flex flex-col gap-4 pt-6 pb-16 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
+	class="relative flex grow flex-col gap-4 overflow-y-auto overflow-x-hidden pt-6 [scrollbar-gutter:stable]"
 >
 	{#if threadLoaded}
-		{@const displayedLoadedStreams = Object.keys(loadedStreams).filter((colID) => {
-			// Filter out columns to display
-			const col = tableData?.cols?.find((col) => col.id === colID);
-			return (
-				col?.gen_config?.object === 'gen_config.llm' &&
-				col.gen_config.multi_turn &&
-				/\${User}/g.test(col.gen_config.prompt ?? '')
-			);
-		})}
-
-		{#each thread as threadItem, index}
-			{@const nonErrorMessage = threadItem.find((v) => 'content' in v && v.role === 'user')}
-			{@const messages = nonErrorMessage ? [nonErrorMessage] : threadItem}
-			{@const messagesWithContent = messages.filter(
-				(v) => ('content' in v && v.content?.trim()) || 'error' in v
-			)}
+		{@const multiturnCols = Object.keys(tableThread)}
+		{@const longestThreadColLen = tableThread[longestThreadCol]?.thread?.length ?? 0}
+		{#each Array(longestThreadColLen).fill('') as _, index}
 			<div
-				style="--message-len: {messagesWithContent.length};"
-				class="flex-[0_0_auto] grid message-container gap-3 px-6 lg:px-20 2xl:px-36 3xl:px-72 overflow-x-auto overflow-y-hidden"
+				class="group/message-container message-container flex flex-[0_0_auto] gap-3 px-3 transition-[padding] @2xl/chat:px-6 @4xl/chat:px-20 @6xl/chat:px-36 @7xl/chat:px-72 supports-[not(container-type:inline-size)]:px-6 supports-[not(container-type:inline-size)]:lg:px-20 supports-[not(container-type:inline-size)]:2xl:px-36 supports-[not(container-type:inline-size)]:3xl:px-72"
 			>
-				{#each messages as message}
-					{@const { column_id } = message}
-					{#if 'content' in message}
-						{@const { content, role } = message}
-						{#if content?.trim()}
-							{#if role == 'assistant'}
-								<div
-									class="flex flex-col gap-1 {messagesWithContent.length === 1
-										? 'col-span-1 @lg/chat:col-span-2 supports-[not(container-type:inline-size)]:xl:col-span-2'
-										: ''} group/message-container"
-								>
-									<div class="flex items-center justify-between">
-										<button
-											on:click={() => {
-												const targetCol = tableData?.cols?.find((col) => col.id == column_id);
-												if (targetCol) {
-													tableState.setColumnSettings({ column: targetCol, isOpen: true });
-												}
-											}}
-											class="flex items-center gap-2 text-sm"
-										>
-											<span
-												style="background-color: #FFEAD5; color: #FD853A;"
-												class="w-min p-0.5 py-1 whitespace-nowrap rounded-[0.1875rem] select-none flex items-center"
-											>
-												<span class="capitalize text-xs font-medium px-1"> output </span>
-												<span
-													class="bg-white w-min px-1 text-xs font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
-												>
-													str
-												</span>
-
-												<hr class="ml-1 h-3 border-l border-[#FD853A]" />
-												<div class="relative h-4 w-[18px]">
-													<MultiturnChatIcon class="absolute h-[18px] -translate-y-px" />
-												</div>
-											</span>
-
-											<span class="line-clamp-2">
-												{column_id}
-											</span>
-										</button>
-									</div>
-
-									<div
-										data-testid="chat-message"
-										class="relative self-start {messagesWithContent.length === 1
-											? 'xl:mr-[20%]'
-											: 'w-full'} p-4 max-w-full rounded-xl bg-[#F2F4F7] data-dark:bg-[#5B7EE5] text-text group scroll-my-2"
-									>
-										<p
-											class="flex-col gap-4 response-message whitespace-pre-line text-sm {generationStatus &&
-											index === thread.length - 1 &&
-											content.length !== 0
-												? 'block response-cursor'
-												: 'flex'}"
-										>
-											{#if showRawTexts}
-												{message}
-											{:else}
-												{@const rawHtml = converter.makeHtml(content)}
-												{@html rawHtml}
-											{/if}
-										</p>
-									</div>
-								</div>
-							{:else if role == 'user'}
-								<div
-									class="flex flex-col gap-1 {messagesWithContent.length === 1
-										? 'col-span-1 @lg/chat:col-span-2 supports-[not(container-type:inline-size)]:xl:col-span-2'
-										: ''}"
-								>
-									<div
-										data-testid="chat-message"
-										class="relative self-end flex flex-col max-w-full lg:ml-[20%] rounded-xl bg-white data-dark:bg-[#444] group scroll-my-2"
-									>
-										<p
-											class="p-4 text-sm [overflow-wrap:anywhere] focus:outline-none whitespace-pre-wrap"
-										>
-											{content}
-										</p>
-									</div>
-								</div>
-							{/if}
-						{/if}
-					{:else if messages.every((v) => ('content' in v && v.role === 'assistant') || 'error' in v)}
-						<div
-							class="flex flex-col gap-1 {messagesWithContent.length === 1
-								? 'col-span-1 @lg/chat:col-span-2 supports-[not(container-type:inline-size)]:xl:col-span-2'
-								: ''} group/message-container"
-						>
-							<div class="flex items-center justify-between">
-								<button
-									on:click={() => {
-										const targetCol = tableData?.cols?.find((col) => col.id == column_id);
-										if (targetCol) {
-											tableState.setColumnSettings({ column: targetCol, isOpen: true });
-										}
-									}}
-									class="flex items-center gap-2 text-sm"
-								>
-									<span
-										style="background-color: #FFEAD5; color: #FD853A;"
-										class="w-min p-0.5 py-1 whitespace-nowrap rounded-[0.1875rem] select-none flex items-center"
-									>
-										<span class="capitalize text-xs font-medium px-1"> output </span>
-										<span
-											class="bg-white w-min px-1 text-xs font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
-										>
-											str
-										</span>
-
-										<hr class="ml-1 h-3 border-l border-[#FD853A]" />
-										<div class="relative h-4 w-[18px]">
-											<MultiturnChatIcon class="absolute h-[18px] -translate-y-px" />
-										</div>
-									</span>
-
-									<span class="line-clamp-2">
-										{column_id}
-									</span>
-								</button>
-							</div>
-
+				{#each Object.entries(tableThread) as [column, thread]}
+					{@const threadItem = thread.thread[index]}
+					{#if threadItem && threadItem.role !== 'system'}
+						{#if threadItem.role === 'user'}
+							{@const isEditingCell = false}
 							<div
-								data-testid="chat-message"
-								class="relative self-start {messagesWithContent.length === 1
-									? 'xl:mr-[20%]'
-									: 'w-full'} p-4 w-full max-w-full rounded-xl bg-[#F2F4F7] data-dark:bg-[#5B7EE5] text-text group scroll-my-2"
+								data-role="user"
+								class={cn(
+									'ml-auto flex flex-col gap-1 transition-[padding]',
+									multiturnCols.length > 1
+										? 'min-w-full @5xl/chat:min-w-[50%] supports-[not(container-type:inline-size)]:xl:min-w-[50%]'
+										: '',
+									multiturnCols.length == 1
+										? '@5xl/chat:pl-[20%] supports-[not(container-type:inline-size)]:xl:pl-[20%]'
+										: 'last:pr-3 @2xl/chat:last:pr-6 @4xl/chat:last:pr-20 @5xl/chat:last:pr-0 supports-[not(container-type:inline-size)]:last:pr-6 supports-[not(container-type:inline-size)]:lg:last:pr-20 supports-[not(container-type:inline-size)]:xl:last:pr-0'
+								)}
 							>
-								<div class="flex items-center justify-center py-8 h-full">
-									<span class="relative -top-[0.05rem] text-3xl font-extralight">
-										{message.error}
-									</span>
-									<div
-										class="flex items-center ml-4 pl-4 min-h-10 border-l border-[#ccc] data-dark:border-[#666]"
-									>
-										<h1 class="whitespace-pre-wrap">
-											{message.message.message || JSON.stringify(message)}
-										</h1>
-									</div>
+								<div class="flex items-end justify-end">
+									<!-- <div
+												class:invisible={isEditingCell}
+												class="flex items-center opacity-0 transition-opacity group-hover/message-container:opacity-100"
+											>
+												<Button
+													variant="ghost"
+													title="Edit content"
+													onclick={async () => {
+														chatState.editingContent = {
+															rowID: threadItem.row_id,
+															columnID: 'User'
+														};
+														await tick();
+														resizeEditContent();
+													}}
+													class="h-7 w-7 p-0 text-[#98A2B3]"
+												>
+													<EditIcon class="h-3.5 w-3.5" />
+												</Button>
+											</div> -->
 								</div>
+
+								<div
+									data-testid="chat-message"
+									class:w-full={multiturnCols.length > 1}
+									class="group relative flex max-w-full scroll-my-2 flex-col gap-2 self-end rounded-xl bg-white p-4 data-dark:bg-[#444]"
+								>
+									{#if isEditingCell}
+										<!-- {@render cellContentEditor(
+													threadItem.user_prompt ?? ''
+													// typeof threadItem.content === 'string'
+													// 	? threadItem.content
+													// 	: threadItem.content.find((c) => c.type === 'text')?.text ?? ''
+												)} -->
+									{:else if typeof threadItem.content === 'string'}
+										<div
+											class="whitespace-pre-wrap text-sm [overflow-wrap:anywhere] focus:outline-none"
+										>
+											{threadItem.user_prompt}
+										</div>
+									{:else}
+										{#if threadItem.content.some((c) => c.type === 'input_s3')}
+											<div class="flex flex-wrap gap-2">
+												{#each threadItem.content as content}
+													{#if content.type === 'input_s3'}
+														{@const fileType = fileColumnFiletypes.find(({ ext }) =>
+															content.uri.toLowerCase().endsWith(ext)
+														)?.type}
+														{@const fileUrl = rowThumbs[content.uri]}
+														<div class="group/image relative">
+															<button
+																title={content.uri.split('/').pop()}
+																onclick={() => (showFilePreview = content.uri)}
+																class="flex h-36 w-36 items-center justify-center overflow-hidden rounded-xl bg-[#BF416E]"
+															>
+																{#if fileType === 'image'}
+																	<img
+																		src={fileUrl}
+																		alt=""
+																		class="z-0 h-full w-full object-cover"
+																	/>
+																{:else if fileType === 'audio'}
+																	<AudioLines class="h-16 w-16 text-white" />
+																{:else if fileType === 'document'}
+																	<img src={fileUrl} alt="" class="z-0 max-w-full object-contain" />
+																{/if}
+															</button>
+
+															<div
+																class="absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity group-focus-within/image:opacity-100 group-hover/image:opacity-100"
+															>
+																<Button
+																	variant="ghost"
+																	title="Download file"
+																	onclick={() => getRawFile(content.uri)}
+																	class="aspect-square h-6 rounded-md border border-[#F2F4F7] bg-white p-0 text-[#667085] shadow-[0px_1px_3px_0px_rgba(16,24,40,0.1)] hover:text-[#667085]"
+																>
+																	<ArrowDownToLine class="h-3.5 w-3.5" />
+																</Button>
+															</div>
+														</div>
+													{/if}
+												{/each}
+											</div>
+										{/if}
+
+										<p
+											class="whitespace-pre-wrap text-sm [overflow-wrap:anywhere] focus:outline-none"
+										>
+											{threadItem.user_prompt}
+										</p>
+									{/if}
+								</div>
+
+								<!-- {#if isEditingCell}
+											{@render cellContentEditorControls()}
+										{/if} -->
 							</div>
-						</div>
-					{:else}
-						empty block
+						{:else if threadItem.role === 'assistant'}
+							{@const isEditingCell = false}
+							<div
+								data-role="assistant"
+								class={cn(
+									'group/message-container flex flex-col gap-1 transition-[padding]',
+									multiturnCols.length > 1
+										? 'min-w-full @5xl/chat:min-w-[50%] supports-[not(container-type:inline-size)]:xl:min-w-[50%]'
+										: '',
+									multiturnCols.length == 1
+										? '@5xl/chat:pr-[20%] supports-[not(container-type:inline-size)]:xl:pr-[20%]'
+										: 'last:pr-3 @2xl/chat:last:pr-6 @4xl/chat:last:pr-20 @5xl/chat:last:pr-0 supports-[not(container-type:inline-size)]:last:pr-6 supports-[not(container-type:inline-size)]:lg:last:pr-20 supports-[not(container-type:inline-size)]:xl:last:pr-0'
+								)}
+							>
+								{#if threadItem.row_id !== generationStatus}
+									<div class="flex items-end justify-between">
+										<div class="flex items-center gap-2 text-sm">
+											<span class="line-clamp-1 text-[#98A2B3]">
+												{column}
+											</span>
+										</div>
+
+										<div
+											class:invisible={isEditingCell}
+											class="flex items-center opacity-0 transition-opacity group-hover/message-container:opacity-100"
+										>
+											<!-- <Button
+												variant="ghost"
+												title="Edit content"
+												onclick={async () => {
+													chatState.editingContent = {
+														rowID: threadItem.row_id,
+														columnID: column
+													};
+													await tick();
+													resizeEditContent();
+												}}
+												class="h-7 w-7 p-0 text-[#98A2B3]"
+											>
+												<EditIcon class="h-3.5 w-3.5" />
+											</Button>
+
+											<Button
+												variant="ghost"
+												title="Regenerate message"
+												onclick={() => chatState.regenMessage(threadItem.row_id)}
+												class="h-7 w-7 p-0 text-[#98A2B3]"
+											>
+												<RegenerateIcon class="h-6 w-6" />
+											</Button>
+
+											{#if threadItem.references}
+												<Button
+													variant="ghost"
+													title="Show references"
+													onclick={() =>
+														(showReferences = {
+															open: true,
+															message: {
+																columnID: column,
+																threadItem
+															},
+															preview: null
+														})}
+													class="h-7 w-7 p-0 text-[#98A2B3]"
+												>
+													<FileText class="h-4 w-4" />
+												</Button>
+											{/if} -->
+										</div>
+									</div>
+
+									<div
+										data-testid="chat-message"
+										class:w-full={multiturnCols.length > 1}
+										class="group relative max-w-full scroll-my-2 self-start rounded-xl bg-[#F2F4F7] p-4 text-text data-dark:bg-[#5B7EE5]"
+									>
+										{#if isEditingCell}
+											<!-- {@render cellContentEditor(
+												typeof threadItem.content === 'string'
+													? threadItem.content
+													: threadItem.content.find((c) => c.type === 'text')?.text ?? ''
+											)} -->
+										{:else if typeof threadItem.content === 'string'}
+											<p class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
+												{#if showRawTexts}
+													{threadItem.content}
+												{:else}
+													{@const rawHtml = converter.makeHtml(threadItem.content)}
+													{@html rawHtml}
+												{/if}
+											</p>
+										{:else}
+											{@const textContent = threadItem.content
+												.filter((c) => c.type === 'text')
+												.map((c) => c.text)
+												.join('')}
+											<!-- TODO: Insert images/file -->
+											<p class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
+												{#if showRawTexts}
+													{textContent}
+												{:else}
+													{@const rawHtml = converter.makeHtml(textContent)}
+													{@html rawHtml}
+												{/if}
+											</p>
+										{/if}
+									</div>
+
+									{#if isEditingCell}
+										<!-- {@render cellContentEditorControls()} -->
+									{/if}
+								{:else}
+									{@render generatingMessages(column)}
+								{/if}
+							</div>
+						{/if}
 					{/if}
 				{/each}
 			</div>
 		{/each}
 
-		<div
-			style="--message-len: {displayedLoadedStreams.length};"
-			class="flex-[0_0_auto] grid message-container gap-3 px-6 lg:px-20 2xl:px-36 3xl:px-72 overflow-x-auto overflow-y-hidden"
-		>
-			{#each displayedLoadedStreams as key}
-				{@const loadedStream = loadedStreams[key]}
-				{@const latestStream = latestStreams[key] ?? ''}
-				<div
-					class="flex flex-col gap-1 {displayedLoadedStreams.length === 1
-						? 'col-span-1 @lg/chat:col-span-2 supports-[not(container-type:inline-size)]:xl:col-span-2'
-						: ''}"
-				>
-					<div class="flex items-center gap-2 text-sm">
-						<span
-							style="background-color: #FFEAD5; color: #FD853A;"
-							class="w-min p-0.5 py-1 whitespace-nowrap rounded-[0.1875rem] select-none flex items-center"
-						>
-							<span class="capitalize text-xs font-medium px-1"> output </span>
-							<span
-								class="bg-white w-min px-1 text-xs font-medium whitespace-nowrap rounded-[0.1875rem] select-none"
-							>
-								str
-							</span>
-
-							<hr class="ml-1 h-3 border-l border-[#FD853A]" />
-							<div class="relative h-4 w-[18px]">
-								<MultiturnChatIcon class="absolute h-[18px] -translate-y-px" />
-							</div>
-						</span>
-
-						<span class="line-clamp-2">
-							{key}
-						</span>
-					</div>
-
-					<div
-						data-testid="chat-message"
-						data-streaming="true"
-						class="relative self-start {displayedLoadedStreams.length === 1
-							? 'xl:mr-[20%]'
-							: 'w-full'} p-4 max-w-full rounded-xl bg-[#F2F4F7] data-dark:bg-[#5B7EE5] text-text group scroll-my-2"
-					>
-						<p
-							class="flex-col gap-4 response-message whitespace-pre-line text-sm {loadedStream.length ||
-							latestStream
-								? 'block response-cursor'
-								: 'flex'}"
-						>
-							{@html converter.makeHtml(loadedStream.join(''))}
-							{latestStream}
-
-							{#if loadedStream.length === 0 && latestStream === ''}
-								<RowStreamIndicator />
-							{/if}
-						</p>
-					</div>
-				</div>
-			{/each}
-		</div>
+		{#if generationStatus === 'new'}
+			{@render generatingMessages()}
+		{/if}
 	{:else}
-		<div class="absolute top-0 bottom-0 left-0 right-0 flex items-center justify-center">
+		<div class="absolute bottom-0 left-0 right-0 top-0 flex items-center justify-center">
 			<LoadingSpinner class="h-6 text-secondary" />
 		</div>
 	{/if}
@@ -568,52 +755,52 @@
 
 <div
 	style="grid-template-rows: minmax(0, auto);"
-	class="grid transition-[grid-template-rows] duration-300 px-6 lg:px-20 2xl:px-36 3xl:px-72"
+	class="grid px-3 transition-[grid-template-rows,padding] duration-300 @2xl/chat:px-6 @4xl/chat:px-20 @6xl/chat:px-36 @7xl/chat:px-72 supports-[not(container-type:inline-size)]:px-6 supports-[not(container-type:inline-size)]:lg:px-20 supports-[not(container-type:inline-size)]:2xl:px-36 supports-[not(container-type:inline-size)]:3xl:px-72"
 >
 	<div
 		style="grid-template-columns: auto;"
-		class="@container grid items-end gap-2 pb-6 w-full transition-[background-color,grid-template-columns] duration-300"
+		class="grid w-full items-end gap-2 pb-3 transition-[background-color,grid-template-columns] duration-300 @container @2xl/chat:pb-6"
 	>
 		<div
-			class="relative flex items-center mt-2 p-1 w-full bg-white data-dark:bg-[#303338] border border-[#E4E7EC] data-dark:border-[#666] has-[textarea:focus]:border-[#4169e1] rounded-[1.8rem] text-text transition-colors"
+			class="relative mt-2 flex w-full items-center rounded-[1.8rem] border border-[#E4E7EC] bg-white p-1 text-text transition-colors has-[textarea:focus]:border-[#d5607c] has-[textarea:focus]:shadow-[0_0_0_1px_#FFD8DF] data-dark:border-[#666] data-dark:bg-[#303338]"
 		>
 			<button
 				tabindex="-1"
 				title="Drag to resize chat area"
 				aria-label="Drag to resize chat area"
-				on:mousedown={() => (isResizing = true)}
-				class="absolute -top-[4px] left-0 right-0 mx-6 h-[10px] cursor-ns-resize focus:outline-none group"
+				onmousedown={() => (isResizing = true)}
+				class="group absolute -top-[4px] left-0 right-0 mx-6 h-[10px] cursor-ns-resize focus:outline-none"
 			>
 				<div
-					class="absolute top-[4px] h-[1px] w-full bg-black data-dark:bg-white rounded-md opacity-0 group-hover:opacity-100 {isResizing &&
+					class="absolute top-[4px] h-[1px] w-full rounded-md bg-black opacity-0 group-hover:opacity-100 data-dark:bg-white {isResizing &&
 						'opacity-100'} transition-opacity"
 				></div>
 			</button>
 
-			<form bind:this={chatForm} on:submit|preventDefault={handleChatSubmit} class="flex w-full">
-				<!-- svelte-ignore a11y-autofocus -->
+			<form bind:this={chatForm} onsubmit={handleChatSubmit} class="flex w-full">
+				<!-- svelte-ignore a11y_autofocus -->
 				<textarea
 					autofocus
 					name="chatbar"
 					placeholder="Enter message"
 					bind:this={chat}
 					bind:value={chatMessage}
-					on:input={resizeChat}
-					on:keydown={interceptSubmit}
-					class="p-3 pl-5 min-h-[48px] h-12 w-full bg-transparent resize-none outline-none placeholder:text-[#999999]"
+					oninput={resizeChat}
+					onkeydown={interceptSubmit}
+					class="h-12 min-h-[48px] w-full resize-none bg-transparent p-3 pl-5 outline-none placeholder:text-[#999999]"
 				></textarea>
 			</form>
 
 			<Button
 				variant="ghost"
 				title="Send message"
-				on:click={() => {
+				onclick={() => {
 					isResized = false;
-					chatForm.requestSubmit();
+					chatForm?.requestSubmit();
 				}}
 				class="h-12 rounded-full {chatMessage
 					? 'fill-black data-dark:fill-white'
-					: 'fill-[#999999] pointer-events-none'}"
+					: 'pointer-events-none fill-[#999999]'}"
 			>
 				<SendIcon class="h-7" />
 			</Button>
@@ -631,6 +818,83 @@
 				<h1>{JSON.stringify(threadError.message)}</h1>
 			</div>
 		</div> -->
+
+<ChatFilePreview bind:showFilePreview />
+<ChatThumbsFetch {uris} bind:rowThumbs />
+
+{#snippet generatingMessages(columnID?: string)}
+	{#if columnID}
+		{#each displayedLoadedStreams as key}
+			{#if key === columnID}
+				{@const loadedStream = loadedStreams[key]}
+				{@const latestStream = latestStreams[key] ?? ''}
+				<div class="flex items-center gap-2 text-sm">
+					<span class="line-clamp-1 text-[#98A2B3]">
+						{key}
+					</span>
+				</div>
+
+				<div
+					data-testid="chat-message"
+					data-streaming="true"
+					class:w-full={displayedLoadedStreams.length > 1}
+					class="group relative max-w-full scroll-my-2 self-start rounded-xl bg-[#F2F4F7] p-4 text-text data-dark:bg-[#5B7EE5]"
+				>
+					<p class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
+						{@html converter.makeHtml(loadedStream.join(''))}
+						{latestStream}
+
+						{#if loadedStream.length === 0 && latestStream === ''}
+							<RowStreamIndicator />
+						{/if}
+					</p>
+				</div>
+			{/if}
+		{/each}
+	{:else}
+		<div
+			class="message-container flex flex-[0_0_auto] gap-3 overflow-x-auto overflow-y-hidden px-3 transition-[padding] @2xl/chat:px-6 @4xl/chat:px-20 @6xl/chat:px-36 @7xl/chat:px-72 supports-[not(container-type:inline-size)]:px-6 supports-[not(container-type:inline-size)]:lg:px-20 supports-[not(container-type:inline-size)]:2xl:px-36 supports-[not(container-type:inline-size)]:3xl:px-72"
+		>
+			{#each displayedLoadedStreams as key}
+				{@const loadedStream = loadedStreams[key]}
+				{@const latestStream = latestStreams[key] ?? ''}
+				<div
+					class={cn(
+						'group/message-container flex flex-col gap-1',
+						displayedLoadedStreams.length > 1
+							? 'min-w-full @5xl/chat:min-w-[50%] supports-[not(container-type:inline-size)]:xl:min-w-[50%]'
+							: '',
+						displayedLoadedStreams.length == 1
+							? '@5xl/chat:pr-[20%] supports-[not(container-type:inline-size)]:xl:pr-[20%]'
+							: ''
+					)}
+				>
+					<div class="flex items-center gap-2 text-sm">
+						<span class="line-clamp-1 text-[#98A2B3]">
+							{key}
+						</span>
+					</div>
+
+					<div
+						data-testid="chat-message"
+						data-streaming="true"
+						class:w-full={displayedLoadedStreams.length > 1}
+						class="group relative max-w-full scroll-my-2 self-start rounded-xl bg-[#F2F4F7] p-4 text-text data-dark:bg-[#5B7EE5]"
+					>
+						<p class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
+							{@html converter.makeHtml(loadedStream.join(''))}
+							{latestStream}
+
+							{#if loadedStream.length === 0 && latestStream === ''}
+								<RowStreamIndicator />
+							{/if}
+						</p>
+					</div>
+				</div>
+			{/each}
+		</div>
+	{/if}
+{/snippet}
 
 <style>
 	.message-container::-webkit-scrollbar {

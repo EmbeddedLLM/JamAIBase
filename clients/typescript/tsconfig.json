@@ -12,6 +12,7 @@
   "compilerOptions": {
     "emitDeclarationOnly": true,
     "module": "ESNext",
+    "moduleResolution": "node",
     "removeComments": false,
     "declaration": true,
     "allowSyntheticDefaultImports": true,
@@ -21,7 +22,6 @@
     "baseUrl": "./",
     "incremental": false,
     "esModuleInterop": true,
-    "moduleResolution": "Node",
     "noUncheckedIndexedAccess": true,
     "paths": {
       "@/*": [

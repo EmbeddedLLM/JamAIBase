@@ -1,7 +1,11 @@
 <script lang="ts">
-	let className: string | undefined | null = undefined;
-	export { className as class };
-	export let ascending = true;
+	
+	interface Props {
+		class?: string | undefined | null;
+		ascending?: boolean;
+	}
+
+	let { class: className = undefined, ascending = true }: Props = $props();
 </script>
 
 {#if ascending}

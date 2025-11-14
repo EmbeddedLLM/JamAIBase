@@ -1,9 +1,9 @@
-import type { ComponentType } from 'svelte';
+import type { AxiosRequestConfig } from 'axios';
+import type { Component } from 'svelte';
 import { z } from 'zod';
 import type { genTableDTypes, userRoles } from './constants';
-import type { AxiosRequestConfig } from 'axios';
 
-export interface AvailableModel {
+export type AvailableModel = {
 	id: string;
 	name: string;
 	context_length: number;
@@ -11,23 +11,66 @@ export interface AvailableModel {
 	owned_by: string;
 	capabilities: string[];
 	object: string;
-}
+};
+
+export type ModelConfig = {
+	meta: Record<string, unknown>;
+	created_at: string;
+	updated_at: string;
+	id: string;
+	type: 'completion' | 'llm' | 'embed' | 'rerank';
+	name: string;
+	owned_by: string | null;
+	capabilities: ('completion' | 'chat' | 'tool' | 'image' | 'audio' | 'embed' | 'rerank')[];
+	context_length: number;
+	languages: string[];
+	max_output_tokens: number | null;
+	timeout: number;
+	priority: number;
+	allowed_orgs: string[];
+	blocked_orgs: string[];
+	llm_input_cost_per_mtoken: number;
+	llm_output_cost_per_mtoken: number;
+	embedding_size: number | null;
+	embedding_dimensions: number | null;
+	embedding_transform_query: string | null;
+	embedding_cost_per_mtoken: number;
+	reranking_cost_per_ksearch: number;
+	is_private: boolean;
+	deployments: Omit<ModelDeployment, 'model'>[];
+};
+
+export type ModelDeployment = {
+	meta: Record<string, unknown>;
+	created_at: string;
+	updated_at: string;
+	id: string;
+	name: string;
+	routing_id: string;
+	api_base: string;
+	/**  Standard providers are [<CloudProvider.ANTHROPIC: 'anthropic'>, <CloudProvider.AZURE: 'azure'>, <CloudProvider.AZURE_AI: 'azure_ai'>, <CloudProvider.BEDROCK: 'bedrock'>, <CloudProvider.CEREBRAS: 'cerebras'>, <CloudProvider.COHERE: 'cohere'>, <CloudProvider.DEEPSEEK: 'deepseek'>, <CloudProvider.ELLM: 'ellm'>, <CloudProvider.GEMINI: 'gemini'>, <CloudProvider.GROQ: 'groq'>, <CloudProvider.HYPERBOLIC: 'hyperbolic'>, <CloudProvider.JINA_AI: 'jina_ai'>, <CloudProvider.OPENAI: 'openai'>, <CloudProvider.OPENROUTER: 'openrouter'>, <CloudProvider.SAGEMAKER: 'sagemaker'>, <CloudProvider.SAMBANOVA: 'sambanova'>, <CloudProvider.TOGETHER_AI: 'together_ai'>, <CloudProvider.VERTEX_AI: 'vertex_ai'>, <CloudProvider.VOYAGE: 'voyage'>]. */
+	provider: string;
+	weight: number;
+	cooldown_until: string;
+	model_id: string;
+	model: any;
+};
 
 export type SideDockLink = {
 	type: 'link';
 	title: string;
 	href: string;
 	openNewTab?: boolean;
-	Icon: ComponentType;
+	Icon: Component;
 	iconClass?: string;
-	EndIcon?: ComponentType;
-	excludeFromLocal?: boolean;
+	EndIcon?: Component;
+	exclude?: boolean;
 };
 
 type SideDockCategory = {
 	type: 'category';
 	title: string;
-	excludeFromLocal?: boolean;
+	exclude?: boolean;
 };
 
 export type SideDockItem = SideDockLink | SideDockCategory;
@@ -103,17 +146,86 @@ type ThreadObj = ChatRequest['messages'][number] & { column_id: string };
 type ThreadErr = { error?: number; message: any } & { column_id: string };
 export type Thread = ThreadObj | ThreadErr;
 
+export type Conversation = {
+	conversation_id: string;
+	meta: Record<string, unknown>;
+	cols: GenTableCol[];
+	parent_id: string | null;
+	title: string;
+	created_by: string | null;
+	updated_at: string;
+	num_rows: number;
+	version: string;
+};
+
+export type ChatReferences = {
+	object: 'chat.references';
+	chunks: {
+		text: string;
+		title: string;
+		context: object;
+		page: number | null;
+		file_name: string;
+		file_path: string;
+		document_id: string;
+		chunk_id: string;
+		metadata: {
+			score?: string;
+			table_id?: string;
+			rrf_score?: string;
+			project_id?: string;
+		};
+	}[];
+	search_query: string;
+	/** @deprecated */
+	finish_reason: string | null;
+};
+
+export type ChatThread = {
+	object: 'chat.thread';
+	thread: {
+		row_id: string;
+		role: string;
+		content:
+			| string
+			| (
+					| {
+							type: 'text';
+							text: string;
+					  }
+					| {
+							type: 'input_s3';
+							uri: string;
+							column_name: string;
+					  }
+			  )[];
+		name: string | null;
+		user_prompt: string | null;
+		references: ChatReferences | null;
+	}[];
+};
+
+export type ChatThreads = {
+	object: 'chat.threads';
+	threads: Record<string, ChatThread>;
+};
+
 export interface GenTableCol {
 	id: string;
 	dtype: (typeof genTableDTypes)[string];
 	vlen: number;
 	index: boolean;
-	gen_config: (CodeGenConfig | LLMGenConfig | EmbedGenConfig) | null;
+	gen_config: (CodeGenConfig | LLMGenConfig | PythonGenConfig | EmbedGenConfig) | null;
 }
 
 export interface CodeGenConfig {
 	object: 'gen_config.code';
 	source_column: string;
+}
+
+export interface PythonGenConfig {
+	object: 'gen_config.python';
+	python_code: string;
 }
 
 export interface LLMGenConfig {
@@ -129,6 +241,7 @@ export interface LLMGenConfig {
 		reranking_model: string | null;
 		rerank?: boolean;
 		concat_reranker_input?: boolean;
+		inline_citations?: boolean;
 	} | null;
 	temperature?: number;
 	top_p?: number;
@@ -176,30 +289,100 @@ export type GenTableStreamEvent = {
 
 //* Non-local
 export type PriceRes = {
-	plans: {
-		[key: string]: {
-			stripe_price_id: string;
-			flat_amount_decimal: string;
-			credit_grant: number;
-			max_users: number;
-			products: {
-				[key: string]: {
-					name: string;
-					included: {
-						unit_amount_decimal: string;
-						up_to: number;
-					};
-					tiers: [
-						{
-							unit_amount_decimal: string;
-							up_to: number | null;
-						}
-					];
-					unit: string;
-				};
-			};
-		};
+	meta: Record<string, unknown>;
+	created_at: string;
+	updated_at: string;
+	id: string;
+	name: string;
+	stripe_price_id_live: string;
+	stripe_price_id_test: string;
+	flat_cost: number;
+	credit_grant: number;
+	max_users: number | null;
+	products: {
+		llm_tokens: PriceProduct;
+		embedding_tokens: PriceProduct;
+		reranker_searches: PriceProduct;
+		db_storage: PriceProduct;
+		file_storage: PriceProduct;
+		egress: PriceProduct;
 	};
+	allowed_orgs: string[];
+	is_private: boolean;
+	stripe_price_id: string;
+};
+
+export type PriceProduct = {
+	name: string;
+	included: {
+		unit_cost: number;
+		up_to: number | null;
+	};
+	tiers: {
+		unit_cost: number;
+		up_to: number | null;
+	}[];
+	unit: string;
+};
+
+export type Auth0User = {
+	sid: string;
+	given_name?: string;
+	nickname: string;
+	name: string;
+	picture: string;
+	locale?: string;
+	updated_at: string;
+	email: string;
+	email_verified: boolean;
+	sub: string;
+};
+
+export type User = {
+	meta: Record<string, unknown>;
+	created_at: string;
+	updated_at: string;
+	id: string;
+	name: string;
+	email: string;
+	email_verified: boolean;
+	picture_url: string | null;
+	refresh_counter: number;
+	google_id: string | null;
+	google_name: string | null;
+	google_username: string | null;
+	google_email: string | null;
+	google_picture_url: string | null;
+	google_updated_at: string | null;
+	github_id: string | null;
+	github_name: string | null;
+	github_username: string | null;
+	github_email: string | null;
+	github_picture_url: string | null;
+	github_updated_at: string | null;
+	password_hash: string | null;
+	org_memberships: {
+		meta: Record<string, unknown>;
+		created_at: string;
+		updated_at: string;
+		user_id: string;
+		organization_id: string;
+		role: (typeof userRoles)[number];
+	}[];
+	proj_memberships: {
+		meta: Record<string, unknown>;
+		created_at: string;
+		updated_at: string;
+		user_id: string;
+		project_id: string;
+		role: (typeof userRoles)[number];
+	}[];
+	organizations: OrganizationReadRes[];
+	projects: Project[];
+	preferred_name: string;
+	preferred_username: string | null;
+	preferred_email: string;
+	preferred_picture_url: string | null;
 };
 
 export type Organization = {
@@ -209,57 +392,90 @@ export type Organization = {
 };
 
 export type OrganizationReadRes = {
+	meta: Record<string, unknown>;
+	created_at: string;
+	updated_at: string;
 	id: string;
-	creator_user_id: string;
 	name: string;
-	tier: string;
-	active: boolean;
+	currency: string;
+	external_keys: Record<string, string>;
 	credit: number;
 	credit_grant: number;
+	created_by: string;
+	owner: string;
+	stripe_id: string | null;
+	price_plan_id: string | null;
+	payment_state: string | null;
+	last_subscription_payment_at: string | null;
+	quota_reset_at: string;
+	llm_tokens_quota_mtok: number | null;
+	llm_tokens_usage_mtok: number;
+	embedding_tokens_quota_mtok: number | null;
+	embedding_tokens_usage_mtok: number;
+	reranker_quota_ksearch: number | null;
+	reranker_usage_ksearch: number;
+	db_quota_gib: number | null;
+	db_usage_gib: number;
+	file_quota_gib: number | null;
+	file_usage_gib: number;
+	egress_quota_gib: number | null;
+	egress_usage_gib: number;
+	price_plan: PriceRes | null;
+	active: boolean;
 	quotas: {
 		[key: string]: {
 			quota: number;
 			usage: number;
 		};
 	};
-	db_usage_gib: number;
-	file_usage_gib: number;
-	stripe_id: string;
-	openmeter_id: string;
-	external_keys?: Record<string, string>;
+};
+
+export type OrgMemberRead = {
+	meta: Record<string, unknown>;
 	created_at: string;
 	updated_at: string;
-	members?: {
-		organization_id: string;
-		user_id: string;
-		role: (typeof userRoles)[number];
-		created_at: string;
-		updated_at: string;
-	}[];
-	api_keys?: {
-		created_at: string;
-		id: string;
-		organization_id: string;
-	}[];
-	projects: {
-		name: string;
-		organization_id: string;
-		updated_at: string;
-		created_at: string;
-		id: string;
-	}[];
-	timezone: string;
-	currency: string;
-	total_spent: number;
+	user_id: string;
+	organization_id: string;
+	role: (typeof userRoles)[number];
+	user: Omit<User, 'org_memberships' | 'proj_memberships' | 'organizations' | 'projects'>;
+	organization: OrganizationReadRes;
 };
 
 export type Project = {
-	name: string;
-	organization_id: string;
-	id: string;
+	meta: Record<string, unknown>;
 	created_at: string;
 	updated_at: string;
+	id: string;
+	name: string;
+	quotas: Record<string, unknown>;
+	tags: string[];
+	profile_picture_url: string | null;
+	cover_picture_url: string | null;
+	created_by: string;
+	owner: string;
+	organization_id: string;
 	organization: Omit<OrganizationReadRes, 'api_keys'>;
+};
+
+export type ProjectMemberRead = {
+	meta: Record<string, unknown>;
+	created_at: string;
+	updated_at: string;
+	user_id: string;
+	project_id: string;
+	role: (typeof userRoles)[number];
+	user: Omit<
+		User,
+		| 'org_memberships'
+		| 'proj_memberships'
+		| 'organizations'
+		| 'projects'
+		| 'preferred_name'
+		| 'preferred_username'
+		| 'preferred_email'
+		| 'preferred_picture_url'
+	>;
+	project: Project;
 };
 
 export type Template = {
@@ -280,22 +496,14 @@ export type API_Key = {
 };
 
 export type PATRead = {
-	id: string;
-	user_id: string;
-	expiry: string;
+	meta: Record<string, unknown>;
 	created_at: string;
-};
-
-export type UserRead = {
+	updated_at: string;
 	id: string;
 	name: string;
-	description: string;
-	email: string;
-	meta: Record<string, string>;
-	created_at: string;
-	update_at: string;
-	member_of: Organization[];
-	pats: PATRead[];
+	expiry: string | null;
+	project_id: string | null;
+	user_id: string;
 };
 
 // Openmeter
@@ -310,27 +518,34 @@ export type TUsageDataStorage = Omit<TUsageData, 'model'> & {
 	type: 'file' | 'db' | '';
 };
 
-export const openmeterUsageItemSchema = z
+export const usageItemSchema = z
 	.object({
 		value: z.number(),
 		subject: z.string(),
-		windowStart: z.string(),
-		windowEnd: z.string()
+		window_start: z.string(),
+		window_end: z.string()
 	})
 	.passthrough();
 
-export const openmeterTokenUsageSchema = z.array(
-	openmeterUsageItemSchema.merge(
+export const tokenUsageSchema = z.array(
+	usageItemSchema.merge(
 		z.object({
 			groupBy: z.object({ model: z.string() })
 		})
 	)
 );
-export const openmeterStorageUsageSchema = z.array(
-	openmeterUsageItemSchema.merge(
+export const storageUsageSchema = z.array(
+	usageItemSchema.merge(
 		z.object({
 			groupBy: z.object({ type: z.enum(['file', 'db']) })
 		})
 	)
 );
-export const openmeterBaseUsageSchema = z.array(openmeterUsageItemSchema);
+export const bandwidthUsageSchema = z.array(
+	usageItemSchema.merge(
+		z.object({
+			groupBy: z.object({ type: z.enum(['egress']) })
+		})
+	)
+);
+export const baseUsageSchema = z.array(usageItemSchema);

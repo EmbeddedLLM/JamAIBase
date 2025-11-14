@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { PUBLIC_IS_LOCAL, PUBLIC_JAMAI_URL } from '$env/static/public';
-	import { onMount } from 'svelte';
+	import { env as publicEnv } from '$env/dynamic/public';
+	import { onMount, tick } from 'svelte';
 	import { browser } from '$app/environment';
+	import { page } from '$app/state';
 	import debounce from 'lodash/debounce';
-	import Trash_2 from 'lucide-svelte/icons/trash-2';
+	import { Clipboard, ClipboardPlus, Compass, Trash2 } from '@lucide/svelte';
 	import {
 		activeProject,
 		activeOrganization,
@@ -15,6 +16,8 @@
 
 	import ProjectDialogs from './ProjectDialogs.svelte';
 	import ExportProjectButton from './ExportProjectButton.svelte';
+	import { m } from '$lib/paraglide/messages';
+	import { getLocale } from '$lib/paraglide/runtime';
 	import InputText from '$lib/components/InputText.svelte';
 	import SorterSelect from '$lib/components/preset/SorterSelect.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
@@ -22,7 +25,6 @@
 	import { Skeleton } from '$lib/components/ui/skeleton';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
-	import AssignmentIcon from '$lib/icons/AssignmentIcon.svelte';
 	import AddIcon from '$lib/icons/AddIcon.svelte';
 	import MoreVertIcon from '$lib/icons/MoreVertIcon.svelte';
 	import EditIcon from '$lib/icons/EditIcon.svelte';
@@ -32,32 +34,35 @@
 	import ImportIcon from '$lib/icons/ImportIcon.svelte';
 	import ExportIcon from '$lib/icons/ExportIcon.svelte';
 
-	export let data;
-	$: ({ activeOrganizationId } = data);
+	const { PUBLIC_JAMAI_URL } = publicEnv;
+
+	let { data } = $props();
+	let { activeOrganizationId } = $derived(data);
 
 	let fetchController: AbortController | null = null;
-	let orgProjects: Project[] = [];
-	let loadingProjectsError: { status: number; message: string } | null = null;
-	let isLoadingProjects = true;
-	let isLoadingMoreProjects = false;
+	let orgProjects: Project[] = $state([]);
+	let loadingProjectsError: { status: number; message: string } | null = $state(null);
+	let isLoadingProjects = $state(true);
+	let isLoadingMoreProjects = $state(false);
 	let moreProjectsFinished = false; //FIXME: Bandaid fix for infinite loop caused by loading circle
 	let currentOffset = 0;
 	const limit = 50;
 	const sortableFields = [
-		{ id: 'name', title: 'Name', Icon: SortAlphabetIcon },
-		{ id: 'created_at', title: 'Date created', Icon: SortByIcon },
-		{ id: 'updated_at', title: 'Date modified', Icon: SortByIcon }
+		{ id: 'name', title: m['sortable.name'](), Icon: SortAlphabetIcon },
+		{ id: 'created_at', title: m['sortable.created_at'](), Icon: SortByIcon },
+		{ id: 'updated_at', title: m['sortable.updated_at'](), Icon: SortByIcon }
 	];
 
-	let searchQuery = '';
-	let searchController: AbortController | null = null;
-	let isLoadingSearch = false;
+	let searchQuery = $state('');
+	let isLoadingSearch = $state(false);
 
-	let isAddingProject = false;
-	let isEditingProjectName: Project | null = null;
-	let isDeletingProject: string | null = null;
+	let isAddingProject = $state(page.url.searchParams.has('new'));
+	let isEditingProjectName: Project | null = $state(null);
+	let isDeletingProject: string | null = $state(null);
 
-	$: if (browser && activeOrganizationId) refetchProjects();
+	$effect(() => {
+		if (browser && activeOrganizationId) refetchProjects();
+	});
 
 	onMount(() => {
 		return () => {
@@ -67,6 +72,7 @@
 	});
 
 	async function getProjects() {
+		if (!$activeOrganization) return;
 		if (!isLoadingProjects) {
 			isLoadingMoreProjects = true;
 		}
@@ -74,29 +80,22 @@
 		fetchController = new AbortController();
 
 		try {
-			const searchParams = new URLSearchParams({
-				offset: currentOffset.toString(),
-				limit: limit.toString(),
-				order_by: $sortOptions.orderBy,
-				order_descending: $sortOptions.order === 'asc' ? 'false' : 'true',
-				search_query: searchQuery.trim()
+			const searchParams = new URLSearchParams([
+				['offset', currentOffset.toString()],
+				['limit', limit.toString()],
+				['order_by', $sortOptions.orderBy],
+				['order_ascending', $sortOptions.order === 'asc' ? 'true' : 'false'],
+				['organization_id', $activeOrganization.id]
+			]);
+
+			if (searchQuery.trim() !== '') {
+				searchParams.append('search_query', searchQuery.trim());
+			}
+
+			const response = await fetch(`${PUBLIC_JAMAI_URL}/api/owl/projects/list?${searchParams}`, {
+				credentials: 'same-origin',
+				signal: fetchController.signal
 			});
-
-			if (searchParams.get('search_query') === '') {
-				searchParams.delete('search_query');
-			}
-
-			if (PUBLIC_IS_LOCAL !== 'false') {
-				searchParams.append('organization_id', 'default');
-			}
-
-			const response = await fetch(
-				`${PUBLIC_JAMAI_URL}/api/admin/org/v1/projects?${searchParams}`,
-				{
-					credentials: 'same-origin',
-					signal: fetchController.signal
-				}
-			);
 			currentOffset += limit;
 
 			if (response.status == 200) {
@@ -111,21 +110,21 @@
 				const responseBody = await response.json();
 				console.error(responseBody);
 				toast.error('Failed to fetch projects', {
-					id: responseBody.err_message?.message || JSON.stringify(responseBody),
+					id: responseBody?.message || JSON.stringify(responseBody),
 					description: CustomToastDesc as any,
 					componentProps: {
-						description: responseBody.err_message?.message || JSON.stringify(responseBody),
-						requestID: responseBody.err_message?.request_id
+						description: responseBody?.message || JSON.stringify(responseBody),
+						requestID: responseBody?.request_id
 					}
 				});
 				loadingProjectsError = {
 					status: response.status,
-					message: responseBody.err_message
+					message: responseBody
 				};
 			}
 		} catch (err) {
 			//* don't show abort errors in browser
-			if (err !== 'Navigated') {
+			if (err !== 'Navigated' && err !== 'Duplicate') {
 				console.error(err);
 			}
 		}
@@ -135,16 +134,13 @@
 	}
 
 	async function refetchProjects() {
-		if (searchQuery) {
-			await handleSearchProjects(searchQuery);
-		} else {
-			searchController?.abort('Duplicate');
-			orgProjects = [];
-			currentOffset = 0;
-			moreProjectsFinished = false;
-			await getProjects();
-			isLoadingSearch = false;
-		}
+		fetchController?.abort('Duplicate');
+		orgProjects = [];
+		currentOffset = 0;
+		moreProjectsFinished = false;
+		await tick();
+		await getProjects();
+		isLoadingSearch = false;
 	}
 
 	async function handleImportProject(
@@ -174,7 +170,8 @@
 
 		const formData = new FormData();
 		formData.append('file', files[0]);
-		// formData.append('project_id_dst', '');
+		// formData.append('project_id', '');
+		formData.append('organization_id', $activeOrganization.id);
 
 		$uploadQueue = {
 			...$uploadQueue,
@@ -184,68 +181,25 @@
 					file: files[0],
 					request: {
 						method: 'POST',
-						url: `${PUBLIC_JAMAI_URL}/api/admin/org/v1/projects/import/${$activeOrganization.organization_id}`,
+						url: `${PUBLIC_JAMAI_URL}/api/owl/projects/import/parquet`,
 						data: formData,
 						headers: {
 							'Content-Type': 'multipart/form-data'
 						}
 					},
 					completeText: 'Importing project...',
-					successText: `Imported to: ${$activeOrganization.organization_name}`,
+					successText: `Imported to: ${$activeOrganization.name}`,
 					invalidate: refetchProjects
 				}
 			]
 		};
 	}
 
-	async function handleSearchProjects(q: string) {
+	const debouncedSearchProjects = debounce((e) => {
+		searchQuery = e.target?.value;
 		isLoadingSearch = true;
-
-		if (!searchQuery) return refetchProjects();
-
-		searchController?.abort('Duplicate');
-		searchController = new AbortController();
-
-		try {
-			const response = await fetch(
-				`${PUBLIC_JAMAI_URL}/api/admin/org/v1/projects?${new URLSearchParams({
-					limit: limit.toString(),
-					order_by: $sortOptions.orderBy,
-					order_descending: $sortOptions.order === 'asc' ? 'false' : 'true',
-					search_query: q
-				})}`,
-				{
-					signal: searchController.signal
-				}
-			);
-			currentOffset = limit;
-			moreProjectsFinished = false;
-
-			const responseBody = await response.json();
-			if (response.ok) {
-				orgProjects = responseBody.items;
-			} else {
-				logger.error('PROJECT_LIST_SEARCH', responseBody);
-				console.error(responseBody);
-				toast.error('Failed to search projects', {
-					id: responseBody.err_message?.message || JSON.stringify(responseBody),
-					description: CustomToastDesc as any,
-					componentProps: {
-						description: responseBody.err_message?.message || JSON.stringify(responseBody),
-						requestID: responseBody.err_message?.request_id
-					}
-				});
-			}
-			isLoadingSearch = false;
-		} catch (err) {
-			//* don't show abort errors in browser
-			if (err !== 'Duplicate') {
-				console.error(err);
-				isLoadingSearch = false;
-			}
-		}
-	}
-	const debouncedSearchProjects = debounce(handleSearchProjects, 300);
+		refetchProjects();
+	}, 300);
 
 	const scrollHandler = async (e: Event) => {
 		const target = e.target as HTMLDivElement;
@@ -259,165 +213,191 @@
 </script>
 
 <svelte:head>
-	<title>Projects</title>
+	<title>{m['project.heading']()}</title>
 </svelte:head>
 
-<section class="grow relative flex flex-col gap-2 h-1 overflow-auto">
-	<div class="relative flex flex-col gap-2 md:pt-3 pb-0 pl-7 pr-6">
+<section
+	onscroll={debounce(scrollHandler, 300)}
+	class="relative flex h-1 grow flex-col gap-2 overflow-auto [scrollbar-gutter:stable]"
+>
+	<div class="flex flex-col gap-2 pb-0 pl-7 pr-6 md:pt-3">
 		<div class="flex items-center gap-3 pl-1 pt-0.5 text-[#344054]">
-			<AssignmentIcon class="h-5" />
-			<h1 class="text-xl">Projects</h1>
-		</div>
-
-		<div class="static xs:absolute right-7">
-			<InputText
-				on:input={({ detail: e }) => {
-					//@ts-expect-error Generic type
-					debouncedSearchProjects(e.target?.value ?? '');
-				}}
-				bind:value={searchQuery}
-				type="search"
-				placeholder="Search Project"
-				class="pl-8 h-9 w-[16rem] placeholder:not-italic placeholder:text-[#98A2B3] bg-[#F2F4F7] rounded-full"
-			>
-				<svelte:fragment slot="leading">
-					{#if isLoadingSearch}
-						<div class="absolute top-1/2 left-3 -translate-y-1/2 pointer-events-none">
-							<LoadingSpinner class="h-3" />
-						</div>
-					{:else}
-						<SearchIcon
-							class="absolute top-1/2 left-3 -translate-y-1/2 h-3 text-[#667085] pointer-events-none"
-						/>
-					{/if}
-				</svelte:fragment>
-			</InputText>
+			<h1 class="text-xl">{m['project.heading']()}</h1>
 		</div>
 	</div>
 
-	<div on:scroll={debounce(scrollHandler, 300)} class="overflow-auto [scrollbar-gutter:stable]">
-		<div class="flex gap-3 pt-2 pb-0 px-7 min-h-0">
+	<div>
+		<div class="flex min-h-0 gap-3 overflow-auto px-7 pb-0 pt-2">
 			<button
-				on:click={() => (isAddingProject = true)}
-				class="flex flex-col items-center justify-center gap-2 min-h-36 w-40 bg-[#FFEBEF] hover:bg-[#F5E2E5] rounded-lg transition-colors duration-300 group"
+				onclick={() => (isAddingProject = true)}
+				class="group flex min-h-36 min-w-40 flex-col items-center justify-center gap-2 rounded-lg bg-[#FFEBEF] transition-colors duration-300 hover:bg-[#F5E2E5]"
 			>
 				<div
-					class="flex items-center justify-center h-11 bg-[#BF416E] rounded-full aspect-square group-hover:scale-105 transition-transform duration-300"
+					class="flex aspect-square h-11 items-center justify-center rounded-full bg-[#BF416E] transition-transform duration-300 group-hover:scale-105"
 				>
 					<AddIcon class="h-5 w-5 text-white" />
 				</div>
 
-				<span class=" text-sm text-[#475467]"> New Project </span>
+				<span class=" text-sm text-[#475467]">{m['project.create_btn']()}</span>
 			</button>
 
-			<button
-				on:click={(e) => e.currentTarget.querySelector('input')?.click()}
-				class="flex flex-col items-center justify-center gap-2 min-h-36 w-40 bg-[#EBEFFB] hover:bg-[#E2E5F1] rounded-lg transition-colors duration-300 group"
+			<a
+				href="/join-project"
+				class="group flex min-h-36 min-w-40 flex-col items-center justify-center gap-2 rounded-lg bg-[#FFEBEF] transition-colors duration-300 hover:bg-[#F5E2E5]"
 			>
 				<div
-					class="flex items-center justify-center h-11 bg-[#4169E1] rounded-full aspect-square group-hover:scale-105 transition-transform duration-300"
+					class="flex aspect-square h-11 items-center justify-center rounded-full bg-[#BF416E] transition-transform duration-300 group-hover:scale-105"
+				>
+					<ClipboardPlus class="text-white" />
+				</div>
+
+				<span class=" text-sm text-[#475467]">Join Project</span>
+			</a>
+
+			<button
+				onclick={(e) => e.currentTarget.querySelector('input')?.click()}
+				class="group flex min-h-36 min-w-40 flex-col items-center justify-center gap-2 rounded-lg bg-[#EBEFFB] transition-colors duration-300 hover:bg-[#E2E5F1]"
+			>
+				<div
+					class="flex aspect-square h-11 items-center justify-center rounded-full bg-[#4169E1] transition-transform duration-300 group-hover:scale-105"
 				>
 					<ImportIcon class="h-5 w-5 text-white" />
 				</div>
 
-				<span class=" text-sm text-[#475467]"> Import Project </span>
+				<span class=" text-sm text-[#475467]">{m['project.import_btn']()}</span>
 
 				<input
 					id="project-import"
 					type="file"
 					accept=".parquet"
-					on:change|preventDefault={(e) =>
-						handleImportProject(e, [...(e.currentTarget.files ?? [])])}
+					onchange={(e) => {
+						e.preventDefault();
+						handleImportProject(e, [...(e.currentTarget.files ?? [])]);
+					}}
 					multiple={false}
-					class="fixed max-h-[0] max-w-0 !p-0 !border-none overflow-hidden"
+					class="fixed max-h-[0] max-w-0 overflow-hidden !border-none !p-0"
 				/>
 			</button>
+
+			<a
+				href="/template"
+				class="group flex min-h-36 min-w-40 flex-col items-center justify-center gap-2 rounded-lg bg-[#90E9EF80] transition-colors duration-300 hover:bg-[#E2E5F1]"
+			>
+				<div
+					class="flex aspect-square h-11 items-center justify-center rounded-full bg-[#019AA3] transition-transform duration-300 group-hover:scale-105"
+				>
+					<Compass class="text-white" />
+				</div>
+
+				<span class=" text-sm text-[#475467]">Browse Templates</span>
+			</a>
 		</div>
 
-		<div class="flex flex-col gap-1.5 pt-6 pb-0 px-6 min-h-0">
-			<div class="relative flex flex-col">
-				<h2 class="pl-1 text-xl">All Projects</h2>
+		<div class="flex min-h-0 flex-col px-6 pb-0 pt-6">
+			<div class="sticky top-0 z-[1] flex flex-col gap-3 bg-[#F2F4F7] pb-1.5">
+				<h2 class="pl-1 text-xl">{m['project.subheading']()}</h2>
 
-				<SorterSelect
-					bind:sortOptions={$sortOptions}
-					{sortableFields}
-					refetchTables={refetchProjects}
-					class="static xs:absolute right-1"
-				/>
+				<div class="flex flex-col items-start justify-start gap-1 sm:flex-row">
+					<div>
+						<InputText
+							oninput={debouncedSearchProjects}
+							type="search"
+							placeholder={m['project.search_placeholder']()}
+							class="h-9 w-[16rem] pl-8 placeholder:not-italic placeholder:text-[#98A2B3]"
+						>
+							{#snippet leading()}
+								{#if isLoadingSearch}
+									<div class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
+										<LoadingSpinner class="h-3" />
+									</div>
+								{:else}
+									<SearchIcon
+										class="pointer-events-none absolute left-3 top-1/2 h-3 -translate-y-1/2 text-[#667085]"
+									/>
+								{/if}
+							{/snippet}
+						</InputText>
+					</div>
+
+					<SorterSelect
+						bind:sortOptions={$sortOptions}
+						{sortableFields}
+						refetchTables={refetchProjects}
+						class="w-min min-w-[unset]"
+					/>
+				</div>
 			</div>
 
 			{#if !loadingProjectsError}
 				<div
 					style="grid-auto-rows: 128px;"
-					class="grow grid grid-cols-[minmax(15rem,1fr)] sm:grid-cols-[repeat(auto-fill,_minmax(300px,_1fr))] grid-flow-row gap-4 pt-1 pb-4 px-1"
+					class="grid grow grid-flow-row grid-cols-[minmax(15rem,1fr)] gap-4 px-1 pb-4 pt-1 sm:grid-cols-[repeat(auto-fill,_minmax(300px,_1fr))]"
 				>
 					{#if isLoadingProjects}
 						{#each Array(8) as _}
 							<Skeleton
-								class="flex flex-col items-center justify-center gap-2 bg-black/[0.09] data-dark:bg-white/[0.1] rounded-lg"
+								class="flex flex-col items-center justify-center gap-2 rounded-lg bg-black/[0.09] data-dark:bg-white/[0.1]"
 							/>
 						{/each}
 					{:else}
 						{#each orgProjects ?? [] as project (project.id)}
 							<a
-								on:click={() => ($activeProject = project)}
-								href="/project/{project.id}"
+								onclick={() => ($activeProject = project)}
+								href="/project/{encodeURIComponent(project.id)}"
 								title={project.id}
-								class="flex flex-col bg-white data-dark:bg-[#42464E] border border-[#E5E5E5] data-dark:border-[#333] rounded-lg hover:-translate-y-0.5 hover:shadow-float transition-[transform,box-shadow]"
+								class="flex flex-col rounded-lg border border-[#E5E5E5] bg-white transition-[transform,box-shadow] hover:-translate-y-0.5 hover:shadow-float data-dark:border-[#333] data-dark:bg-[#42464E]"
 							>
-								<div
-									class="grow flex items-start justify-between p-3 border-b border-[#E5E5E5] data-dark:border-[#333]"
-								>
+								<div class="flex grow items-start justify-between p-3">
 									<div class="flex items-start gap-1.5">
-										<span class="bg-[#FFEFF2] rounded p-1">
-											<AssignmentIcon class="flex-[0_0_auto] h-4 w-4 text-[#950048]" />
+										<span class="rounded bg-[#FFEFF2] p-1">
+											<Clipboard class="h-4 w-4 flex-[0_0_auto] text-[#950048]" />
 										</span>
-										<span class="text-[#344054] [word-break:break-word] line-clamp-2">
+										<span class="line-clamp-2 text-[#475467] [word-break:break-word]">
 											{project.name}
 										</span>
 									</div>
 
 									<DropdownMenu.Root>
-										<DropdownMenu.Trigger asChild let:builder>
-											<Button
-												variant="ghost"
-												on:click={(e) => e.preventDefault()}
-												builders={[builder]}
-												title="Project settings"
-												class="flex-[0_0_auto] p-0 h-7 w-7 aspect-square translate-x-1.5 -translate-y-1.5"
-											>
-												<MoreVertIcon class="h-[18px] w-[18px]" />
-											</Button>
+										<DropdownMenu.Trigger>
+											{#snippet child({ props })}
+												<Button
+													{...props}
+													variant="ghost"
+													onclick={(e) => e.preventDefault()}
+													title="Project settings"
+													class="aspect-square h-7 w-7 flex-[0_0_auto] -translate-y-1.5 translate-x-1.5 p-0"
+												>
+													<MoreVertIcon class="h-[18px] w-[18px]" />
+												</Button>
+											{/snippet}
 										</DropdownMenu.Trigger>
-										<DropdownMenu.Content
-											data-testid="project-settings-dropdown"
-											alignOffset={-60}
-											transitionConfig={{ x: 5, y: -5 }}
-										>
+										<DropdownMenu.Content data-testid="project-settings-dropdown" align="end">
 											<DropdownMenu.Group>
 												<DropdownMenu.Item
-													on:click={() => (isEditingProjectName = project)}
+													onclick={() => (isEditingProjectName = project)}
 													class="text-[#344054] data-[highlighted]:text-[#344054]"
 												>
-													<EditIcon class="h-3.5 w-3.5 mr-2" />
-													<span>Rename project</span>
+													<EditIcon class="mr-2 h-3.5 w-3.5" />
+													<span>{m['project.settings_rename']()}</span>
 												</DropdownMenu.Item>
-												<ExportProjectButton let:handleExportProject>
-													<DropdownMenu.Item
-														on:click={() => handleExportProject(project.id)}
-														class="text-[#344054] data-[highlighted]:text-[#344054]"
-													>
-														<ExportIcon class="h-3.5 mr-2" />
-														<span>Export project</span>
-													</DropdownMenu.Item>
+												<ExportProjectButton>
+													{#snippet children({ handleExportProject })}
+														<DropdownMenu.Item
+															onclick={() => handleExportProject(project.id)}
+															class="text-[#344054] data-[highlighted]:text-[#344054]"
+														>
+															<ExportIcon class="mr-2 h-3.5" />
+															<span>{m['project.settings_export']()}</span>
+														</DropdownMenu.Item>
+													{/snippet}
 												</ExportProjectButton>
 												<DropdownMenu.Separator />
 												<DropdownMenu.Item
-													on:click={() => (isDeletingProject = project.id)}
+													onclick={() => (isDeletingProject = project.id)}
 													class="text-destructive data-[highlighted]:text-destructive"
 												>
-													<Trash_2 class="h-3.5 w-3.5 mr-2" />
-													<span>Delete project</span>
+													<Trash2 class="mr-2 h-3.5 w-3.5" />
+													<span>{m['project.settings_delete']()}</span>
 												</DropdownMenu.Item>
 											</DropdownMenu.Group>
 										</DropdownMenu.Content>
@@ -426,16 +406,16 @@
 
 								<div class="flex px-3 py-2">
 									<span
-										title={new Date(project.updated_at).toLocaleString(undefined, {
+										title={new Date(project.updated_at).toLocaleString(getLocale(), {
 											month: 'long',
 											day: 'numeric',
 											year: 'numeric'
 										})}
-										class="font-medium text-xs text-[#98A2B3] data-dark:text-[#C9C9C9] line-clamp-1"
+										class="line-clamp-1 text-xs text-[#98A2B3] data-dark:text-[#C9C9C9]"
 									>
-										Last updated
-										<span class="text-[#475467]">
-											{new Date(project.updated_at).toLocaleString(undefined, {
+										{m['project.updated_at']()}
+										<span class="text-[#667085]">
+											{new Date(project.updated_at).toLocaleString(getLocale(), {
 												month: 'long',
 												day: 'numeric',
 												year: 'numeric'
@@ -448,18 +428,18 @@
 					{/if}
 
 					{#if isLoadingMoreProjects}
-						<div class="flex items-center justify-center mx-auto p-4">
+						<div class="mx-auto flex items-center justify-center p-4">
 							<LoadingSpinner class="h-5 w-5 text-secondary" />
 						</div>
 					{/if}
 				</div>
 			{:else}
-				<div class="flex items-center justify-center mx-48 my-0 h-64">
+				<div class="mx-48 my-0 flex h-64 items-center justify-center">
 					<span class="relative -top-[0.05rem] text-3xl font-extralight">
 						{loadingProjectsError.status}
 					</span>
 					<div
-						class="flex items-center ml-4 pl-4 min-h-10 border-l border-[#ccc] data-dark:border-[#666]"
+						class="ml-4 flex min-h-10 items-center border-l border-[#ccc] pl-4 data-dark:border-[#666]"
 					>
 						<h1>{JSON.stringify(loadingProjectsError.message)}</h1>
 					</div>

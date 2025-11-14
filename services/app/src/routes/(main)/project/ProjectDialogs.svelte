@@ -1,92 +1,113 @@
 <script lang="ts">
-	import { PUBLIC_IS_LOCAL, PUBLIC_JAMAI_URL } from '$env/static/public';
-	import { Dialog as DialogPrimitive } from 'bits-ui';
+	import { env as publicEnv } from '$env/dynamic/public';
+	import { page } from '$app/state';
 	import type { Project } from '$lib/types';
 
+	import { m } from '$lib/paraglide/messages';
 	import InputText from '$lib/components/InputText.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
+	import { Label } from '$lib/components/ui/label';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
+	import { escapeHtmlText } from '$lib/utils';
+	import { activeOrganization } from '$globalStore';
 
-	export let orgProjects: Project[];
-	export let isAddingProject: boolean;
-	export let isEditingProjectName: Project | null;
-	export let isDeletingProject: string | null;
-	export let refetchProjects: () => Promise<void>;
+	const { PUBLIC_JAMAI_URL } = publicEnv;
 
-	let isLoadingAddProject = false;
-	let newProjectForm: HTMLFormElement;
+	interface Props {
+		orgProjects: Project[];
+		isAddingProject: boolean;
+		isEditingProjectName: Project | null;
+		isDeletingProject: string | null;
+		refetchProjects: () => Promise<void>;
+	}
 
-	let isLoadingSaveEdit = false;
-	let editProjectForm: HTMLFormElement;
+	let {
+		orgProjects,
+		isAddingProject = $bindable(),
+		isEditingProjectName = $bindable(),
+		isDeletingProject = $bindable(),
+		refetchProjects
+	}: Props = $props();
 
-	let isLoadingDeleteProject = false;
-	let confirmProjectName = '';
-	let deleteProjectForm: HTMLFormElement;
+	let isLoadingAddProject = $state(false);
 
-	async function handleNewProject(e: SubmitEvent & { currentTarget: HTMLFormElement }) {
+	let isLoadingSaveEdit = $state(false);
+
+	let isLoadingDeleteProject = $state(false);
+	let confirmProjectName = $state('');
+
+	async function handleNewProject(
+		e: SubmitEvent & { currentTarget: EventTarget & HTMLFormElement }
+	) {
+		e.preventDefault();
 		if (isLoadingAddProject) return;
 		isLoadingAddProject = true;
 
 		const formData = new FormData(e.currentTarget);
 		const project_name = formData.get('project_name') as string;
 
-		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/admin/org/v1/projects`, {
+		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/owl/projects`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
 			},
 			body: JSON.stringify({
 				name: project_name,
-				organization_id: PUBLIC_IS_LOCAL !== 'false' ? 'default' : undefined
+				organization_id: $activeOrganization?.id
 			})
 		});
 		const responseBody = await response.json();
 
 		if (!response.ok) {
 			toast.error('Failed to create project', {
-				id: responseBody.err_message?.message || JSON.stringify(responseBody),
+				id: responseBody?.message || JSON.stringify(responseBody),
 				description: CustomToastDesc as any,
 				componentProps: {
-					description: responseBody.err_message?.message || JSON.stringify(responseBody),
-					requestID: responseBody.err_message?.request_id
+					description: responseBody?.message || JSON.stringify(responseBody),
+					requestID: responseBody?.request_id
 				}
 			});
 		} else {
 			await refetchProjects();
-			newProjectForm.reset();
+			e.currentTarget?.reset();
 			isAddingProject = false;
 		}
 
 		isLoadingAddProject = false;
 	}
 
-	async function handleSaveProjectName() {
+	async function handleSaveProjectName(
+		e: SubmitEvent & { currentTarget: EventTarget & HTMLFormElement }
+	) {
+		e.preventDefault();
 		if (!isEditingProjectName || isLoadingSaveEdit) return;
 		isLoadingSaveEdit = true;
 
-		if (!editProjectForm.project_name.value.trim()) {
+		if (!e.currentTarget?.project_name.value.trim()) {
 			toast.error('Project name is required', { id: 'project-name' });
 			isLoadingSaveEdit = false;
 			return;
 		}
 
-		if (editProjectForm.project_name.value === isEditingProjectName.name) {
+		if (e.currentTarget.project_name.value === isEditingProjectName.name) {
 			isLoadingSaveEdit = false;
 			isEditingProjectName = null;
 			return;
 		}
 
-		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/admin/org/v1/projects`, {
-			method: 'PATCH',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			body: JSON.stringify({
-				id: isEditingProjectName.id,
-				name: editProjectForm.project_name.value
-			})
-		});
+		const response = await fetch(
+			`${PUBLIC_JAMAI_URL}/api/owl/projects?${new URLSearchParams([['project_id', isEditingProjectName.id]])}`,
+			{
+				method: 'PATCH',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({
+					name: e.currentTarget.project_name.value
+				})
+			}
+		);
 		const responseBody = await response.json();
 
 		if (!response.ok) {
@@ -94,25 +115,28 @@
 				id: 'project-name-error',
 				description: CustomToastDesc as any,
 				componentProps: {
-					description: responseBody.err_message?.message || JSON.stringify(responseBody),
-					requestID: responseBody.err_message?.request_id
+					description: responseBody?.message || JSON.stringify(responseBody),
+					requestID: responseBody?.request_id
 				}
 			});
 		} else {
 			await refetchProjects();
-			editProjectForm.reset();
+			e.currentTarget?.reset();
 			isEditingProjectName = null;
 		}
 
 		isLoadingSaveEdit = false;
 	}
 
-	async function handleDeleteProject() {
+	async function handleDeleteProject(
+		e: SubmitEvent & { currentTarget: EventTarget & HTMLFormElement }
+	) {
+		e.preventDefault();
 		if (isLoadingDeleteProject) return;
 		isLoadingDeleteProject = true;
 
 		const response = await fetch(
-			`${PUBLIC_JAMAI_URL}/api/admin/org/v1/projects/${isDeletingProject}`,
+			`${PUBLIC_JAMAI_URL}/api/owl/projects?${new URLSearchParams([['project_id', isDeletingProject!]])}`,
 			{
 				method: 'DELETE'
 			}
@@ -121,16 +145,16 @@
 
 		if (!response.ok) {
 			toast.error('Error deleting project', {
-				id: responseBody.err_message?.message || JSON.stringify(responseBody),
+				id: responseBody?.message || JSON.stringify(responseBody),
 				description: CustomToastDesc as any,
 				componentProps: {
-					description: responseBody.err_message?.message || JSON.stringify(responseBody),
-					requestID: responseBody.err_message?.request_id
+					description: responseBody?.message || JSON.stringify(responseBody),
+					requestID: responseBody?.request_id
 				}
 			});
 		} else {
 			await refetchProjects();
-			deleteProjectForm?.reset();
+			e.currentTarget?.reset();
 			isDeletingProject = null;
 		}
 
@@ -139,98 +163,56 @@
 	}
 </script>
 
-<Dialog.Root
-	open={!!isEditingProjectName}
-	onOpenChange={(e) => {
-		if (!e) {
-			isEditingProjectName = null;
-		}
-	}}
->
+<Dialog.Root bind:open={() => !!isEditingProjectName, () => (isEditingProjectName = null)}>
 	<Dialog.Content
 		data-testid="rename-project-dialog"
 		class="max-h-[90vh] w-[clamp(0px,35rem,100%)]"
 	>
-		<Dialog.Header>Edit project name</Dialog.Header>
+		<Dialog.Header>{m['project.edit.heading']()}</Dialog.Header>
 
-		<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<form
-			bind:this={editProjectForm}
-			on:submit|preventDefault={handleSaveProjectName}
-			class="grow w-full overflow-auto"
+			id="editProjectForm"
+			onsubmit={handleSaveProjectName}
+			class="w-full grow overflow-auto py-3"
 		>
-			<div class="flex flex-col gap-2 px-4 sm:px-6 py-3 h-full w-full text-center">
-				<label for="project_name" class="font-medium text-left text-xs sm:text-sm text-black">
-					Project name*
-				</label>
+			<div class="h-full w-full space-y-1 px-4 sm:px-6">
+				<Label
+					required
+					for="project_name"
+					class="text-left text-xs font-medium text-black sm:text-sm"
+				>
+					{m['project.edit.field_name']()}
+				</Label>
 
 				<InputText
 					value={isEditingProjectName?.name}
 					id="project_name"
 					name="project_name"
-					placeholder="Required"
+					placeholder={m.field_required()}
 					required
 				/>
 			</div>
 
 			<!-- hidden submit -->
-			<Button type="submit" disabled={isLoadingSaveEdit} class="hidden">Save</Button>
+			<Button type="submit" disabled={isLoadingSaveEdit} class="hidden">{m.save()}</Button>
 		</form>
 
 		<Dialog.Actions>
 			<div class="flex gap-2 overflow-x-auto overflow-y-hidden">
-				<DialogPrimitive.Close asChild let:builder>
-					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
-						Cancel
-					</Button>
-				</DialogPrimitive.Close>
+				<Dialog.Close>
+					{#snippet child({ props })}
+						<Button {...props} variant="link" type="button" class="grow px-6">{m.cancel()}</Button>
+					{/snippet}
+				</Dialog.Close>
 				<Button
-					on:click={() => editProjectForm.requestSubmit()}
+					type="submit"
+					form="editProjectForm"
 					loading={isLoadingSaveEdit}
 					disabled={isLoadingSaveEdit}
-					class="relative grow px-6 rounded-full"
+					class="relative grow px-6"
 				>
-					Save
-				</Button>
-			</div>
-		</Dialog.Actions>
-	</Dialog.Content>
-</Dialog.Root>
-
-<Dialog.Root bind:open={isAddingProject}>
-	<Dialog.Content data-testid="new-project-dialog" class="max-h-[90vh] w-[clamp(0px,35rem,100%)]">
-		<Dialog.Header>New project</Dialog.Header>
-
-		<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-		<form
-			bind:this={newProjectForm}
-			on:submit|preventDefault={handleNewProject}
-			class="grow h-full w-full overflow-auto"
-		>
-			<div class="flex flex-col gap-2 px-4 sm:px-6 py-3 w-full text-center">
-				<span class="font-medium text-left text-xs sm:text-sm text-black">Project name*</span>
-
-				<InputText name="project_name" placeholder="Required" />
-			</div>
-
-			<!-- hidden submit -->
-			<Button type="submit" disabled={isLoadingAddProject} class="hidden">Add</Button>
-		</form>
-
-		<Dialog.Actions>
-			<div class="flex gap-2 overflow-x-auto overflow-y-hidden">
-				<DialogPrimitive.Close asChild let:builder>
-					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
-						Cancel
-					</Button>
-				</DialogPrimitive.Close>
-				<Button
-					on:click={() => newProjectForm.requestSubmit()}
-					loading={isLoadingAddProject}
-					disabled={isLoadingAddProject}
-					class="relative grow px-6 rounded-full"
-				>
-					Create
+					{m.save()}
 				</Button>
 			</div>
 		</Dialog.Actions>
@@ -238,10 +220,59 @@
 </Dialog.Root>
 
 <Dialog.Root
-	open={!!isDeletingProject}
+	bind:open={() => isAddingProject,
+	(v) => {
+		isAddingProject = v;
+		page.url.searchParams.delete('new');
+		history.replaceState(history.state, '', page.url);
+	}}
+>
+	<Dialog.Content data-testid="new-project-dialog" class="max-h-[90vh] w-[clamp(0px,35rem,100%)]">
+		<Dialog.Header>{m['project.create.heading']()}</Dialog.Header>
+
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+		<form
+			id="newProjectForm"
+			onsubmit={handleNewProject}
+			class="h-full w-full grow overflow-auto py-3"
+		>
+			<div class="space-y-1 px-4 sm:px-6">
+				<Label required class="text-xs sm:text-sm">
+					{m['project.create.field_name']()}
+				</Label>
+
+				<InputText required name="project_name" placeholder={m.field_required()} />
+			</div>
+
+			<!-- hidden submit -->
+			<Button type="submit" disabled={isLoadingAddProject} class="hidden">{m.add()}</Button>
+		</form>
+
+		<Dialog.Actions>
+			<div class="flex gap-2 overflow-x-auto overflow-y-hidden">
+				<Dialog.Close>
+					{#snippet child({ props })}
+						<Button {...props} variant="link" type="button" class="grow px-6">{m.cancel()}</Button>
+					{/snippet}
+				</Dialog.Close>
+				<Button
+					type="submit"
+					form="newProjectForm"
+					loading={isLoadingAddProject}
+					disabled={isLoadingAddProject}
+					class="relative grow px-6"
+				>
+					{m.create()}
+				</Button>
+			</div>
+		</Dialog.Actions>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root
+	bind:open={() => !!isDeletingProject, (v) => (isDeletingProject = null)}
 	onOpenChange={(e) => {
 		if (!e) {
-			isDeletingProject = null;
 			confirmProjectName = '';
 		}
 	}}
@@ -251,32 +282,37 @@
 		data-testid="delete-project-dialog"
 		class="max-h-[90vh] w-[clamp(0px,35rem,100%)]"
 	>
-		<Dialog.Header>Delete project</Dialog.Header>
+		<Dialog.Header>{m['project.delete.heading']()}</Dialog.Header>
 
-		<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<form
-			bind:this={deleteProjectForm}
-			on:keydown={(event) => event.key === 'Enter' && event.preventDefault()}
-			on:submit={handleDeleteProject}
-			class="grow w-full overflow-auto"
+			id="deleteProjectForm"
+			onkeydown={(event) => event.key === 'Enter' && event.preventDefault()}
+			onsubmit={handleDeleteProject}
+			class="w-full grow overflow-auto"
 		>
-			<div class="grow flex flex-col gap-4 py-3 h-full w-full overflow-auto">
-				<p class="px-4 sm:px-6 text-text/60 text-sm">
-					Do you really want to delete project
-					<span class="font-medium text-black data-dark:text-white [word-break:break-word]">
-						`{targetProject?.name ?? isDeletingProject}`
-					</span>? This process cannot be undone.
+			<div class="flex h-full w-full grow flex-col gap-4 overflow-auto py-3">
+				<p
+					class="px-4 text-sm text-text/60 sm:px-6 [&>span]:font-medium [&>span]:text-black [&>span]:[word-break:break-word] [&>span]:data-dark:text-white"
+				>
+					{@html m['project.delete.text_content']({
+						project_name: escapeHtmlText(targetProject?.name ?? isDeletingProject ?? '')
+					})}
 				</p>
 
-				<div class="flex flex-col gap-2 px-4 sm:px-6 w-full text-center">
-					<span class="font-medium text-left text-sm text-black">
-						Enter project {targetProject?.name ? 'name' : 'ID'} to confirm
+				<div class="flex w-full flex-col gap-2 px-4 text-center sm:px-6">
+					<span class="text-left text-sm font-medium text-black">
+						{m['project.delete.text_confirm']({
+							confirm_text: targetProject?.name ? 'name' : 'ID'
+						})}
 					</span>
 
 					<InputText
 						bind:value={confirmProjectName}
 						name="project_name"
-						placeholder="Project name"
+						placeholder={m['project.delete.field_confirm']({
+							confirm_text: targetProject?.name ? 'name' : 'ID'
+						})}
 					/>
 				</div>
 			</div>
@@ -284,20 +320,21 @@
 
 		<Dialog.Actions>
 			<div class="flex gap-2 overflow-x-auto overflow-y-hidden">
-				<DialogPrimitive.Close asChild let:builder>
-					<Button builders={[builder]} variant="link" type="button" class="grow px-6">
-						Cancel
-					</Button>
-				</DialogPrimitive.Close>
+				<Dialog.Close>
+					{#snippet child({ props })}
+						<Button {...props} variant="link" type="button" class="grow px-6">{m.cancel()}</Button>
+					{/snippet}
+				</Dialog.Close>
 				<Button
+					type="submit"
+					form="deleteProjectForm"
 					variant="destructive"
-					on:click={() => deleteProjectForm.requestSubmit()}
 					loading={isLoadingDeleteProject}
 					disabled={isLoadingDeleteProject ||
 						confirmProjectName !== (targetProject?.name ?? isDeletingProject)}
-					class="relative grow px-6 rounded-full"
+					class="relative grow px-6"
 				>
-					Delete
+					{m.delete()}
 				</Button>
 			</div>
 		</Dialog.Actions>

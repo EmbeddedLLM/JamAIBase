@@ -1,13 +1,25 @@
 <script lang="ts">
 	import { cn } from '$lib/utils';
 
-	export let tooltip: HTMLSpanElement | undefined = undefined;
-	export let style: string | undefined | null = undefined;
-	let className: string | undefined | null = undefined;
-	export { className as class };
+	
 
-	export let showArrow = true;
-	export let arrowSize = 10;
+	interface Props {
+		tooltip?: HTMLSpanElement | undefined;
+		style?: string | undefined | null;
+		class?: string | undefined | null;
+		showArrow?: boolean;
+		arrowSize?: number;
+		children?: import('svelte').Snippet;
+	}
+
+	let {
+		tooltip = $bindable(undefined),
+		style = undefined,
+		class: className = undefined,
+		showArrow = true,
+		arrowSize = 10,
+		children
+	}: Props = $props();
 </script>
 
 <span
@@ -19,7 +31,7 @@
 		className
 	)}
 >
-	<slot />
+	{@render children?.()}
 </span>
 
 <style>

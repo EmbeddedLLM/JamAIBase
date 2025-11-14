@@ -4,42 +4,41 @@
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
 	import SearchIcon from '$lib/icons/SearchIcon.svelte';
 
-	export let searchQuery: string;
-	export let debouncedSearch: (q: string) => Promise<void> | undefined;
-	export let isLoadingSearch: boolean;
-	export let label = 'Search';
-	export let placeholder = 'Search';
-	let className: string | undefined | null = undefined;
-	export { className as class };
+	interface Props {
+		searchQuery: string;
+		debouncedSearch: (q: string) => Promise<void> | undefined;
+		isLoadingSearch: boolean;
+		label?: string;
+		placeholder?: string;
+		class?: string | undefined | null;
+	}
+
+	let {
+		searchQuery = $bindable(),
+		debouncedSearch,
+		isLoadingSearch,
+		label = 'Search',
+		placeholder = 'Search',
+		class: className = undefined
+	}: Props = $props();
 </script>
 
-<div
-	class={cn(
-		`relative flex items-center h-8 sm:h-9 ${
-			searchQuery
-				? 'w-[12rem] sm:w-[14rem] bg-[#F2F4F7]'
-				: 'w-8 sm:w-9 has-[input:focus-visible]:w-[12rem] sm:has-[input:focus-visible]:w-[14rem] bg-[#F2F4F7] [&:not(:has(input:focus-visible))]:hover:bg-[#E4E7EC]'
-		} rounded-full transition-[height,width,background-color] has-[input:focus-within]:bg-[#E4E7EC]`,
-		className
-	)}
->
+<div class={cn('relative w-full', className)}>
 	<input
-		on:input={(e) => debouncedSearch(e.currentTarget.value)}
+		oninput={(e) => debouncedSearch(e.currentTarget.value)}
 		bind:value={searchQuery}
 		aria-label={label}
 		{placeholder}
-		class="pl-8 sm:pl-9 pr-4 py-[6.5px] sm:py-2 w-full text-xs sm:text-sm placeholder:text-[#98A2B3] bg-transparent focus-visible:outline-none {!searchQuery
-			? 'cursor-pointer focus-visible:cursor-text'
-			: ''} peer"
+		class="h-8 w-full rounded-lg border border-transparent bg-[#E4E7EC] px-3 py-2 pl-8 text-sm transition-colors placeholder:not-italic placeholder:text-[#98A2B3] focus-visible:border-[#d5607c] focus-visible:shadow-[0_0_0_1px_#FFD8DF] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 data-dark:bg-[#42464e] data-dark:focus-visible:border-[#5b7ee5] sm:h-9"
 	/>
 
 	{#if isLoadingSearch}
-		<div class="absolute top-1/2 left-2.5 sm:left-3 -translate-y-1/2 pointer-events-none">
+		<div class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 sm:left-3">
 			<LoadingSpinner class="h-3" />
 		</div>
 	{:else}
 		<SearchIcon
-			class="absolute top-1/2 left-[9px] sm:left-3 -translate-y-1/2 h-3 text-[#667085] pointer-events-none"
+			class="pointer-events-none absolute left-[9px] top-1/2 h-3 -translate-y-1/2 text-[#667085] sm:left-3"
 		/>
 	{/if}
 </div>

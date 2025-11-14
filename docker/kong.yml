@@ -1,0 +1,42 @@
+services:
+  kong-external:
+    image: kong/kong-gateway:3.6.1.4
+    volumes:
+      - ../services/gateway/kong_external.yml:/kong/declarative/kong.yml
+    environment:
+      - KONG_DATABASE=off
+      - KONG_DECLARATIVE_CONFIG=/kong/declarative/kong.yml
+      - KONG_PROXY_ACCESS_LOG=/dev/stdout
+      - KONG_ADMIN_ACCESS_LOG=/dev/stdout
+      - KONG_PROXY_ERROR_LOG=/dev/stderr
+      - KONG_ADMIN_ERROR_LOG=/dev/stderr
+      - KONG_ADMIN_LISTEN=0.0.0.0:8001
+      - KONG_ADMIN_GUI_PATH=/
+    ports:
+      - "8000:8000" # HTTP requests
+      - "8443:8443" # HTTPS requests
+      - "127.0.0.1:8001:8001" # HTTP Admin listen
+      - "127.0.0.1:8444:8444" # HTTPS Admin listen
+    networks:
+      - jamai
+
+  kong-internal:
+    image: kong/kong-gateway:3.6.1.4
+    volumes:
+      - ../services/gateway/kong_internal.yml:/kong/declarative/kong.yml
+    environment:
+      - KONG_DATABASE=off
+      - KONG_DECLARATIVE_CONFIG=/kong/declarative/kong.yml
+      - KONG_PROXY_ACCESS_LOG=/dev/stdout
+      - KONG_ADMIN_ACCESS_LOG=/dev/stdout
+      - KONG_PROXY_ERROR_LOG=/dev/stderr
+      - KONG_ADMIN_ERROR_LOG=/dev/stderr
+      - KONG_ADMIN_LISTEN=0.0.0.0:8001
+      - KONG_ADMIN_GUI_PATH=/
+    ports:
+      - "8010:8000" # HTTP requests
+      - "8453:8443" # HTTPS requests
+      - "127.0.0.1:8011:8001" # HTTP Admin listen
+      - "127.0.0.1:8454:8444" # HTTPS Admin listen
+    networks:
+      - jamai

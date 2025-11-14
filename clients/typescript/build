@@ -3,21 +3,22 @@ set -e
 
 node scripts/remove-tests-tsconfig.cjs
 # rm -rf dist && npx microbundle --tsconfig tsconfig.json --no-sourcemap && tsc-alias -p tsconfig.json
-rimraf dist && tsc --project tsconfig.json && tsc-alias -p tsconfig.json && rollup -c --bundleConfigAsCjs
+rimraf dist && tsc --project tsconfig.json &&  rollup -c --bundleConfigAsCjs && tsc-alias -p tsconfig.json 
 
-# cp -rp README.md dist
 
-# for file in LICENSE CHANGELOG.md; do
-#   if [ -e "${file}" ]; then cp "${file}" dist; fi
-# done
+# Generate index.d.mts for ESM compatibility
+cp dist/index.d.ts dist/index.d.mts
 
+# Post-process files to fix import paths and compatibility
+# node scripts/postprocess-files.cjs
+
+# Create package.json for dist folder
 node scripts/make-dist-package-json.cjs > dist/package.json
 
 # make sure that nothing crashes when we require the output CJS or
 # import the output ESM
 (cd dist && node -e 'require("jamaibase")')
 (cd dist && node -e 'import("jamaibase")' --input-type=module)
-
 
 # include "__tests__" folder in tsconfig to facilitate unit test.
 node scripts/include-tests-tsconfig.cjs

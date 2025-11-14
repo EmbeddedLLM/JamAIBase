@@ -3,12 +3,47 @@
 		type AutoAnimateOptions,
 		type AutoAnimationPlugin
 	} from '@formkit/auto-animate';
+	import type { Snippet } from 'svelte';
 
-	export let tagName: keyof HTMLElementTagNameMap = 'div';
-	let className: string | undefined | null = undefined;
-	export { className as class };
-	export let itemList: T[];
-	export let animateConfig: Partial<AutoAnimateOptions> | AutoAnimationPlugin = { duration: 100 };
+	interface Props {
+		tagName?: keyof HTMLElementTagNameMap;
+		class?: string | null;
+		itemList: T[];
+		animateConfig?: Partial<AutoAnimateOptions> | AutoAnimationPlugin;
+		leading?: Snippet;
+		trailing?: Snippet<
+			[{ dragMouseCoords: typeof dragMouseCoords; draggingItem: typeof draggingItem }]
+		>;
+		listItem: Snippet<
+			[
+				{
+					item: T;
+					itemIndex: number;
+					dragStart: typeof dragStart;
+					dragMove: typeof dragMove;
+					dragOver: typeof dragOver;
+					dragEnd: typeof dragEnd;
+					dragMouseCoords: typeof dragMouseCoords;
+					draggingItem: typeof draggingItem;
+					draggingItemIndex: typeof draggingItemIndex;
+				}
+			]
+		>;
+		draggedItem: Snippet<
+			[{ dragMouseCoords: typeof dragMouseCoords; draggingItem: typeof draggingItem }]
+		>;
+	}
+
+	let {
+		tagName = 'div',
+		class: className,
+		itemList = $bindable(),
+		animateConfig = { duration: 100 },
+		leading,
+		trailing,
+		listItem,
+		draggedItem
+	}: Props = $props();
 
 	let dragHandle: HTMLElement | null;
 	let dragMouseCoords: {
@@ -17,23 +52,25 @@
 		startX: number;
 		startY: number;
 		width: number;
-	} | null;
-	let draggingItem: T | null;
-	let draggingItemIndex: number | null;
-	let hoveredItemIndex: number | null;
+	} | null = $state(null);
+	let draggingItem: T | null = $state(null);
+	let draggingItemIndex: number | null = $state(null);
+	let hoveredItemIndex: number | null = $state(null);
 
-	$: if (
-		draggingItemIndex != null &&
-		hoveredItemIndex != null &&
-		draggingItemIndex != hoveredItemIndex
-	) {
-		[itemList[draggingItemIndex], itemList[hoveredItemIndex]] = [
-			itemList[hoveredItemIndex],
-			itemList[draggingItemIndex]
-		];
+	$effect(() => {
+		if (
+			draggingItemIndex != null &&
+			hoveredItemIndex != null &&
+			draggingItemIndex != hoveredItemIndex
+		) {
+			[itemList[draggingItemIndex], itemList[hoveredItemIndex]] = [
+				itemList[hoveredItemIndex],
+				itemList[draggingItemIndex]
+			];
 
-		draggingItemIndex = hoveredItemIndex;
-	}
+			draggingItemIndex = hoveredItemIndex;
+		}
+	});
 
 	function dragOver(e: DragEvent, index: number) {
 		if (draggingItemIndex !== null) {
@@ -109,24 +146,23 @@
 </script>
 
 <svelte:element this={tagName} use:autoAnimate={animateConfig} class={className}>
-	<slot name="leading" />
+	{@render leading?.()}
 
 	{#each itemList as item, itemIndex (item)}
-		<slot
-			name="list-item"
-			{item}
-			{itemIndex}
-			{dragStart}
-			{dragMove}
-			{dragOver}
-			{dragEnd}
-			{dragMouseCoords}
-			{draggingItem}
-			{draggingItemIndex}
-		/>
+		{@render listItem({
+			item,
+			itemIndex,
+			dragStart,
+			dragMove,
+			dragOver,
+			dragEnd,
+			dragMouseCoords,
+			draggingItem,
+			draggingItemIndex
+		})}
 	{/each}
 
-	<slot name="trailing" {dragMouseCoords} {draggingItem} />
+	{@render trailing?.({ dragMouseCoords, draggingItem })}
 </svelte:element>
 
-<slot name="dragged-item" {dragMouseCoords} {draggingItem} />
+{@render draggedItem({ dragMouseCoords, draggingItem })}

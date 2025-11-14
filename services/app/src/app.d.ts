@@ -1,30 +1,23 @@
 /* eslint-disable @typescript-eslint/ban-types */
 // See https://kit.svelte.dev/docs/types#app
+
+import type { Auth0User, User } from '$lib/types';
+
 // for information about these interfaces
 declare global {
 	namespace App {
 		// interface Error {}
 		interface Locals {
-			user?: User;
+			ossMode: boolean;
+			auth0Mode: boolean;
+			user?: Partial<Auth0User> & User;
 		}
-		interface PageData {
-			user?: User;
+		// interface PageData {}
+		interface PageState {
+			page?: number;
 		}
 		// interface Platform {}
 	}
 }
-
-type User = {
-	sid: string;
-	given_name?: string;
-	nickname: string;
-	name: string;
-	picture: string;
-	locale?: string;
-	updated_at: '2024-05-06T17:16:18.952Z';
-	email: string;
-	email_verified: boolean;
-	sub: string;
-};
 
 export {};

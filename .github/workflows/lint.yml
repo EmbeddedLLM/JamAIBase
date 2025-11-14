@@ -24,13 +24,11 @@ jobs:
 
       - name: Install linting libraries
         run: |
-          set -e
           cd clients/python
           python3 -m pip install .[lint]
 
       - name: Check Python files using Ruff
         run: |
-          set -e
           ruff check --output-format github --config clients/python/pyproject.toml .
           ruff format --diff --config clients/python/pyproject.toml .
 
@@ -43,11 +41,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: "16" # Specify the Node.js version you want to use
+          node-version: 24
 
       - name: Check files using Prettier
-        run: |
-          npm install -g prettier@3.3.2
-          prettier --check .
+        run: npx prettier@3.3.2 --check .

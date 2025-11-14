@@ -74,4 +74,11 @@ class JamAI extends Base {
     }
 }
 
-export default JamAI;
+// // Re-export types from internal modules for easier access
+// export * from "@/resources/base";
+// export * from "@/resources/files";
+// export * from "@/resources/gen_tables/tables";
+// export * from "@/resources/llm/chat";
+// export * from "@/resources/templates";
+
+export default JamAI; 

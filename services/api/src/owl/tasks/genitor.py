@@ -1,30 +1,10 @@
-# tasks.py
-import os
-import pathlib
-import tempfile
 from datetime import datetime, timedelta, timezone
 
 import boto3
 from botocore.client import Config
-from celery import Celery, chord
 from loguru import logger
 
-from owl.configs.manager import ENV_CONFIG
-from owl.db.gen_table import GenerativeTable
-from owl.protocol import TableType
-
-# Set up Celery
-app = Celery("tasks", broker=f"redis://{ENV_CONFIG.owl_redis_host}:{ENV_CONFIG.owl_redis_port}/0")
-
-# Configure Celery
-app.conf.update(
-    result_backend=f"redis://{ENV_CONFIG.owl_redis_host}:{ENV_CONFIG.owl_redis_port}/0",
-    task_serializer="json",
-    accept_content=["json"],
-    result_serializer="json",
-    timezone="UTC",
-    enable_utc=True,
-)
+from owl.configs import ENV_CONFIG, celery_app
 
 AWS_DELETE_API_MAX_OBJECT_LIMIT = 1000
 
@@ -44,7 +24,7 @@ def _get_s3_client():
     )
 
 
-@app.task
+@celery_app.task
 def s3_cleanup():
     s3_client = _get_s3_client()
     current_date = datetime.utcnow().date()
@@ -144,35 +124,7 @@ def s3_cleanup():
         logger.error(f"S3 Cleanup failed:\n {e}")
 
 
-@app.task
-def backup_to_s3():
-    db_dir = pathlib.Path(ENV_CONFIG.owl_db_dir)
-    logger.info(f"DB PATH: {db_dir}")
-    all_chains = []
-
-    for org_dir in db_dir.iterdir():
-        if not org_dir.is_dir() or not org_dir.name.startswith("org_"):
-            continue
-        for project_dir in org_dir.iterdir():
-            if not project_dir.is_dir():
-                continue
-            table_types = [TableType.ACTION, TableType.KNOWLEDGE, TableType.CHAT]
-
-            lance_chains = [
-                backup_gen_table_parquet.s(str(org_dir.name), str(project_dir.name), table_type)
-                for table_type in table_types
-            ]
-
-            all_chains.extend(lance_chains)
-
-    if all_chains:
-        return chord(all_chains)(backup_project_results.s())
-    else:
-        logger.warning("No tasks to execute in the chord.")
-        return None
-
-
-@app.task
+@celery_app.task
 def backup_project_results(results):
     failed_project = []
     status_dict = {}
@@ -189,42 +141,3 @@ def backup_project_results(results):
     logger.info(
         f"Total number of successful project backup: {true_count} out of {len(results)}. \n Failed projects: {failed_project}"
     )
-
-
-@app.task
-def backup_gen_table_parquet(org_id: str, project_id: str, table_type: str):
-    try:
-        table = GenerativeTable.from_ids(org_id, project_id, table_type)
-        table_dir = f"{ENV_CONFIG.owl_db_dir}/{org_id}/{project_id}/{table_type}"
-        with table.create_session() as session:
-            offset, total = 0, 1
-            while offset < total:
-                metas, total = table.list_meta(
-                    session,
-                    offset=offset,
-                    limit=50,
-                    remove_state_cols=True,
-                    parent_id=None,
-                )
-                offset += 50
-                for meta in metas:
-                    upload_path = (
-                        f"{get_timestamp()}/db/{org_id}/{project_id}/{table_type}/{meta.id}"
-                    )
-                    with tempfile.TemporaryDirectory() as tmp_dir:
-                        tmp_file = os.path.join(tmp_dir, f"{meta.id}.parquet")
-                        table.dump_parquet(session=session, table_id=meta.id, dest=tmp_file)
-                        s3_client = _get_s3_client()
-                        s3_client.upload_file(
-                            tmp_file,
-                            ENV_CONFIG.s3_backup_bucket_name,
-                            f"{upload_path}.parquet",
-                        )
-                        logger.info(
-                            f"Backup to s3://{ENV_CONFIG.s3_backup_bucket_name}/{upload_path}.parquet"
-                        )
-            return True, org_id, project_id
-
-    except Exception as e:
-        logger.error(f"Error backing up Lance table {table_dir}: {e}")
-        return False, org_id, project_id

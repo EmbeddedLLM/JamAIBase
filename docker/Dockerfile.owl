@@ -1,17 +1,36 @@
-FROM python:3.12
+FROM ghcr.io/embeddedllm/jamaibase/owl.base:latest
 
-RUN pip install --no-cache-dir --upgrade setuptools
-RUN apt-get update -qq && apt-get install ffmpeg libavcodec-extra -y
+# Set initial working directory
+WORKDIR /usr/src/app
 
-WORKDIR /app
+# Install owl requirements
+COPY ./services/api/pyproject.toml ./api/
+COPY ./services/api/src/owl/version.py ./api/src/owl/version.py
+RUN uv venv --python 3.12 && cd api && uv pip install --no-cache-dir --upgrade -e .
 
-COPY ./clients/python /app/client
-WORKDIR /app/client
-RUN pip install --no-cache-dir --upgrade .
+# Install Python client requirements
+COPY ./clients/python/pyproject.toml ./client/
+COPY ./clients/python/src/jamaibase/version.py ./client/src/jamaibase/version.py
+RUN cd client && uv pip install --no-cache-dir -e .
 
-COPY ./services/api /app/api
-WORKDIR /app/api
+# Copy Python client source code
+COPY ./clients/python/ ./client/
+RUN cd client && uv pip install --no-cache-dir -e .
 
-RUN pip install --no-cache-dir --upgrade .
+# Copy owl source code
+COPY ./services/api/ ./api/
+RUN cd api && uv pip install --no-cache-dir -e .
 
-CMD ["python", "-m", "owl.entrypoints.api"]
+# Setup environment variables
+ENV OWL_OPENTELEMETRY_HOST=otel-collector
+ENV OWL_OPENTELEMETRY_PORT=4317
+ENV OTEL_PYTHON_FASTAPI_EXCLUDED_URLS=api/health
+ENV OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST='X-.*'
+ENV OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION=base2_exponential_bucket_histogram
+ENV SKYPILOT_DISABLE_USAGE_COLLECTION=1
+# If wanted to skip instrumentation on some components, ex: redis
+# ENV OTEL_PYTHON_DISABLED_INSTRUMENTATIONS=redis
+
+# Run the service
+# OTEL_RESOURCE_ATTRIBUTES needs to be set at runtime
+CMD uv run python -m owl.entrypoints.api

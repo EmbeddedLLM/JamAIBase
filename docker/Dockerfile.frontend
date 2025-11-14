@@ -1,16 +1,17 @@
 FROM node:20-alpine
 
-ARG JAMAI_URL=http://owl:6969
-ARG PUBLIC_JAMAI_URL=
+ARG PUBLIC_JAMAI_URL=""
 ARG PUBLIC_IS_SPA=false
 ARG CHECK_ORIGIN=false
+ENV PUBLIC_ADMIN_ORGANIZATION_ID="0"
 
 WORKDIR /app
 COPY ./services/app .
-RUN mv .env.example .env
-RUN npm ci --force
+# RUN mv .env.example .env
+RUN rm -rf .env
+RUN npm ci
 
-RUN JAMAI_URL=${JAMAI_URL} PUBLIC_JAMAI_URL=${PUBLIC_JAMAI_URL} PUBLIC_IS_SPA=${PUBLIC_IS_SPA} CHECK_ORIGIN=${CHECK_ORIGIN} npx vite build
+RUN PUBLIC_JAMAI_URL=${PUBLIC_JAMAI_URL} PUBLIC_IS_SPA=${PUBLIC_IS_SPA} CHECK_ORIGIN=${CHECK_ORIGIN} npx vite build
 RUN mv temp build
 
 RUN apk --no-cache add curl

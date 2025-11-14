@@ -10,7 +10,7 @@ import orjson
 from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from jamaibase.protocol import ColumnSchema
+from jamaibase.types import ColumnSchema
 
 
 class EnvConfig(BaseSettings):

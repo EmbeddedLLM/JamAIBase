@@ -8,11 +8,11 @@ from flaky import flaky
 from pydantic import ValidationError
 
 from jamaibase import JamAI
-from jamaibase import protocol as p
-from jamaibase.exceptions import ResourceNotFoundError
+from jamaibase import types as t
+from jamaibase.utils.exceptions import ResourceNotFoundError
 
 CLIENT_CLS = [JamAI]
-TABLE_TYPES = [p.TableType.action, p.TableType.knowledge, p.TableType.chat]
+TABLE_TYPES = [t.TableType.action, t.TableType.knowledge, t.TableType.chat]
 REGULAR_COLUMN_DTYPES: list[str] = ["int", "float", "bool", "str"]
 SAMPLE_DATA = {
     "int": -1,
@@ -87,10 +87,10 @@ def _rerun_on_fs_error_with_delay(err, *args):
 @contextmanager
 def _create_table(
     jamai: JamAI,
-    table_type: p.TableType,
+    table_type: t.TableType,
     table_id: str = TABLE_ID_A,
-    cols: list[p.ColumnSchemaCreate] | None = None,
-    chat_cols: list[p.ColumnSchemaCreate] | None = None,
+    cols: list[t.ColumnSchemaCreate] | None = None,
+    chat_cols: list[t.ColumnSchemaCreate] | None = None,
     embedding_model: str | None = None,
     delete_first: bool = True,
 ):
@@ -99,15 +99,15 @@ def _create_table(
             jamai.table.delete_table(table_type, table_id)
         if cols is None:
             cols = [
-                p.ColumnSchemaCreate(id="good", dtype="bool"),
-                p.ColumnSchemaCreate(id="words", dtype="int"),
-                p.ColumnSchemaCreate(id="stars", dtype="float"),
-                p.ColumnSchemaCreate(id="inputs", dtype="str"),
-                p.ColumnSchemaCreate(id="photo", dtype="image"),
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(id="good", dtype="bool"),
+                t.ColumnSchemaCreate(id="words", dtype="int"),
+                t.ColumnSchemaCreate(id="stars", dtype="float"),
+                t.ColumnSchemaCreate(id="inputs", dtype="str"),
+                t.ColumnSchemaCreate(id="photo", dtype="image"),
+                t.ColumnSchemaCreate(
                     id="summary",
                     dtype="str",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model=_get_chat_model(jamai),
                         system_prompt="You are a concise assistant.",
                         # Interpolate string and non-string input columns
@@ -117,10 +117,10 @@ def _create_table(
                         max_tokens=10,
                     ),
                 ),
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(
                     id="captioning",
                     dtype="str",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model="",
                         system_prompt="You are a concise assistant.",
                         # Interpolate file input column
@@ -133,11 +133,11 @@ def _create_table(
             ]
         if chat_cols is None:
             chat_cols = [
-                p.ColumnSchemaCreate(id="User", dtype="str"),
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(id="User", dtype="str"),
+                t.ColumnSchemaCreate(
                     id="AI",
                     dtype="str",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model=_get_chat_model(jamai),
                         system_prompt="You are a wacky assistant.",
                         temperature=0.001,
@@ -147,25 +147,25 @@ def _create_table(
                 ),
             ]
 
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             table = jamai.table.create_action_table(
-                p.ActionTableSchemaCreate(id=table_id, cols=cols)
+                t.ActionTableSchemaCreate(id=table_id, cols=cols)
             )
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             if embedding_model is None:
                 embedding_model = ""
             table = jamai.table.create_knowledge_table(
-                p.KnowledgeTableSchemaCreate(
+                t.KnowledgeTableSchemaCreate(
                     id=table_id, cols=cols, embedding_model=embedding_model
                 )
             )
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             table = jamai.table.create_chat_table(
-                p.ChatTableSchemaCreate(id=table_id, cols=chat_cols + cols)
+                t.ChatTableSchemaCreate(id=table_id, cols=chat_cols + cols)
             )
         else:
             raise ValueError(f"Invalid table type: {table_type}")
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         yield table
     finally:
         jamai.table.delete_table(table_type, table_id)
@@ -174,29 +174,29 @@ def _create_table(
 @contextmanager
 def _create_table_v2(
     jamai: JamAI,
-    table_type: p.TableType,
+    table_type: t.TableType,
     table_id: str = TABLE_ID_A,
-    cols: list[p.ColumnSchemaCreate] | None = None,
-    chat_cols: list[p.ColumnSchemaCreate] | None = None,
+    cols: list[t.ColumnSchemaCreate] | None = None,
+    chat_cols: list[t.ColumnSchemaCreate] | None = None,
     llm_model: str = "",
     embedding_model: str = "",
     system_prompt: str = "",
     prompt: str = "",
     delete_first: bool = True,
-) -> Generator[p.TableMetaResponse, None, None]:
+) -> Generator[t.TableMetaResponse, None, None]:
     try:
         if delete_first:
             jamai.table.delete_table(table_type, table_id)
         if cols is None:
             _input_cols = [
-                p.ColumnSchemaCreate(id=f"in_{dtype}", dtype=dtype)
+                t.ColumnSchemaCreate(id=f"in_{dtype}", dtype=dtype)
                 for dtype in REGULAR_COLUMN_DTYPES
             ]
             _output_cols = [
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(
                     id=f"out_{dtype}",
                     dtype=dtype,
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model=llm_model,
                         system_prompt=system_prompt,
                         prompt=" ".join(f"${{{col.id}}}" for col in _input_cols) + prompt,
@@ -208,11 +208,11 @@ def _create_table_v2(
             cols = _input_cols + _output_cols
         if chat_cols is None:
             chat_cols = [
-                p.ColumnSchemaCreate(id="User", dtype="str"),
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(id="User", dtype="str"),
+                t.ColumnSchemaCreate(
                     id="AI",
                     dtype="str",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model=llm_model,
                         system_prompt=system_prompt,
                         max_tokens=10,
@@ -222,25 +222,25 @@ def _create_table_v2(
 
         expected_cols = {"ID", "Updated at"}
         expected_cols |= {c.id for c in cols}
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             table = jamai.table.create_action_table(
-                p.ActionTableSchemaCreate(id=table_id, cols=cols)
+                t.ActionTableSchemaCreate(id=table_id, cols=cols)
             )
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             table = jamai.table.create_knowledge_table(
-                p.KnowledgeTableSchemaCreate(
+                t.KnowledgeTableSchemaCreate(
                     id=table_id, cols=cols, embedding_model=embedding_model
                 )
             )
             expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             table = jamai.table.create_chat_table(
-                p.ChatTableSchemaCreate(id=table_id, cols=chat_cols + cols)
+                t.ChatTableSchemaCreate(id=table_id, cols=chat_cols + cols)
             )
             expected_cols |= {c.id for c in chat_cols}
         else:
             raise ValueError(f"Invalid table type: {table_type}")
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         col_ids = set(c.id for c in table.cols)
         assert col_ids == expected_cols
         yield table
@@ -250,7 +250,7 @@ def _create_table_v2(
 
 def _add_row(
     jamai: JamAI,
-    table_type: p.TableType,
+    table_type: t.TableType,
     stream: bool,
     table_name: str = TABLE_ID_A,
     data: dict | None = None,
@@ -273,35 +273,35 @@ def _add_row(
         )
     if chat_data is None:
         chat_data = dict(User="Tell me a joke.")
-    if table_type == p.TableType.action:
+    if table_type == t.TableType.action:
         pass
-    elif table_type == p.TableType.knowledge:
+    elif table_type == t.TableType.knowledge:
         data.update(knowledge_data)
-    elif table_type == p.TableType.chat:
+    elif table_type == t.TableType.chat:
         data.update(chat_data)
     else:
         raise ValueError(f"Invalid table type: {table_type}")
     response = jamai.table.add_table_rows(
         table_type,
-        p.RowAddRequest(table_id=table_name, data=[data], stream=stream),
+        t.MultiRowAddRequest(table_id=table_name, data=[data], stream=stream),
     )
     if stream:
         return response
-    assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+    assert isinstance(response, t.MultiRowCompletionResponse)
     assert len(response.rows) == 1
     return response.rows[0]
 
 
 def _add_row_v2(
     jamai: JamAI,
-    table_type: p.TableType,
+    table_type: t.TableType,
     stream: bool,
     table_name: str = TABLE_ID_A,
     data: dict | None = None,
     knowledge_data: dict | None = None,
     chat_data: dict | None = None,
     include_output_data: bool = False,
-) -> p.GenTableRowsChatCompletionChunks:
+) -> t.MultiRowCompletionResponse:
     if data is None:
         data = {f"in_{dtype}": SAMPLE_DATA[dtype] for dtype in REGULAR_COLUMN_DTYPES}
         if include_output_data:
@@ -318,28 +318,28 @@ def _add_row_v2(
         chat_data = dict(User="Tell me a joke.")
         if include_output_data:
             chat_data.update({"AI": "Nah"})
-    if table_type == p.TableType.action:
+    if table_type == t.TableType.action:
         pass
-    elif table_type == p.TableType.knowledge:
+    elif table_type == t.TableType.knowledge:
         data.update(knowledge_data)
-    elif table_type == p.TableType.chat:
+    elif table_type == t.TableType.chat:
         data.update(chat_data)
     else:
         raise ValueError(f"Invalid table type: {table_type}")
     response = jamai.table.add_table_rows(
         table_type,
-        p.RowAddRequest(table_id=table_name, data=[data], stream=stream),
+        t.MultiRowAddRequest(table_id=table_name, data=[data], stream=stream),
     )
     if stream:
         chunks = [r for r in response]
-        assert all(isinstance(c, p.GenTableStreamChatCompletionChunk) for c in chunks)
+        assert all(isinstance(c, t.CellCompletionResponse) for c in chunks)
         assert all(c.object == "gen_table.completion.chunk" for c in chunks)
         assert len(set(c.row_id for c in chunks)) == 1
         columns = {c.output_column_name: c for c in chunks}
-        return p.GenTableRowsChatCompletionChunks(
-            rows=[p.GenTableChatCompletionChunks(columns=columns, row_id=chunks[0].row_id)]
+        return t.MultiRowCompletionResponse(
+            rows=[t.RowCompletionResponse(columns=columns, row_id=chunks[0].row_id)]
         )
-    assert isinstance(response, p.GenTableRowsChatCompletionChunks)
+    assert isinstance(response, t.MultiRowCompletionResponse)
     assert response.object == "gen_table.completion.rows"
     assert len(response.rows) == 1
     return response
@@ -348,7 +348,7 @@ def _add_row_v2(
 @contextmanager
 def _rename_table(
     jamai: JamAI,
-    table_type: p.TableType,
+    table_type: t.TableType,
     table_id_src: str,
     table_id_dst: str,
     delete_first: bool = True,
@@ -357,7 +357,7 @@ def _rename_table(
         if delete_first:
             jamai.table.delete_table(table_type, table_id_dst)
         table = jamai.table.rename_table(table_type, table_id_src, table_id_dst)
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         yield table
     finally:
         jamai.table.delete_table(table_type, table_id_dst)
@@ -366,7 +366,7 @@ def _rename_table(
 @contextmanager
 def _duplicate_table(
     jamai: JamAI,
-    table_type: p.TableType,
+    table_type: t.TableType,
     table_id_src: str,
     table_id_dst: str,
     include_data: bool = True,
@@ -383,7 +383,7 @@ def _duplicate_table(
             include_data=include_data,
             create_as_child=deploy,
         )
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         yield table
     finally:
         jamai.table.delete_table(table_type, table_id_dst)
@@ -392,7 +392,7 @@ def _duplicate_table(
 @contextmanager
 def _create_child_table(
     jamai: JamAI,
-    table_type: p.TableType,
+    table_type: t.TableType,
     table_id_src: str,
     table_id_dst: str | None,
     delete_first: bool = True,
@@ -404,7 +404,7 @@ def _create_child_table(
             table_type, table_id_src, table_id_dst, create_as_child=True
         )
         table_id_dst = table.id
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         yield table
     finally:
         if isinstance(table_id_dst, str):
@@ -412,11 +412,10 @@ def _create_child_table(
 
 
 def _collect_text(
-    responses: p.GenTableRowsChatCompletionChunks
-    | Generator[p.GenTableStreamChatCompletionChunk, None, None],
+    responses: t.MultiRowCompletionResponse | Generator[t.CellCompletionResponse, None, None],
     col: str,
 ):
-    if isinstance(responses, p.GenTableRowsChatCompletionChunks):
+    if isinstance(responses, t.MultiRowCompletionResponse):
         return "".join(r.columns[col].text for r in responses.rows)
     return "".join(r.text for r in responses if r.output_column_name == col)
 
@@ -426,18 +425,18 @@ def _collect_text(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_create_delete_table(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     with _create_table_v2(jamai, table_type) as table_a:
         with _create_table_v2(jamai, table_type, TABLE_ID_B) as table_b:
-            assert isinstance(table_a, p.TableMetaResponse)
+            assert isinstance(table_a, t.TableMetaResponse)
             assert table_a.id == TABLE_ID_A
             assert table_b.id == TABLE_ID_B
             assert isinstance(table_a.cols, list)
-            assert all(isinstance(c, p.ColumnSchema) for c in table_a.cols)
+            assert all(isinstance(c, t.ColumnSchema) for c in table_a.cols)
             table = jamai.table.get_table(table_type, TABLE_ID_B)
-            assert isinstance(table, p.TableMetaResponse)
+            assert isinstance(table, t.TableMetaResponse)
         # After deleting table B
         with pytest.raises(ResourceNotFoundError, match="is not found."):
             jamai.table.get_table(table_type, TABLE_ID_B)
@@ -451,12 +450,12 @@ def test_create_delete_table(
 )
 def test_create_table_valid_table_id(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     table_id: str,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type, table_id) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         assert table.id == table_id
 
 
@@ -465,29 +464,29 @@ def test_create_table_valid_table_id(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_create_table_valid_column_id(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     table_id = TABLE_ID_A
     col_ids = ["a", "0", "a b", "a-b", "a_b", "a-_b", "a-_0b", "a -_0b", "0_0"]
     jamai = client_cls()
 
     # --- Test input column --- #
-    cols = [p.ColumnSchemaCreate(id=_id, dtype="str") for _id in col_ids]
+    cols = [t.ColumnSchemaCreate(id=_id, dtype="str") for _id in col_ids]
     with _create_table(jamai, table_type, table_id, cols=cols) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         assert len(set(col_ids) - {c.id for c in table.cols}) == 0
 
     # --- Test output column --- #
     cols = [
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(
             id=_id,
             dtype="str",
-            gen_config=p.LLMGenConfig(),
+            gen_config=t.LLMGenConfig(),
         )
         for _id in col_ids
     ]
     with _create_table(jamai, table_type, table_id, cols=cols) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         assert len(set(col_ids) - {c.id for c in table.cols}) == 0
 
 
@@ -499,7 +498,7 @@ def test_create_table_valid_column_id(
 )
 def test_create_table_invalid_table_id(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     column_id: str,
 ):
     table_id = TABLE_ID_A
@@ -507,7 +506,7 @@ def test_create_table_invalid_table_id(
 
     # --- Test input column --- #
     cols = [
-        p.ColumnSchemaCreate(id=column_id, dtype="str"),
+        t.ColumnSchemaCreate(id=column_id, dtype="str"),
     ]
     with pytest.raises(RuntimeError):
         with _create_table(jamai, table_type, table_id, cols=cols):
@@ -515,10 +514,10 @@ def test_create_table_invalid_table_id(
 
     # --- Test output column --- #
     cols = [
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(
             id=column_id,
             dtype="str",
-            gen_config=p.LLMGenConfig(),
+            gen_config=t.LLMGenConfig(),
         ),
     ]
     with pytest.raises(RuntimeError):
@@ -534,7 +533,7 @@ def test_create_table_invalid_table_id(
 )
 def test_create_table_invalid_column_id(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     column_id: str,
 ):
     table_id = TABLE_ID_A
@@ -542,7 +541,7 @@ def test_create_table_invalid_column_id(
 
     # --- Test input column --- #
     cols = [
-        p.ColumnSchemaCreate(id=column_id, dtype="str"),
+        t.ColumnSchemaCreate(id=column_id, dtype="str"),
     ]
     with pytest.raises(RuntimeError):
         with _create_table(jamai, table_type, table_id, cols=cols):
@@ -550,10 +549,10 @@ def test_create_table_invalid_column_id(
 
     # --- Test output column --- #
     cols = [
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(
             id=column_id,
             dtype="str",
-            gen_config=p.LLMGenConfig(),
+            gen_config=t.LLMGenConfig(),
         ),
     ]
     with pytest.raises(RuntimeError):
@@ -566,16 +565,16 @@ def test_create_table_invalid_column_id(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_create_table_invalid_model(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     table_id = TABLE_ID_A
     jamai = client_cls()
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="str"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="input0", dtype="str"),
+        t.ColumnSchemaCreate(
             id="output0",
             dtype="str",
-            gen_config=p.LLMGenConfig(model="INVALID"),
+            gen_config=t.LLMGenConfig(model="INVALID"),
         ),
     ]
     with pytest.raises(ResourceNotFoundError):
@@ -588,16 +587,16 @@ def test_create_table_invalid_model(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_create_table_invalid_column_ref(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     table_id = TABLE_ID_A
     jamai = client_cls()
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="str"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="input0", dtype="str"),
+        t.ColumnSchemaCreate(
             id="output0",
             dtype="str",
-            gen_config=p.LLMGenConfig(prompt="Summarise ${input2}"),
+            gen_config=t.LLMGenConfig(prompt="Summarise ${input2}"),
         ),
     ]
     with pytest.raises(RuntimeError):
@@ -610,7 +609,7 @@ def test_create_table_invalid_column_ref(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_create_table_invalid_rag(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
 
@@ -618,25 +617,25 @@ def test_create_table_invalid_rag(
     with _create_table(jamai, "knowledge", TABLE_ID_B, cols=[]) as ktable:
         # --- Valid knowledge table ID --- #
         cols = [
-            p.ColumnSchemaCreate(id="input0", dtype="str"),
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(id="input0", dtype="str"),
+            t.ColumnSchemaCreate(
                 id="output0",
                 dtype="str",
-                gen_config=p.LLMGenConfig(
-                    rag_params=p.RAGParams(table_id=ktable.id),
+                gen_config=t.LLMGenConfig(
+                    rag_params=t.RAGParams(table_id=ktable.id),
                 ),
             ),
         ]
         with _create_table(jamai, table_type, cols=cols) as table:
-            assert isinstance(table, p.TableMetaResponse)
+            assert isinstance(table, t.TableMetaResponse)
         # --- Invalid knowledge table ID --- #
         cols = [
-            p.ColumnSchemaCreate(id="input0", dtype="str"),
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(id="input0", dtype="str"),
+            t.ColumnSchemaCreate(
                 id="output0",
                 dtype="str",
-                gen_config=p.LLMGenConfig(
-                    rag_params=p.RAGParams(table_id="INVALID"),
+                gen_config=t.LLMGenConfig(
+                    rag_params=t.RAGParams(table_id="INVALID"),
                 ),
             ),
         ]
@@ -646,28 +645,28 @@ def test_create_table_invalid_rag(
 
         # --- Valid reranker --- #
         cols = [
-            p.ColumnSchemaCreate(id="input0", dtype="str"),
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(id="input0", dtype="str"),
+            t.ColumnSchemaCreate(
                 id="output0",
                 dtype="str",
-                gen_config=p.LLMGenConfig(
-                    rag_params=p.RAGParams(
+                gen_config=t.LLMGenConfig(
+                    rag_params=t.RAGParams(
                         table_id=ktable.id, reranking_model=_get_reranking_model(jamai)
                     ),
                 ),
             ),
         ]
         with _create_table(jamai, table_type, cols=cols) as table:
-            assert isinstance(table, p.TableMetaResponse)
+            assert isinstance(table, t.TableMetaResponse)
 
         # --- Invalid reranker --- #
         cols = [
-            p.ColumnSchemaCreate(id="input0", dtype="str"),
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(id="input0", dtype="str"),
+            t.ColumnSchemaCreate(
                 id="output0",
                 dtype="str",
-                gen_config=p.LLMGenConfig(
-                    rag_params=p.RAGParams(table_id=ktable.id, reranking_model="INVALID"),
+                gen_config=t.LLMGenConfig(
+                    rag_params=t.RAGParams(table_id=ktable.id, reranking_model="INVALID"),
                 ),
             ),
         ]
@@ -681,93 +680,93 @@ def test_create_table_invalid_rag(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_default_llm_model(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="str"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="input0", dtype="str"),
+        t.ColumnSchemaCreate(
             id="output0",
             dtype="str",
-            gen_config=p.LLMGenConfig(),
+            gen_config=t.LLMGenConfig(),
         ),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(
             id="output1",
             dtype="str",
             gen_config=None,
         ),
     ]
     with _create_table(jamai, table_type, cols=cols) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # Check gen configs
         cols = {c.id: c for c in table.cols}
-        assert isinstance(cols["output0"].gen_config, p.GenConfig)
+        assert isinstance(cols["output0"].gen_config, t.GenConfig)
         assert isinstance(cols["output0"].gen_config.model, str)
         assert len(cols["output0"].gen_config.model) > 0
         assert cols["output1"].gen_config is None
-        if table_type == p.TableType.chat:
-            assert isinstance(cols["AI"].gen_config, p.GenConfig)
+        if table_type == t.TableType.chat:
+            assert isinstance(cols["AI"].gen_config, t.GenConfig)
             assert isinstance(cols["AI"].gen_config.model, str)
             assert len(cols["AI"].gen_config.model) > 0
 
         # --- Update gen config --- #
         table = jamai.table.update_gen_config(
             table_type,
-            p.GenConfigUpdateRequest(
+            t.GenConfigUpdateRequest(
                 table_id=TABLE_ID_A,
                 column_map=dict(
                     output0=None,
-                    output1=p.LLMGenConfig(),
+                    output1=t.LLMGenConfig(),
                 ),
             ),
         )
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # Check gen configs
         cols = {c.id: c for c in table.cols}
         assert cols["output0"].gen_config is None
-        assert isinstance(cols["output1"].gen_config, p.GenConfig)
+        assert isinstance(cols["output1"].gen_config, t.GenConfig)
         assert isinstance(cols["output1"].gen_config.model, str)
         assert len(cols["output1"].gen_config.model) > 0
-        if table_type == p.TableType.chat:
-            assert isinstance(cols["AI"].gen_config, p.GenConfig)
+        if table_type == t.TableType.chat:
+            assert isinstance(cols["AI"].gen_config, t.GenConfig)
             assert isinstance(cols["AI"].gen_config.model, str)
             assert len(cols["AI"].gen_config.model) > 0
 
         # --- Add column --- #
         cols = [
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(
                 id="output2",
                 dtype="str",
                 gen_config=None,
             ),
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(
                 id="output3",
                 dtype="str",
-                gen_config=p.LLMGenConfig(),
+                gen_config=t.LLMGenConfig(),
             ),
         ]
-        if table_type == p.TableType.action:
-            table = jamai.table.add_action_columns(p.AddActionColumnSchema(id=table.id, cols=cols))
-        elif table_type == p.TableType.knowledge:
+        if table_type == t.TableType.action:
+            table = jamai.table.add_action_columns(t.AddActionColumnSchema(id=table.id, cols=cols))
+        elif table_type == t.TableType.knowledge:
             table = jamai.table.add_knowledge_columns(
-                p.AddKnowledgeColumnSchema(id=table.id, cols=cols)
+                t.AddKnowledgeColumnSchema(id=table.id, cols=cols)
             )
-        elif table_type == p.TableType.chat:
-            table = jamai.table.add_chat_columns(p.AddChatColumnSchema(id=table.id, cols=cols))
+        elif table_type == t.TableType.chat:
+            table = jamai.table.add_chat_columns(t.AddChatColumnSchema(id=table.id, cols=cols))
         else:
             raise ValueError(f"Invalid table type: {table_type}")
         # Check gen configs
         cols = {c.id: c for c in table.cols}
         assert cols["output0"].gen_config is None
-        assert isinstance(cols["output1"].gen_config, p.GenConfig)
+        assert isinstance(cols["output1"].gen_config, t.GenConfig)
         assert isinstance(cols["output1"].gen_config.model, str)
         assert len(cols["output1"].gen_config.model) > 0
         assert cols["output2"].gen_config is None
-        assert isinstance(cols["output3"].gen_config, p.GenConfig)
+        assert isinstance(cols["output3"].gen_config, t.GenConfig)
         assert isinstance(cols["output3"].gen_config.model, str)
         assert len(cols["output3"].gen_config.model) > 0
-        if table_type == p.TableType.chat:
-            assert isinstance(cols["AI"].gen_config, p.GenConfig)
+        if table_type == t.TableType.chat:
+            assert isinstance(cols["AI"].gen_config, t.GenConfig)
             assert isinstance(cols["AI"].gen_config.model, str)
             assert len(cols["AI"].gen_config.model) > 0
 
@@ -777,107 +776,107 @@ def test_default_llm_model(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_default_image_model(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     available_image_models = _get_image_models(jamai)
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="image"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="input0", dtype="image"),
+        t.ColumnSchemaCreate(
             id="output0",
             dtype="str",
-            gen_config=p.LLMGenConfig(prompt="${input0}"),
+            gen_config=t.LLMGenConfig(prompt="${input0}"),
         ),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(
             id="output1",
             dtype="str",
             gen_config=None,
         ),
     ]
     with _create_table(jamai, table_type, cols=cols) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # Check gen configs
         cols = {c.id: c for c in table.cols}
-        assert isinstance(cols["output0"].gen_config, p.GenConfig)
+        assert isinstance(cols["output0"].gen_config, t.GenConfig)
         assert isinstance(cols["output0"].gen_config.model, str)
         assert cols["output0"].gen_config.model in available_image_models
         assert cols["output1"].gen_config is None
-        if table_type == p.TableType.chat:
-            assert isinstance(cols["AI"].gen_config, p.GenConfig)
+        if table_type == t.TableType.chat:
+            assert isinstance(cols["AI"].gen_config, t.GenConfig)
             assert isinstance(cols["AI"].gen_config.model, str)
             assert cols["AI"].gen_config.model in available_image_models
 
         # --- Update gen config --- #
         table = jamai.table.update_gen_config(
             table_type,
-            p.GenConfigUpdateRequest(
+            t.GenConfigUpdateRequest(
                 table_id=TABLE_ID_A,
                 column_map=dict(
                     output0=None,
-                    output1=p.LLMGenConfig(prompt="${input0}"),
+                    output1=t.LLMGenConfig(prompt="${input0}"),
                 ),
             ),
         )
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # Check gen configs
         cols = {c.id: c for c in table.cols}
         assert cols["output0"].gen_config is None
-        assert isinstance(cols["output1"].gen_config, p.GenConfig)
+        assert isinstance(cols["output1"].gen_config, t.GenConfig)
         assert isinstance(cols["output1"].gen_config.model, str)
         assert cols["output1"].gen_config.model in available_image_models
 
         # --- Add column --- #
         cols = [
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(
                 id="output2",
                 dtype="str",
-                gen_config=p.LLMGenConfig(prompt="${input0}"),
+                gen_config=t.LLMGenConfig(prompt="${input0}"),
             ),
-            p.ColumnSchemaCreate(id="file_input1", dtype="image"),
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(id="file_input1", dtype="image"),
+            t.ColumnSchemaCreate(
                 id="output3",
                 dtype="str",
-                gen_config=p.LLMGenConfig(prompt="${file_input1}"),
+                gen_config=t.LLMGenConfig(prompt="${file_input1}"),
             ),
         ]
-        if table_type == p.TableType.action:
-            table = jamai.table.add_action_columns(p.AddActionColumnSchema(id=table.id, cols=cols))
-        elif table_type == p.TableType.knowledge:
+        if table_type == t.TableType.action:
+            table = jamai.table.add_action_columns(t.AddActionColumnSchema(id=table.id, cols=cols))
+        elif table_type == t.TableType.knowledge:
             table = jamai.table.add_knowledge_columns(
-                p.AddKnowledgeColumnSchema(id=table.id, cols=cols)
+                t.AddKnowledgeColumnSchema(id=table.id, cols=cols)
             )
-        elif table_type == p.TableType.chat:
-            table = jamai.table.add_chat_columns(p.AddChatColumnSchema(id=table.id, cols=cols))
+        elif table_type == t.TableType.chat:
+            table = jamai.table.add_chat_columns(t.AddChatColumnSchema(id=table.id, cols=cols))
         else:
             raise ValueError(f"Invalid table type: {table_type}")
         # Add a column with default prompt
         cols = [
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(
                 id="output4",
                 dtype="str",
-                gen_config=p.LLMGenConfig(),
+                gen_config=t.LLMGenConfig(),
             ),
         ]
-        if table_type == p.TableType.action:
-            table = jamai.table.add_action_columns(p.AddActionColumnSchema(id=table.id, cols=cols))
-        elif table_type == p.TableType.knowledge:
+        if table_type == t.TableType.action:
+            table = jamai.table.add_action_columns(t.AddActionColumnSchema(id=table.id, cols=cols))
+        elif table_type == t.TableType.knowledge:
             table = jamai.table.add_knowledge_columns(
-                p.AddKnowledgeColumnSchema(id=table.id, cols=cols)
+                t.AddKnowledgeColumnSchema(id=table.id, cols=cols)
             )
-        elif table_type == p.TableType.chat:
-            table = jamai.table.add_chat_columns(p.AddChatColumnSchema(id=table.id, cols=cols))
+        elif table_type == t.TableType.chat:
+            table = jamai.table.add_chat_columns(t.AddChatColumnSchema(id=table.id, cols=cols))
         else:
             raise ValueError(f"Invalid table type: {table_type}")
         # Check gen configs
         cols = {c.id: c for c in table.cols}
         assert cols["output0"].gen_config is None
         for output_column_name in ["output1", "output2", "output3", "output4"]:
-            assert isinstance(cols[output_column_name].gen_config, p.GenConfig)
+            assert isinstance(cols[output_column_name].gen_config, t.GenConfig)
             model = cols[output_column_name].gen_config.model
             assert isinstance(model, str)
-            assert (
-                model in available_image_models
-            ), f'Column {output_column_name} has invalid default model "{model}". Valid: {available_image_models}'
+            assert model in available_image_models, (
+                f'Column {output_column_name} has invalid default model "{model}". Valid: {available_image_models}'
+            )
 
 
 @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
@@ -885,16 +884,16 @@ def test_default_image_model(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_invalid_image_model(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     available_image_models = _get_image_models(jamai)
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="image"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="input0", dtype="image"),
+        t.ColumnSchemaCreate(
             id="output0",
             dtype="str",
-            gen_config=p.LLMGenConfig(model=_get_chat_only_model(jamai), prompt="${input0}"),
+            gen_config=t.LLMGenConfig(model=_get_chat_only_model(jamai), prompt="${input0}"),
         ),
     ]
     with pytest.raises(RuntimeError):
@@ -902,22 +901,22 @@ def test_invalid_image_model(
             pass
 
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="image"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="input0", dtype="image"),
+        t.ColumnSchemaCreate(
             id="output0",
             dtype="str",
-            gen_config=p.LLMGenConfig(prompt="${input0}"),
+            gen_config=t.LLMGenConfig(prompt="${input0}"),
         ),
     ]
     with _create_table(jamai, table_type, cols=cols) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # Check gen configs
         cols = {c.id: c for c in table.cols}
-        assert isinstance(cols["output0"].gen_config, p.GenConfig)
+        assert isinstance(cols["output0"].gen_config, t.GenConfig)
         assert isinstance(cols["output0"].gen_config.model, str)
         assert cols["output0"].gen_config.model in available_image_models
-        if table_type == p.TableType.chat:
-            assert isinstance(cols["AI"].gen_config, p.GenConfig)
+        if table_type == t.TableType.chat:
+            assert isinstance(cols["AI"].gen_config, t.GenConfig)
             assert isinstance(cols["AI"].gen_config.model, str)
             assert cols["AI"].gen_config.model in available_image_models
 
@@ -925,10 +924,10 @@ def test_invalid_image_model(
         with pytest.raises(RuntimeError):
             table = jamai.table.update_gen_config(
                 table_type,
-                p.GenConfigUpdateRequest(
+                t.GenConfigUpdateRequest(
                     table_id=TABLE_ID_A,
                     column_map=dict(
-                        output0=p.LLMGenConfig(
+                        output0=t.LLMGenConfig(
                             model=_get_chat_only_model(jamai),
                             prompt="${input0}",
                         ),
@@ -937,43 +936,43 @@ def test_invalid_image_model(
             )
         table = jamai.table.update_gen_config(
             table_type,
-            p.GenConfigUpdateRequest(
+            t.GenConfigUpdateRequest(
                 table_id=TABLE_ID_A,
                 column_map=dict(
-                    output0=p.LLMGenConfig(prompt="${input0}"),
+                    output0=t.LLMGenConfig(prompt="${input0}"),
                 ),
             ),
         )
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # Check gen configs
         cols = {c.id: c for c in table.cols}
-        assert isinstance(cols["output0"].gen_config, p.GenConfig)
+        assert isinstance(cols["output0"].gen_config, t.GenConfig)
         assert isinstance(cols["output0"].gen_config.model, str)
         assert cols["output0"].gen_config.model in available_image_models
-        if table_type == p.TableType.chat:
-            assert isinstance(cols["AI"].gen_config, p.GenConfig)
+        if table_type == t.TableType.chat:
+            assert isinstance(cols["AI"].gen_config, t.GenConfig)
             assert isinstance(cols["AI"].gen_config.model, str)
             assert cols["AI"].gen_config.model in available_image_models
 
         # --- Add column --- #
         cols = [
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(
                 id="output1",
                 dtype="str",
-                gen_config=p.LLMGenConfig(model=_get_chat_only_model(jamai), prompt="${input0}"),
+                gen_config=t.LLMGenConfig(model=_get_chat_only_model(jamai), prompt="${input0}"),
             )
         ]
         with pytest.raises(RuntimeError):
-            if table_type == p.TableType.action:
+            if table_type == t.TableType.action:
                 table = jamai.table.add_action_columns(
-                    p.AddActionColumnSchema(id=table.id, cols=cols)
+                    t.AddActionColumnSchema(id=table.id, cols=cols)
                 )
-            elif table_type == p.TableType.knowledge:
+            elif table_type == t.TableType.knowledge:
                 table = jamai.table.add_knowledge_columns(
-                    p.AddKnowledgeColumnSchema(id=table.id, cols=cols)
+                    t.AddKnowledgeColumnSchema(id=table.id, cols=cols)
                 )
-            elif table_type == p.TableType.chat:
-                table = jamai.table.add_chat_columns(p.AddChatColumnSchema(id=table.id, cols=cols))
+            elif table_type == t.TableType.chat:
+                table = jamai.table.add_chat_columns(t.AddChatColumnSchema(id=table.id, cols=cols))
             else:
                 raise ValueError(f"Invalid table type: {table_type}")
 
@@ -985,7 +984,7 @@ def test_default_embedding_model(
 ):
     jamai = client_cls()
     with _create_table(jamai, "knowledge", cols=[], embedding_model="") as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         for col in table.cols:
             if col.vlen == 0:
                 continue
@@ -997,23 +996,23 @@ def test_default_embedding_model(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_default_reranker(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     # Create the knowledge table first
     with _create_table(jamai, "knowledge", TABLE_ID_B, cols=[]) as ktable:
         cols = [
-            p.ColumnSchemaCreate(id="input0", dtype="str"),
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(id="input0", dtype="str"),
+            t.ColumnSchemaCreate(
                 id="output0",
                 dtype="str",
-                gen_config=p.LLMGenConfig(
-                    rag_params=p.RAGParams(table_id=ktable.id, reranking_model=""),
+                gen_config=t.LLMGenConfig(
+                    rag_params=t.RAGParams(table_id=ktable.id, reranking_model=""),
                 ),
             ),
         ]
         with _create_table(jamai, table_type, cols=cols) as table:
-            assert isinstance(table, p.TableMetaResponse)
+            assert isinstance(table, t.TableMetaResponse)
             cols = {c.id: c for c in table.cols}
             reranking_model = cols["output0"].gen_config.rag_params.reranking_model
             assert isinstance(reranking_model, str)
@@ -1026,131 +1025,131 @@ def test_default_reranker(
 @pytest.mark.parametrize(
     "messages",
     [
-        [p.ChatEntry.system(""), p.ChatEntry.user("")],
-        [p.ChatEntry.user("")],
+        [t.ChatEntry.system(""), t.ChatEntry.user("")],
+        [t.ChatEntry.user("")],
     ],
     ids=["system + user", "user only"],
 )
 def test_default_prompts(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
-    messages: list[p.ChatEntry],
+    table_type: t.TableType,
+    messages: list[t.ChatEntry],
 ):
     jamai = client_cls()
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="str"),
-        p.ColumnSchemaCreate(id="input1", dtype="str"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="input0", dtype="str"),
+        t.ColumnSchemaCreate(id="input1", dtype="str"),
+        t.ColumnSchemaCreate(
             id="output0",
             dtype="str",
-            gen_config=p.ChatRequest(messages=messages),
+            gen_config=t.ChatRequest(messages=messages),
         ),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(
             id="output1",
             dtype="str",
-            gen_config=p.ChatRequest(messages=messages),
+            gen_config=t.ChatRequest(messages=messages),
         ),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(
             id="output2",
             dtype="str",
-            gen_config=p.LLMGenConfig(
+            gen_config=t.LLMGenConfig(
                 system_prompt="You are an assistant.",
                 prompt="Summarise ${input0}.",
             ),
         ),
     ]
     with _create_table(jamai, table_type, cols=cols) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # ["output0", "output1"] should have default prompts
         input_cols = {"input0", "input1"}
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             pass
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             input_cols |= {"Title", "Text", "File ID", "Page"}
         else:
             input_cols |= {"User"}
         cols = {c.id: c for c in table.cols}
         for col_id in ["output0", "output1"]:
-            assert isinstance(cols[col_id].gen_config, p.LLMGenConfig)
+            assert isinstance(cols[col_id].gen_config, t.LLMGenConfig)
             user_prompt = cols[col_id].gen_config.prompt
-            referenced_cols = set(re.findall(p.GEN_CONFIG_VAR_PATTERN, user_prompt))
-            assert (
-                input_cols == referenced_cols
-            ), f"Expected input cols = {input_cols}, referenced cols = {referenced_cols}"
+            referenced_cols = set(re.findall(t.GEN_CONFIG_VAR_PATTERN, user_prompt))
+            assert input_cols == referenced_cols, (
+                f"Expected input cols = {input_cols}, referenced cols = {referenced_cols}"
+            )
         # ["output2"] should have provided prompts
         input_cols = {"input0"}
         cols = {c.id: c for c in table.cols}
         for col_id in ["output2"]:
-            assert isinstance(cols[col_id].gen_config, p.LLMGenConfig)
+            assert isinstance(cols[col_id].gen_config, t.LLMGenConfig)
             user_prompt = cols[col_id].gen_config.prompt
-            referenced_cols = set(re.findall(p.GEN_CONFIG_VAR_PATTERN, user_prompt))
-            assert (
-                input_cols == referenced_cols
-            ), f"Expected input cols = {input_cols}, referenced cols = {referenced_cols}"
+            referenced_cols = set(re.findall(t.GEN_CONFIG_VAR_PATTERN, user_prompt))
+            assert input_cols == referenced_cols, (
+                f"Expected input cols = {input_cols}, referenced cols = {referenced_cols}"
+            )
 
         # --- Add column --- #
         cols = [
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(
                 id="input2",
                 dtype="int",
             ),
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(
                 id="output3",
                 dtype="str",
-                gen_config=p.LLMGenConfig(),
+                gen_config=t.LLMGenConfig(),
             ),
         ]
-        if table_type == p.TableType.action:
-            table = jamai.table.add_action_columns(p.AddActionColumnSchema(id=table.id, cols=cols))
-        elif table_type == p.TableType.knowledge:
+        if table_type == t.TableType.action:
+            table = jamai.table.add_action_columns(t.AddActionColumnSchema(id=table.id, cols=cols))
+        elif table_type == t.TableType.knowledge:
             table = jamai.table.add_knowledge_columns(
-                p.AddKnowledgeColumnSchema(id=table.id, cols=cols)
+                t.AddKnowledgeColumnSchema(id=table.id, cols=cols)
             )
-        elif table_type == p.TableType.chat:
-            table = jamai.table.add_chat_columns(p.AddChatColumnSchema(id=table.id, cols=cols))
+        elif table_type == t.TableType.chat:
+            table = jamai.table.add_chat_columns(t.AddChatColumnSchema(id=table.id, cols=cols))
         else:
             raise ValueError(f"Invalid table type: {table_type}")
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # ["output0", "output1"] should have default prompts
         input_cols = {"input0", "input1"}
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             pass
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             input_cols |= {"Title", "Text", "File ID", "Page"}
         else:
             input_cols |= {"User"}
         cols = {c.id: c for c in table.cols}
         for col_id in ["output0", "output1"]:
-            assert isinstance(cols[col_id].gen_config, p.LLMGenConfig)
+            assert isinstance(cols[col_id].gen_config, t.LLMGenConfig)
             user_prompt = cols[col_id].gen_config.prompt
-            referenced_cols = set(re.findall(p.GEN_CONFIG_VAR_PATTERN, user_prompt))
-            assert (
-                input_cols == referenced_cols
-            ), f"Expected input cols = {input_cols}, referenced cols = {referenced_cols}"
+            referenced_cols = set(re.findall(t.GEN_CONFIG_VAR_PATTERN, user_prompt))
+            assert input_cols == referenced_cols, (
+                f"Expected input cols = {input_cols}, referenced cols = {referenced_cols}"
+            )
         # ["output3"] should have default prompts
         input_cols = {"input0", "input1", "input2"}
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             pass
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             input_cols |= {"Title", "Text", "File ID", "Page"}
         else:
             input_cols |= {"User"}
         for col_id in ["output3"]:
-            assert isinstance(cols[col_id].gen_config, p.LLMGenConfig)
+            assert isinstance(cols[col_id].gen_config, t.LLMGenConfig)
             user_prompt = cols[col_id].gen_config.prompt
-            referenced_cols = set(re.findall(p.GEN_CONFIG_VAR_PATTERN, user_prompt))
-            assert (
-                input_cols == referenced_cols
-            ), f"Expected input cols = {input_cols}, referenced cols = {referenced_cols}"
+            referenced_cols = set(re.findall(t.GEN_CONFIG_VAR_PATTERN, user_prompt))
+            assert input_cols == referenced_cols, (
+                f"Expected input cols = {input_cols}, referenced cols = {referenced_cols}"
+            )
         # ["output2"] should have provided prompts
         input_cols = {"input0"}
         for col_id in ["output2"]:
-            assert isinstance(cols[col_id].gen_config, p.LLMGenConfig)
+            assert isinstance(cols[col_id].gen_config, t.LLMGenConfig)
             user_prompt = cols[col_id].gen_config.prompt
-            referenced_cols = set(re.findall(p.GEN_CONFIG_VAR_PATTERN, user_prompt))
-            assert (
-                input_cols == referenced_cols
-            ), f"Expected input cols = {input_cols}, referenced cols = {referenced_cols}"
+            referenced_cols = set(re.findall(t.GEN_CONFIG_VAR_PATTERN, user_prompt))
+            assert input_cols == referenced_cols, (
+                f"Expected input cols = {input_cols}, referenced cols = {referenced_cols}"
+            )
 
 
 @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
@@ -1158,12 +1157,12 @@ def test_default_prompts(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_add_drop_columns(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     with _create_table_v2(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
-        assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
+        assert isinstance(table, t.TableMetaResponse)
+        assert all(isinstance(c, t.ColumnSchema) for c in table.cols)
         _add_row_v2(
             jamai,
             table_type,
@@ -1173,14 +1172,14 @@ def test_add_drop_columns(
 
         # --- COLUMN ADD --- #
         _input_cols = [
-            p.ColumnSchemaCreate(id=f"add_in_{dtype}", dtype=dtype)
+            t.ColumnSchemaCreate(id=f"add_in_{dtype}", dtype=dtype)
             for dtype in REGULAR_COLUMN_DTYPES
         ]
         _output_cols = [
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(
                 id=f"add_out_{dtype}",
                 dtype=dtype,
-                gen_config=p.LLMGenConfig(
+                gen_config=t.LLMGenConfig(
                     model="",
                     system_prompt="",
                     prompt=" ".join(f"${{{col.id}}}" for col in _input_cols),
@@ -1195,20 +1194,20 @@ def test_add_drop_columns(
         expected_cols |= {f"out_{dtype}" for dtype in ["str"]}
         expected_cols |= {f"add_in_{dtype}" for dtype in REGULAR_COLUMN_DTYPES}
         expected_cols |= {f"add_out_{dtype}" for dtype in ["str"]}
-        if table_type == p.TableType.action:
-            table = jamai.table.add_action_columns(p.AddActionColumnSchema(id=table.id, cols=cols))
-        elif table_type == p.TableType.knowledge:
+        if table_type == t.TableType.action:
+            table = jamai.table.add_action_columns(t.AddActionColumnSchema(id=table.id, cols=cols))
+        elif table_type == t.TableType.knowledge:
             table = jamai.table.add_knowledge_columns(
-                p.AddKnowledgeColumnSchema(id=table.id, cols=cols)
+                t.AddKnowledgeColumnSchema(id=table.id, cols=cols)
             )
             expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             expected_cols |= {"User", "AI"}
-            table = jamai.table.add_chat_columns(p.AddChatColumnSchema(id=table.id, cols=cols))
+            table = jamai.table.add_chat_columns(t.AddChatColumnSchema(id=table.id, cols=cols))
         else:
             raise ValueError(f"Invalid table type: {table_type}")
-        assert isinstance(table, p.TableMetaResponse)
-        assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
+        assert isinstance(table, t.TableMetaResponse)
+        assert all(isinstance(c, t.ColumnSchema) for c in table.cols)
         cols = set(c.id for c in table.cols)
         assert cols == expected_cols, cols
         # Existing row of new columns should contain None
@@ -1242,7 +1241,7 @@ def test_add_drop_columns(
         # --- COLUMN DROP --- #
         table = jamai.table.drop_columns(
             table_type,
-            p.ColumnDropRequest(
+            t.ColumnDropRequest(
                 table_id=table.id,
                 column_names=[f"in_{dtype}" for dtype in REGULAR_COLUMN_DTYPES]
                 + [f"out_{dtype}" for dtype in ["str"]],
@@ -1251,16 +1250,16 @@ def test_add_drop_columns(
         expected_cols = {"ID", "Updated at"}
         expected_cols |= {f"add_in_{dtype}" for dtype in REGULAR_COLUMN_DTYPES}
         expected_cols |= {f"add_out_{dtype}" for dtype in ["str"]}
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             pass
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             expected_cols |= {"User", "AI"}
         else:
             raise ValueError(f"Invalid table type: {table_type}")
-        assert isinstance(table, p.TableMetaResponse)
-        assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
+        assert isinstance(table, t.TableMetaResponse)
+        assert all(isinstance(c, t.ColumnSchema) for c in table.cols)
         cols = set(c.id for c in table.cols)
         assert cols == expected_cols, cols
         rows = jamai.table.list_table_rows(table_type, table.id)
@@ -1282,12 +1281,12 @@ def test_add_drop_columns(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_add_drop_file_column(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     with _create_table_v2(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
-        assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
+        assert isinstance(table, t.TableMetaResponse)
+        assert all(isinstance(c, t.ColumnSchema) for c in table.cols)
         _add_row_v2(
             jamai,
             table_type,
@@ -1297,11 +1296,11 @@ def test_add_drop_file_column(
 
         # --- COLUMN ADD --- #
         cols = [
-            p.ColumnSchemaCreate(id="add_in_file", dtype="image"),
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(id="add_in_file", dtype="image"),
+            t.ColumnSchemaCreate(
                 id="add_out_str",
                 dtype="str",
-                gen_config=p.LLMGenConfig(
+                gen_config=t.LLMGenConfig(
                     model="",
                     system_prompt="",
                     prompt="Describe image ${add_in_file}",
@@ -1312,20 +1311,20 @@ def test_add_drop_file_column(
         expected_cols = {"ID", "Updated at", "add_in_file", "add_out_str"}
         expected_cols |= {f"in_{dtype}" for dtype in REGULAR_COLUMN_DTYPES}
         expected_cols |= {f"out_{dtype}" for dtype in ["str"]}
-        if table_type == p.TableType.action:
-            table = jamai.table.add_action_columns(p.AddActionColumnSchema(id=table.id, cols=cols))
-        elif table_type == p.TableType.knowledge:
+        if table_type == t.TableType.action:
+            table = jamai.table.add_action_columns(t.AddActionColumnSchema(id=table.id, cols=cols))
+        elif table_type == t.TableType.knowledge:
             table = jamai.table.add_knowledge_columns(
-                p.AddKnowledgeColumnSchema(id=table.id, cols=cols)
+                t.AddKnowledgeColumnSchema(id=table.id, cols=cols)
             )
             expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             expected_cols |= {"User", "AI"}
-            table = jamai.table.add_chat_columns(p.AddChatColumnSchema(id=table.id, cols=cols))
+            table = jamai.table.add_chat_columns(t.AddChatColumnSchema(id=table.id, cols=cols))
         else:
             raise ValueError(f"Invalid table type: {table_type}")
-        assert isinstance(table, p.TableMetaResponse)
-        assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
+        assert isinstance(table, t.TableMetaResponse)
+        assert all(isinstance(c, t.ColumnSchema) for c in table.cols)
         cols = set(c.id for c in table.cols)
         assert cols == expected_cols, cols
         # Existing row of new columns should contain None
@@ -1358,10 +1357,10 @@ def test_add_drop_file_column(
         # Block file output column
         with pytest.raises(RuntimeError):
             cols = [
-                p.ColumnSchemaCreate(
+                t.ColumnSchemaCreate(
                     id="add_out_file",
                     dtype="image",
-                    gen_config=p.LLMGenConfig(
+                    gen_config=t.LLMGenConfig(
                         model="",
                         system_prompt="",
                         prompt="Describe image ${add_in_file}",
@@ -1369,37 +1368,37 @@ def test_add_drop_file_column(
                     ),
                 ),
             ]
-            if table_type == p.TableType.action:
-                jamai.table.add_action_columns(p.AddActionColumnSchema(id=table.id, cols=cols))
-            elif table_type == p.TableType.knowledge:
+            if table_type == t.TableType.action:
+                jamai.table.add_action_columns(t.AddActionColumnSchema(id=table.id, cols=cols))
+            elif table_type == t.TableType.knowledge:
                 jamai.table.add_knowledge_columns(
-                    p.AddKnowledgeColumnSchema(id=table.id, cols=cols)
+                    t.AddKnowledgeColumnSchema(id=table.id, cols=cols)
                 )
-            elif table_type == p.TableType.chat:
-                jamai.table.add_chat_columns(p.AddChatColumnSchema(id=table.id, cols=cols))
+            elif table_type == t.TableType.chat:
+                jamai.table.add_chat_columns(t.AddChatColumnSchema(id=table.id, cols=cols))
             else:
                 raise ValueError(f"Invalid table type: {table_type}")
 
         # --- COLUMN DROP --- #
         table = jamai.table.drop_columns(
             table_type,
-            p.ColumnDropRequest(
+            t.ColumnDropRequest(
                 table_id=table.id,
                 column_names=[f"in_{dtype}" for dtype in REGULAR_COLUMN_DTYPES]
                 + [f"out_{dtype}" for dtype in ["str"]],
             ),
         )
         expected_cols = {"ID", "Updated at", "add_in_file", "add_out_str"}
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             pass
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             expected_cols |= {"User", "AI"}
         else:
             raise ValueError(f"Invalid table type: {table_type}")
-        assert isinstance(table, p.TableMetaResponse)
-        assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
+        assert isinstance(table, t.TableMetaResponse)
+        assert all(isinstance(c, t.ColumnSchema) for c in table.cols)
         cols = set(c.id for c in table.cols)
         assert cols == expected_cols, cols
         rows = jamai.table.list_table_rows(table_type, table.id)
@@ -1422,12 +1421,12 @@ def test_kt_drop_invalid_columns(client_cls: Type[JamAI]):
     table_type = "knowledge"
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         for col in KT_FIXED_COLUMN_IDS:
             with pytest.raises(RuntimeError):
                 jamai.table.drop_columns(
                     table_type,
-                    p.ColumnDropRequest(table_id=table.id, column_names=[col]),
+                    t.ColumnDropRequest(table_id=table.id, column_names=[col]),
                 )
 
 
@@ -1437,12 +1436,12 @@ def test_ct_drop_invalid_columns(client_cls: Type[JamAI]):
     table_type = "chat"
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         for col in CT_FIXED_COLUMN_IDS:
             with pytest.raises(RuntimeError):
                 jamai.table.drop_columns(
                     table_type,
-                    p.ColumnDropRequest(table_id=table.id, column_names=[col]),
+                    t.ColumnDropRequest(table_id=table.id, column_names=[col]),
                 )
 
 
@@ -1451,32 +1450,32 @@ def test_ct_drop_invalid_columns(client_cls: Type[JamAI]):
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_rename_columns(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     cols = [
-        p.ColumnSchemaCreate(id="x", dtype="str"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="x", dtype="str"),
+        t.ColumnSchemaCreate(
             id="y",
             dtype="str",
-            gen_config=p.LLMGenConfig(prompt=r"Summarise ${x}, \${x}"),
+            gen_config=t.LLMGenConfig(prompt=r"Summarise ${x}, \${x}"),
         ),
     ]
     with _create_table(jamai, table_type, cols=cols) as table:
-        assert isinstance(table, p.TableMetaResponse)
-        assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
+        assert isinstance(table, t.TableMetaResponse)
+        assert all(isinstance(c, t.ColumnSchema) for c in table.cols)
         # Test rename on empty table
         table = jamai.table.rename_columns(
             table_type,
-            p.ColumnRenameRequest(table_id=table.id, column_map=dict(y="z")),
+            t.ColumnRenameRequest(table_id=table.id, column_map=dict(y="z")),
         )
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         expected_cols = {"ID", "Updated at", "x", "z"}
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             pass
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             expected_cols |= {"User", "AI"}
         else:
             raise ValueError(f"Invalid table type: {table_type}")
@@ -1484,7 +1483,7 @@ def test_rename_columns(
         assert cols == expected_cols
 
         table = jamai.table.get_table(table_type, table.id)
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         cols = set(c.id for c in table.cols)
         assert cols == expected_cols
         # Test adding data with new column names
@@ -1493,22 +1492,22 @@ def test_rename_columns(
         # Test also auto gen config reference update
         table = jamai.table.rename_columns(
             table_type,
-            p.ColumnRenameRequest(table_id=table.id, column_map=dict(x="a")),
+            t.ColumnRenameRequest(table_id=table.id, column_map=dict(x="a")),
         )
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         expected_cols = {"ID", "Updated at", "a", "z"}
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             pass
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             expected_cols |= {"Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"}
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             expected_cols |= {"User", "AI"}
         else:
             raise ValueError(f"Invalid table type: {table_type}")
         cols = set(c.id for c in table.cols)
         assert cols == expected_cols
         table = jamai.table.get_table(table_type, table.id)
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         cols = set(c.id for c in table.cols)
         assert cols == expected_cols
         # Test auto gen config reference update
@@ -1521,14 +1520,14 @@ def test_rename_columns(
         with pytest.raises(RuntimeError):
             jamai.table.rename_columns(
                 table_type,
-                p.ColumnRenameRequest(table_id=table.id, column_map=dict(a="b", z="b")),
+                t.ColumnRenameRequest(table_id=table.id, column_map=dict(a="b", z="b")),
             )
 
         # Overlapping new and old column names
         with pytest.raises(RuntimeError):
             jamai.table.rename_columns(
                 table_type,
-                p.ColumnRenameRequest(table_id=table.id, column_map=dict(a="b", z="a")),
+                t.ColumnRenameRequest(table_id=table.id, column_map=dict(a="b", z="a")),
             )
 
 
@@ -1538,12 +1537,12 @@ def test_kt_rename_invalid_columns(client_cls: Type[JamAI]):
     table_type = "knowledge"
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         for col in KT_FIXED_COLUMN_IDS:
             with pytest.raises(RuntimeError):
                 jamai.table.rename_columns(
                     table_type,
-                    p.ColumnRenameRequest(table_id=table.id, column_map={col: col}),
+                    t.ColumnRenameRequest(table_id=table.id, column_map={col: col}),
                 )
 
 
@@ -1553,12 +1552,12 @@ def test_ct_rename_invalid_columns(client_cls: Type[JamAI]):
     table_type = "chat"
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         for col in CT_FIXED_COLUMN_IDS:
             with pytest.raises(RuntimeError):
                 jamai.table.rename_columns(
                     table_type,
-                    p.ColumnRenameRequest(table_id=table.id, column_map={col: col}),
+                    t.ColumnRenameRequest(table_id=table.id, column_map={col: col}),
                 )
 
 
@@ -1567,14 +1566,14 @@ def test_ct_rename_invalid_columns(client_cls: Type[JamAI]):
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_reorder_columns(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
-        assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
+        assert isinstance(table, t.TableMetaResponse)
+        assert all(isinstance(c, t.ColumnSchema) for c in table.cols)
         table = jamai.table.get_table(table_type, TABLE_ID_A)
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
 
         column_names = [
             "inputs",
@@ -1596,16 +1595,16 @@ def test_reorder_columns(
             "summary",
             "captioning",
         ]
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             pass
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             column_names += ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
             expected_order = (
                 expected_order[:2]
                 + ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
                 + expected_order[2:]
             )
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             column_names += ["User", "AI"]
             expected_order = expected_order[:2] + ["User", "AI"] + expected_order[2:]
         else:
@@ -1615,7 +1614,7 @@ def test_reorder_columns(
         # Test reorder empty table
         table = jamai.table.reorder_columns(
             table_type,
-            p.ColumnReorderRequest(table_id=TABLE_ID_A, column_names=column_names),
+            t.ColumnReorderRequest(table_id=TABLE_ID_A, column_names=column_names),
         )
         expected_order = [
             "ID",
@@ -1628,18 +1627,18 @@ def test_reorder_columns(
             "summary",
             "captioning",
         ]
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             pass
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             expected_order += ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             expected_order += ["User", "AI"]
         else:
             raise ValueError(f"Invalid table type: {table_type}")
         cols = [c.id for c in table.cols]
         assert cols == expected_order, cols
         table = jamai.table.get_table(table_type, TABLE_ID_A)
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         cols = [c.id for c in table.cols]
         assert cols == expected_order, cols
         # Test add row
@@ -1658,14 +1657,14 @@ def test_reorder_columns(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_reorder_columns_invalid(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
-        assert all(isinstance(c, p.ColumnSchema) for c in table.cols)
+        assert isinstance(table, t.TableMetaResponse)
+        assert all(isinstance(c, t.ColumnSchema) for c in table.cols)
         table = jamai.table.get_table(table_type, TABLE_ID_A)
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
 
         column_names = [
             "inputs",
@@ -1687,16 +1686,16 @@ def test_reorder_columns_invalid(
             "summary",
             "captioning",
         ]
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             pass
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             column_names += ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
             expected_order = (
                 expected_order[:2]
                 + ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
                 + expected_order[2:]
             )
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             column_names += ["User", "AI"]
             expected_order = expected_order[:2] + ["User", "AI"] + expected_order[2:]
         else:
@@ -1714,18 +1713,18 @@ def test_reorder_columns_invalid(
             "photo",
             "captioning",
         ]
-        if table_type == p.TableType.action:
+        if table_type == t.TableType.action:
             pass
-        elif table_type == p.TableType.knowledge:
+        elif table_type == t.TableType.knowledge:
             column_names += ["Title", "Title Embed", "Text", "Text Embed", "File ID", "Page"]
-        elif table_type == p.TableType.chat:
+        elif table_type == t.TableType.chat:
             column_names += ["User", "AI"]
         else:
             raise ValueError(f"Invalid table type: {table_type}")
         with pytest.raises(RuntimeError, match="referenced an invalid source column"):
             jamai.table.reorder_columns(
                 table_type,
-                p.ColumnReorderRequest(table_id=TABLE_ID_A, column_names=column_names),
+                t.ColumnReorderRequest(table_id=TABLE_ID_A, column_names=column_names),
             )
 
 
@@ -1734,119 +1733,119 @@ def test_reorder_columns_invalid(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_update_gen_config(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="str"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="input0", dtype="str"),
+        t.ColumnSchemaCreate(
             id="output0",
             dtype="str",
-            gen_config=p.LLMGenConfig(),
+            gen_config=t.LLMGenConfig(),
         ),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(
             id="output1",
             dtype="str",
             gen_config=None,
         ),
     ]
     with _create_table(jamai, table_type, cols=cols) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # Check gen configs
         cols = {c.id: c for c in table.cols}
-        assert isinstance(cols["output0"].gen_config, p.LLMGenConfig)
+        assert isinstance(cols["output0"].gen_config, t.LLMGenConfig)
         assert isinstance(cols["output0"].gen_config.system_prompt, str)
         assert isinstance(cols["output0"].gen_config.prompt, str)
         assert len(cols["output0"].gen_config.system_prompt) > 0
         assert len(cols["output0"].gen_config.prompt) > 0
         assert cols["output1"].gen_config is None
-        if table_type == p.TableType.chat:
-            assert isinstance(cols["AI"].gen_config, p.GenConfig)
+        if table_type == t.TableType.chat:
+            assert isinstance(cols["AI"].gen_config, t.GenConfig)
 
         # --- Switch gen config --- #
         table = jamai.table.update_gen_config(
             table_type,
-            p.GenConfigUpdateRequest(
+            t.GenConfigUpdateRequest(
                 table_id=table.id,
                 column_map=dict(
                     output0=None,
-                    output1=p.LLMGenConfig(),
+                    output1=t.LLMGenConfig(),
                 ),
             ),
         )
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # Check gen configs
         cols = {c.id: c for c in table.cols}
         assert cols["output0"].gen_config is None
-        assert isinstance(cols["output1"].gen_config, p.LLMGenConfig)
+        assert isinstance(cols["output1"].gen_config, t.LLMGenConfig)
         assert isinstance(cols["output1"].gen_config.system_prompt, str)
         assert isinstance(cols["output1"].gen_config.prompt, str)
         assert len(cols["output1"].gen_config.system_prompt) > 0
         assert len(cols["output1"].gen_config.prompt) > 0
-        if table_type == p.TableType.chat:
-            assert isinstance(cols["AI"].gen_config, p.GenConfig)
+        if table_type == t.TableType.chat:
+            assert isinstance(cols["AI"].gen_config, t.GenConfig)
 
         # --- Update gen config --- #
         table = jamai.table.update_gen_config(
             table_type,
-            p.GenConfigUpdateRequest(
+            t.GenConfigUpdateRequest(
                 table_id=table.id,
                 column_map=dict(
-                    output0=p.LLMGenConfig(),
+                    output0=t.LLMGenConfig(),
                 ),
             ),
         )
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # Check gen configs
         cols = {c.id: c for c in table.cols}
-        assert isinstance(cols["output0"].gen_config, p.GenConfig)
-        assert isinstance(cols["output1"].gen_config, p.GenConfig)
-        if table_type == p.TableType.chat:
-            assert isinstance(cols["AI"].gen_config, p.GenConfig)
+        assert isinstance(cols["output0"].gen_config, t.GenConfig)
+        assert isinstance(cols["output1"].gen_config, t.GenConfig)
+        if table_type == t.TableType.chat:
+            assert isinstance(cols["AI"].gen_config, t.GenConfig)
 
         # --- Update gen config --- #
         table = jamai.table.update_gen_config(
             table_type,
-            p.GenConfigUpdateRequest(
+            t.GenConfigUpdateRequest(
                 table_id=table.id,
                 column_map=dict(
                     output1=None,
                 ),
             ),
         )
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # Check gen configs
         cols = {c.id: c for c in table.cols}
-        assert isinstance(cols["output0"].gen_config, p.GenConfig)
+        assert isinstance(cols["output0"].gen_config, t.GenConfig)
         assert cols["output1"].gen_config is None
-        if table_type == p.TableType.chat:
-            assert isinstance(cols["AI"].gen_config, p.GenConfig)
+        if table_type == t.TableType.chat:
+            assert isinstance(cols["AI"].gen_config, t.GenConfig)
 
         # --- Chat AI column must always have gen config --- #
-        if table_type == p.TableType.chat:
+        if table_type == t.TableType.chat:
             table = jamai.table.update_gen_config(
                 table_type,
-                p.GenConfigUpdateRequest(
+                t.GenConfigUpdateRequest(
                     table_id=table.id,
                     column_map=dict(AI=None),
                 ),
             )
-            assert isinstance(table, p.TableMetaResponse)
+            assert isinstance(table, t.TableMetaResponse)
             cols = {c.id: c for c in table.cols}
             assert cols["AI"].gen_config is not None
 
         # --- Chat AI column multi-turn must always be True --- #
-        if table_type == p.TableType.chat:
+        if table_type == t.TableType.chat:
             chat_cfg = {c.id: c for c in table.cols}["AI"].gen_config
             chat_cfg.multi_turn = False
             table = jamai.table.update_gen_config(
                 table_type,
-                p.GenConfigUpdateRequest(
+                t.GenConfigUpdateRequest(
                     table_id=table.id,
                     column_map=dict(AI=chat_cfg),
                 ),
             )
-            assert isinstance(table, p.TableMetaResponse)
+            assert isinstance(table, t.TableMetaResponse)
             cols = {c.id: c for c in table.cols}
             assert cols["AI"].gen_config.multi_turn is True
 
@@ -1856,48 +1855,48 @@ def test_update_gen_config(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_update_gen_config_invalid_model(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="str"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="input0", dtype="str"),
+        t.ColumnSchemaCreate(
             id="output0",
             dtype="str",
-            gen_config=p.LLMGenConfig(),
+            gen_config=t.LLMGenConfig(),
         ),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(
             id="output1",
             dtype="str",
             gen_config=None,
         ),
     ]
     with _create_table(jamai, table_type, cols=cols) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # Check gen configs
         cols = {c.id: c for c in table.cols}
-        assert isinstance(cols["output0"].gen_config, p.GenConfig)
+        assert isinstance(cols["output0"].gen_config, t.GenConfig)
         assert cols["output1"].gen_config is None
-        if table_type == p.TableType.chat:
-            assert isinstance(cols["AI"].gen_config, p.GenConfig)
+        if table_type == t.TableType.chat:
+            assert isinstance(cols["AI"].gen_config, t.GenConfig)
 
         # --- Update gen config --- #
         with pytest.raises(ResourceNotFoundError):
             table = jamai.table.update_gen_config(
                 table_type,
-                p.GenConfigUpdateRequest(
+                t.GenConfigUpdateRequest(
                     table_id=table.id,
                     column_map=dict(
-                        output0=p.LLMGenConfig(model="INVALID"),
+                        output0=t.LLMGenConfig(model="INVALID"),
                     ),
                 ),
             )
         table = jamai.table.update_gen_config(
             table_type,
-            p.GenConfigUpdateRequest(
+            t.GenConfigUpdateRequest(
                 table_id=table.id,
                 column_map=dict(
-                    output0=p.LLMGenConfig(model=_get_chat_model(jamai)),
+                    output0=t.LLMGenConfig(model=_get_chat_model(jamai)),
                 ),
             ),
         )
@@ -1908,57 +1907,57 @@ def test_update_gen_config_invalid_model(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_update_gen_config_invalid_column_ref(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="str"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="input0", dtype="str"),
+        t.ColumnSchemaCreate(
             id="output0",
             dtype="str",
-            gen_config=p.LLMGenConfig(),
+            gen_config=t.LLMGenConfig(),
         ),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(
             id="output1",
             dtype="str",
             gen_config=None,
         ),
     ]
     with _create_table(jamai, table_type, cols=cols) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         # Check gen configs
         cols = {c.id: c for c in table.cols}
-        assert isinstance(cols["output0"].gen_config, p.LLMGenConfig)
+        assert isinstance(cols["output0"].gen_config, t.LLMGenConfig)
         assert isinstance(cols["output0"].gen_config.system_prompt, str)
         assert isinstance(cols["output0"].gen_config.prompt, str)
         assert len(cols["output0"].gen_config.system_prompt) > 0
         assert len(cols["output0"].gen_config.prompt) > 0
         assert cols["output1"].gen_config is None
-        if table_type == p.TableType.chat:
-            assert isinstance(cols["AI"].gen_config, p.GenConfig)
+        if table_type == t.TableType.chat:
+            assert isinstance(cols["AI"].gen_config, t.GenConfig)
 
         # --- Update gen config --- #
         with pytest.raises(RuntimeError):
             table = jamai.table.update_gen_config(
                 table_type,
-                p.GenConfigUpdateRequest(
+                t.GenConfigUpdateRequest(
                     table_id=table.id,
                     column_map=dict(
-                        output0=p.LLMGenConfig(prompt="Summarise ${input2}"),
+                        output0=t.LLMGenConfig(prompt="Summarise ${input2}"),
                     ),
                 ),
             )
         table = jamai.table.update_gen_config(
             table_type,
-            p.GenConfigUpdateRequest(
+            t.GenConfigUpdateRequest(
                 table_id=table.id,
                 column_map=dict(
-                    output0=p.LLMGenConfig(prompt="Summarise ${input0}"),
+                    output0=t.LLMGenConfig(prompt="Summarise ${input0}"),
                 ),
             ),
         )
         cols = {c.id: c for c in table.cols}
-        assert isinstance(cols["output0"].gen_config, p.LLMGenConfig)
+        assert isinstance(cols["output0"].gen_config, t.LLMGenConfig)
         assert isinstance(cols["output0"].gen_config.system_prompt, str)
         assert isinstance(cols["output0"].gen_config.prompt, str)
         assert len(cols["output0"].gen_config.system_prompt) > 0
@@ -1970,42 +1969,42 @@ def test_update_gen_config_invalid_column_ref(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_update_gen_config_invalid_rag(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     cols = [
-        p.ColumnSchemaCreate(id="input0", dtype="str"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="input0", dtype="str"),
+        t.ColumnSchemaCreate(
             id="output0",
             dtype="str",
-            gen_config=p.LLMGenConfig(),
+            gen_config=t.LLMGenConfig(),
         ),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(
             id="output1",
             dtype="str",
             gen_config=None,
         ),
     ]
     with _create_table(jamai, "knowledge", cols=[]) as ktable:
-        assert isinstance(ktable, p.TableMetaResponse)
+        assert isinstance(ktable, t.TableMetaResponse)
         with _create_table(jamai, table_type, cols=cols) as table:
-            assert isinstance(table, p.TableMetaResponse)
+            assert isinstance(table, t.TableMetaResponse)
             # Check gen configs
             cols = {c.id: c for c in table.cols}
-            assert isinstance(cols["output0"].gen_config, p.GenConfig)
+            assert isinstance(cols["output0"].gen_config, t.GenConfig)
             assert cols["output1"].gen_config is None
-            if table_type == p.TableType.chat:
-                assert isinstance(cols["AI"].gen_config, p.GenConfig)
+            if table_type == t.TableType.chat:
+                assert isinstance(cols["AI"].gen_config, t.GenConfig)
 
             # --- Invalid knowledge table ID --- #
             with pytest.raises(ResourceNotFoundError):
                 table = jamai.table.update_gen_config(
                     table_type,
-                    p.GenConfigUpdateRequest(
+                    t.GenConfigUpdateRequest(
                         table_id=table.id,
                         column_map=dict(
-                            output0=p.LLMGenConfig(
-                                rag_params=p.RAGParams(table_id="INVALID"),
+                            output0=t.LLMGenConfig(
+                                rag_params=t.RAGParams(table_id="INVALID"),
                             ),
                         ),
                     ),
@@ -2013,11 +2012,11 @@ def test_update_gen_config_invalid_rag(
             # --- Valid knowledge table ID --- #
             table = jamai.table.update_gen_config(
                 table_type,
-                p.GenConfigUpdateRequest(
+                t.GenConfigUpdateRequest(
                     table_id=table.id,
                     column_map=dict(
-                        output0=p.LLMGenConfig(
-                            rag_params=p.RAGParams(table_id=ktable.id),
+                        output0=t.LLMGenConfig(
+                            rag_params=t.RAGParams(table_id=ktable.id),
                         ),
                     ),
                 ),
@@ -2027,11 +2026,11 @@ def test_update_gen_config_invalid_rag(
             with pytest.raises(ResourceNotFoundError):
                 table = jamai.table.update_gen_config(
                     table_type,
-                    p.GenConfigUpdateRequest(
+                    t.GenConfigUpdateRequest(
                         table_id=table.id,
                         column_map=dict(
-                            output0=p.LLMGenConfig(
-                                rag_params=p.RAGParams(
+                            output0=t.LLMGenConfig(
+                                rag_params=t.RAGParams(
                                     table_id=ktable.id, reranking_model="INVALID"
                                 ),
                             ),
@@ -2041,11 +2040,11 @@ def test_update_gen_config_invalid_rag(
             # --- Valid reranker --- #
             table = jamai.table.update_gen_config(
                 table_type,
-                p.GenConfigUpdateRequest(
+                t.GenConfigUpdateRequest(
                     table_id=table.id,
                     column_map=dict(
-                        output0=p.LLMGenConfig(
-                            rag_params=p.RAGParams(table_id=ktable.id, reranking_model=None),
+                        output0=t.LLMGenConfig(
+                            rag_params=t.RAGParams(table_id=ktable.id, reranking_model=None),
                         ),
                     ),
                 ),
@@ -2054,11 +2053,11 @@ def test_update_gen_config_invalid_rag(
             assert cols["output0"].gen_config.rag_params.reranking_model is None
             table = jamai.table.update_gen_config(
                 table_type,
-                p.GenConfigUpdateRequest(
+                t.GenConfigUpdateRequest(
                     table_id=table.id,
                     column_map=dict(
-                        output0=p.LLMGenConfig(
-                            rag_params=p.RAGParams(table_id=ktable.id, reranking_model=""),
+                        output0=t.LLMGenConfig(
+                            rag_params=t.RAGParams(table_id=ktable.id, reranking_model=""),
                         ),
                     ),
                 ),
@@ -2074,15 +2073,15 @@ def test_update_gen_config_invalid_rag(
 @pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
 def test_null_gen_config(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     stream: bool,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         table = jamai.table.update_gen_config(
             table_type,
-            p.GenConfigUpdateRequest(table_id=table.id, column_map=dict(summary=None)),
+            t.GenConfigUpdateRequest(table_id=table.id, column_map=dict(summary=None)),
         )
         response = _add_row(
             jamai, table_type, stream, data=dict(good=True, words=5, stars=9.9, inputs=TEXT)
@@ -2090,9 +2089,9 @@ def test_null_gen_config(
         if stream:
             # Must wait until stream ends
             responses = [r for r in response]
-            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+            assert all(isinstance(r, t.CellCompletionResponse) for r in responses)
         else:
-            assert isinstance(response, p.GenTableChatCompletionChunks)
+            assert isinstance(response, t.RowCompletionResponse)
         rows = jamai.table.list_table_rows(table_type, table.id)
         assert isinstance(rows.items, list)
         assert len(rows.items) == 1
@@ -2105,16 +2104,16 @@ def test_null_gen_config(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_invalid_referenced_column(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     # --- Non-existent column --- #
     cols = [
-        p.ColumnSchemaCreate(id="words", dtype="int"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="words", dtype="int"),
+        t.ColumnSchemaCreate(
             id="summary",
             dtype="str",
-            gen_config=p.LLMGenConfig(
+            gen_config=t.LLMGenConfig(
                 model=_get_chat_model(jamai),
                 system_prompt="You are a concise assistant.",
                 prompt="Summarise ${inputs}",
@@ -2130,11 +2129,11 @@ def test_invalid_referenced_column(
 
     # --- Vector column --- #
     cols = [
-        p.ColumnSchemaCreate(id="words", dtype="int"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="words", dtype="int"),
+        t.ColumnSchemaCreate(
             id="summary",
             dtype="str",
-            gen_config=p.LLMGenConfig(
+            gen_config=t.LLMGenConfig(
                 model=_get_chat_model(jamai),
                 system_prompt="You are a concise assistant.",
                 prompt="Summarise ${Text Embed}",
@@ -2155,16 +2154,16 @@ def test_invalid_referenced_column(
 @pytest.mark.parametrize("stream", [True, False], ids=["stream", "non-stream"])
 def test_gen_config_empty_prompts(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     stream: bool,
 ):
     jamai = client_cls()
     cols = [
-        p.ColumnSchemaCreate(id="words", dtype="int"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="words", dtype="int"),
+        t.ColumnSchemaCreate(
             id="summary",
             dtype="str",
-            gen_config=p.LLMGenConfig(
+            gen_config=t.LLMGenConfig(
                 model=_get_chat_model(jamai),
                 temperature=0.001,
                 top_p=0.001,
@@ -2173,11 +2172,11 @@ def test_gen_config_empty_prompts(
         ),
     ]
     chat_cols = [
-        p.ColumnSchemaCreate(id="User", dtype="str"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="User", dtype="str"),
+        t.ColumnSchemaCreate(
             id="AI",
             dtype="str",
-            gen_config=p.LLMGenConfig(
+            gen_config=t.LLMGenConfig(
                 model=_get_chat_model(jamai),
                 temperature=0.001,
                 top_p=0.001,
@@ -2186,26 +2185,26 @@ def test_gen_config_empty_prompts(
         ),
     ]
     with _create_table(jamai, table_type, cols=cols, chat_cols=chat_cols) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         data = dict(words=5)
-        if table_type == p.TableType.knowledge:
+        if table_type == t.TableType.knowledge:
             data["Title"] = "Dune: Part Two."
             data["Text"] = "Dune: Part Two is a 2024 American epic science fiction film."
         response = jamai.table.add_table_rows(
             table_type,
-            p.RowAddRequest(table_id=table.id, data=[data], stream=stream),
+            t.MultiRowAddRequest(table_id=table.id, data=[data], stream=stream),
         )
         if stream:
             # Must wait until stream ends
             responses = [r for r in response]
-            assert all(isinstance(r, p.GenTableStreamChatCompletionChunk) for r in responses)
+            assert all(isinstance(r, t.CellCompletionResponse) for r in responses)
             summary = "".join(r.text for r in responses if r.output_column_name == "summary")
             assert len(summary) > 0
-            if table_type == p.TableType.chat:
+            if table_type == t.TableType.chat:
                 ai = "".join(r.text for r in responses if r.output_column_name == "AI")
                 assert len(ai) > 0
         else:
-            assert isinstance(response.rows[0], p.GenTableChatCompletionChunks)
+            assert isinstance(response.rows[0], t.RowCompletionResponse)
 
 
 @pytest.mark.parametrize("client_cls", CLIENT_CLS)
@@ -2215,11 +2214,11 @@ def test_gen_config_no_message(
     jamai = client_cls()
     with pytest.raises(ValidationError, match="at least 1 item"):
         _ = [
-            p.ColumnSchemaCreate(id="words", dtype="int"),
-            p.ColumnSchemaCreate(
+            t.ColumnSchemaCreate(id="words", dtype="int"),
+            t.ColumnSchemaCreate(
                 id="summary",
                 dtype="str",
-                gen_config=p.ChatRequest(
+                gen_config=t.ChatRequest(
                     model=_get_chat_model(jamai),
                     messages=[],
                     temperature=0.001,
@@ -2235,7 +2234,7 @@ def test_gen_config_no_message(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_get_and_list_tables(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     _delete_tables(jamai)
@@ -2245,7 +2244,7 @@ def test_get_and_list_tables(
         _create_table(jamai, table_type, TABLE_ID_C),
         _create_table(jamai, table_type, TABLE_ID_X),
     ):
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         _add_row(
             jamai,
             table_type,
@@ -2255,7 +2254,7 @@ def test_get_and_list_tables(
 
         # Regular case
         table = jamai.table.get_table(table_type, TABLE_ID_B)
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         assert table.id == TABLE_ID_B
 
         tables = jamai.table.list_tables(table_type)
@@ -2264,7 +2263,7 @@ def test_get_and_list_tables(
         assert tables.offset == 0
         assert tables.limit == 100
         assert len(tables.items) == 4
-        assert all(isinstance(r, p.TableMetaResponse) for r in tables.items)
+        assert all(isinstance(r, t.TableMetaResponse) for r in tables.items)
 
         # Test various offset and limit
         tables = jamai.table.list_tables(table_type, offset=3, limit=2)
@@ -2273,7 +2272,7 @@ def test_get_and_list_tables(
         assert tables.offset == 3
         assert tables.limit == 2
         assert len(tables.items) == 1
-        assert all(isinstance(r, p.TableMetaResponse) for r in tables.items)
+        assert all(isinstance(r, t.TableMetaResponse) for r in tables.items)
 
         tables = jamai.table.list_tables(table_type, offset=4, limit=2)
         assert isinstance(tables.items, list)
@@ -2295,7 +2294,7 @@ def test_get_and_list_tables(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_table_search_and_parent_id(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     _delete_tables(jamai)
@@ -2305,7 +2304,7 @@ def test_table_search_and_parent_id(
         _create_table(jamai, table_type, "bear"),
         _create_table(jamai, table_type, "fear"),
     ):
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         with (
             _create_child_table(jamai, table_type, "beast", "least"),
             _create_child_table(jamai, table_type, "beast", "lease"),
@@ -2318,7 +2317,7 @@ def test_table_search_and_parent_id(
             assert tables.offset == 0
             assert tables.limit == 3
             assert len(tables.items) == 3
-            assert all(isinstance(r, p.TableMetaResponse) for r in tables.items)
+            assert all(isinstance(r, t.TableMetaResponse) for r in tables.items)
             # Search
             tables = jamai.table.list_tables(table_type, search_query="be", limit=3)
             assert isinstance(tables.items, list)
@@ -2326,7 +2325,7 @@ def test_table_search_and_parent_id(
             assert tables.offset == 0
             assert tables.limit == 3
             assert len(tables.items) == 2
-            assert all(isinstance(r, p.TableMetaResponse) for r in tables.items)
+            assert all(isinstance(r, t.TableMetaResponse) for r in tables.items)
             # Search
             tables = jamai.table.list_tables(table_type, search_query="ast", limit=3)
             assert isinstance(tables.items, list)
@@ -2334,7 +2333,7 @@ def test_table_search_and_parent_id(
             assert tables.offset == 0
             assert tables.limit == 3
             assert len(tables.items) == 3
-            assert all(isinstance(r, p.TableMetaResponse) for r in tables.items)
+            assert all(isinstance(r, t.TableMetaResponse) for r in tables.items)
             # Search with parent ID
             tables = jamai.table.list_tables(table_type, search_query="ast", parent_id="beast")
             assert isinstance(tables.items, list)
@@ -2342,7 +2341,7 @@ def test_table_search_and_parent_id(
             assert tables.offset == 0
             assert tables.limit == 100
             assert len(tables.items) == 2
-            assert all(isinstance(r, p.TableMetaResponse) for r in tables.items)
+            assert all(isinstance(r, t.TableMetaResponse) for r in tables.items)
             # Search with parent ID
             tables = jamai.table.list_tables(table_type, search_query="as", parent_id="beast")
             assert isinstance(tables.items, list)
@@ -2350,7 +2349,7 @@ def test_table_search_and_parent_id(
             assert tables.offset == 0
             assert tables.limit == 100
             assert len(tables.items) == 3
-            assert all(isinstance(r, p.TableMetaResponse) for r in tables.items)
+            assert all(isinstance(r, t.TableMetaResponse) for r in tables.items)
 
 
 @flaky(max_runs=5, min_passes=1, rerun_filter=_rerun_on_fs_error_with_delay)
@@ -2358,11 +2357,11 @@ def test_table_search_and_parent_id(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_duplicate_table(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         _add_row(
             jamai,
             table_type,
@@ -2418,12 +2417,12 @@ def test_duplicate_table(
 )
 def test_duplicate_table_invalid_name(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
     table_id_dst: str,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         _add_row(
             jamai,
             table_type,
@@ -2441,11 +2440,11 @@ def test_duplicate_table_invalid_name(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_create_child_table(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type) as table_a:
-        assert isinstance(table_a, p.TableMetaResponse)
+        assert isinstance(table_a, t.TableMetaResponse)
         _add_row(
             jamai,
             table_type,
@@ -2454,7 +2453,7 @@ def test_create_child_table(
         )
         # Duplicate with data
         with _create_child_table(jamai, table_type, TABLE_ID_A, TABLE_ID_B) as table_b:
-            assert isinstance(table_b, p.TableMetaResponse)
+            assert isinstance(table_b, t.TableMetaResponse)
             # Add another to table A
             _add_row(
                 jamai,
@@ -2484,11 +2483,11 @@ def test_create_child_table(
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_rename_table(
     client_cls: Type[JamAI],
-    table_type: p.TableType,
+    table_type: t.TableType,
 ):
     jamai = client_cls()
     with _create_table(jamai, table_type, TABLE_ID_A) as table:
-        assert isinstance(table, p.TableMetaResponse)
+        assert isinstance(table, t.TableMetaResponse)
         _add_row(
             jamai,
             table_type,
@@ -2497,7 +2496,7 @@ def test_rename_table(
         )
         # Create child table
         with _create_child_table(jamai, table_type, TABLE_ID_A, TABLE_ID_B) as child:
-            assert isinstance(child, p.TableMetaResponse)
+            assert isinstance(child, t.TableMetaResponse)
             # Rename
             with _rename_table(jamai, table_type, TABLE_ID_A, TABLE_ID_C) as table:
                 rows = jamai.table.list_table_rows(table_type, TABLE_ID_C)
@@ -2531,11 +2530,11 @@ def test_chat_table_gen_config(
 ):
     jamai = client_cls()
     cols = [
-        p.ColumnSchemaCreate(id="User", dtype="str"),
-        p.ColumnSchemaCreate(
+        t.ColumnSchemaCreate(id="User", dtype="str"),
+        t.ColumnSchemaCreate(
             id="AI",
             dtype="str",
-            gen_config=p.LLMGenConfig(
+            gen_config=t.LLMGenConfig(
                 model=_get_chat_model(jamai),
                 system_prompt="You are a concise assistant.",
                 multi_turn=False,
@@ -2552,4 +2551,4 @@ def test_chat_table_gen_config(
 
 
 if __name__ == "__main__":
-    test_add_drop_columns(JamAI, p.TableType.action)
+    test_add_drop_columns(JamAI, t.TableType.action)

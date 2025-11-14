@@ -1,12 +1,12 @@
+import { test as base, expect } from '@playwright/test';
 import 'dotenv/config';
-import { expect, test as base } from '@playwright/test';
 import { ProjectPage } from '../pages/project.page';
-import { TableListPage } from '../pages/tableList.page';
 import { TablePage } from '../pages/table.page';
+import { TableListPage } from '../pages/tableList.page';
 
-const { JAMAI_URL, JAMAI_SERVICE_KEY } = process.env;
+const { OWL_URL, OWL_SERVICE_KEY } = process.env;
 const headers = {
-	Authorization: `Bearer ${JAMAI_SERVICE_KEY}`
+	Authorization: `Bearer ${OWL_SERVICE_KEY}`
 };
 
 const test = base.extend<{ tablePage: TablePage; fileTablePage: TablePage }>({
@@ -197,7 +197,7 @@ test.describe('Knowledge Table Page', () => {
 		const tableType = 'knowledge';
 		const tableName = 'test-knowledge-table';
 
-		const deleteTableRes = await fetch(`${JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableName}`, {
+		const deleteTableRes = await fetch(`${OWL_URL}/api/v2/gen_tables/${tableType}/${tableName}`, {
 			method: 'DELETE',
 			headers: {
 				...headers,
@@ -211,7 +211,7 @@ test.describe('Knowledge Table Page', () => {
 
 		//* Get embedding model
 		const modelsRes = await fetch(
-			`${JAMAI_URL}/api/v1/models?${new URLSearchParams({
+			`${OWL_URL}/api/v2/models?${new URLSearchParams({
 				capabilities: 'embed'
 			})}`,
 			{
@@ -227,7 +227,7 @@ test.describe('Knowledge Table Page', () => {
 			throw modelsBody;
 		}
 
-		const createTableRes = await fetch(`${JAMAI_URL}/api/v1/gen_tables/${tableType}`, {
+		const createTableRes = await fetch(`${OWL_URL}/api/v2/gen_tables/${tableType}`, {
 			method: 'POST',
 			headers: {
 				...headers,
@@ -236,7 +236,7 @@ test.describe('Knowledge Table Page', () => {
 			},
 			body: JSON.stringify({
 				id: tableName,
-				version: '0.3.0',
+				version: '0.5.0',
 				cols: [],
 				embedding_model: modelsBody.data[0].id
 			})

@@ -14,7 +14,11 @@ const TemplateSchema = z.object({
 
 // List Templates
 export const ListTemplatesRequestSchema = z.object({
-    search_query: z.string().default("")
+    offset: z.number().int().min(0).optional(),
+    limit: z.number().int().min(1).max(1000).optional(),
+    order_by: z.string().optional(),
+    order_ascending: z.boolean().optional(),
+    search_query: z.string().optional()
 });
 export const ListTemplatesResponseSchema = createPaginationSchema(TemplateSchema);
 
@@ -27,7 +31,14 @@ export const GetTemplateResponseSchema = TemplateSchema;
 // List Table
 export const ListTablesRequestSchema = z.object({
     table_type: TableTypesSchema,
-    template_id: z.string()
+    template_id: z.string(),
+    offset: z.number().int().min(0).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+    order_by: z.string().optional(),
+    order_ascending: z.boolean().optional(),
+    parent_id: z.string().optional(),
+    search_query: z.string().optional(),
+    count_rows: z.boolean().optional()
 });
 export const ListTablesResponseSchema = createPaginationSchema(TableMetaResponseSchema);
 
@@ -47,8 +58,9 @@ export const ListTableRowsRequestSchema = z.object({
     starting_after: z.string().nullable().optional(),
     offset: z.number().int().min(0).default(0),
     limit: z.number().int().min(1).max(100).default(100),
-    order_by: z.string().default("Updated at"),
-    order_descending: z.boolean().default(true),
+    order_by: z.string().default("updated_at"),
+    order_ascending: z.boolean().default(true),
+    parent_id: z.string().nullable().optional(),
     float_decimals: z.number().int().min(0).default(0),
     vec_decimals: z.number().int().min(0).default(0)
 });

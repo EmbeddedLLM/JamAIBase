@@ -8,84 +8,105 @@ $ celery -A owl.entrypoints.starling beat --loglevel=info
 ```
 """
 
-import os
+from datetime import timedelta
 
-from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_process_init
 from loguru import logger
+from opentelemetry import metrics, trace
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.celery import CeleryInstrumentor
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-from owl.configs.manager import CONFIG, ENV_CONFIG
+from owl.configs import ENV_CONFIG, celery_app
+from owl.utils import uuid7_str
 from owl.utils.logging import (
     replace_logging_handlers,
     setup_logger_sinks,
     suppress_logging_handlers,
 )
+from owl.utils.loguru_otlp_handler import OTLPHandler
 
-# Maybe purge Redis data
-if ENV_CONFIG.owl_cache_purge:
-    CONFIG.purge()
-
-SCHEDULER_DB = f"{ENV_CONFIG.owl_db_dir}/_scheduler"
 logger.enable("")
-setup_logger_sinks(f"{ENV_CONFIG.owl_log_dir}/starling.log")
+setup_logger_sinks(None)
 replace_logging_handlers(["uvicorn.access"], False)
-suppress_logging_handlers(["litellm", "openmeter", "azure"], True)
+suppress_logging_handlers(["uvicorn", "litellm", "azure", "openmeter", "pottery"], True)
 
 
-try:
-    if not os.path.exists(SCHEDULER_DB):
-        os.makedirs(SCHEDULER_DB, exist_ok=True)
-        logger.info(f"Created scheduler directory at {SCHEDULER_DB}")
-    else:
-        logger.info(f"Scheduler directory already exists at {SCHEDULER_DB}")
-except Exception as e:
-    logger.error(f"Error creating scheduler directory: {e}")
+@worker_process_init.connect(weak=False)
+def init_celery_tracing(*args, **kwargs):
+    CeleryInstrumentor().instrument()
 
+    resource = Resource.create(
+        {
+            "service.name": "starling",
+            "service.instance.id": uuid7_str(),
+        }
+    )
+    # Meter provider configuration
+    reader = PeriodicExportingMetricReader(
+        OTLPMetricExporter(
+            endpoint=f"http://{ENV_CONFIG.opentelemetry_host}:{ENV_CONFIG.opentelemetry_port}"
+        ),
+        export_interval_millis=1,
+    )
+    provider = MeterProvider(resource=resource, metric_readers=[reader])
+    metrics.set_meter_provider(provider)
+    # Trace provider configuration
+    trace_provider = TracerProvider(resource=resource)
+    trace_provider.add_span_processor(
+        BatchSpanProcessor(
+            OTLPSpanExporter(
+                endpoint=f"http://{ENV_CONFIG.opentelemetry_host}:{ENV_CONFIG.opentelemetry_port}"
+            ),
+            schedule_delay_millis=1,
+        )
+    )
+    trace.set_tracer_provider(trace_provider)
 
-# Set up Celery
-app = Celery("tasks", broker=f"redis://{ENV_CONFIG.owl_redis_host}:{ENV_CONFIG.owl_redis_port}/0")
+    otlp_exporter = OTLPLogExporter(
+        endpoint=f"http://{ENV_CONFIG.opentelemetry_host}:{ENV_CONFIG.opentelemetry_port}"
+    )
 
-# Configure Celery
-app.conf.update(
-    result_backend=f"redis://{ENV_CONFIG.owl_redis_host}:{ENV_CONFIG.owl_redis_port}/0",
-    task_serializer="json",
-    accept_content=["json"],
-    result_serializer="json",
-    result_expires=36000,
-    timezone="UTC",
-    enable_utc=True,
-    beat_schedule_filename=os.path.join(SCHEDULER_DB, "celerybeat-schedule"),
-)
+    # Create an instance of OTLPHandler
+    otlp_handler = OTLPHandler.create(
+        service_name="starling",
+        exporter=otlp_exporter,
+        development_mode=False,  # Set to True for development
+        export_interval_ms=1,
+    )
+
+    logger.add(otlp_handler.sink, level="INFO")
+
 
 # Load task modules
-app.conf.imports = [
+celery_app.conf.imports = [
+    # "owl.tasks.checks",
+    "owl.tasks.database",
+    "owl.tasks.gen_table",
     "owl.tasks.genitor",
-    "owl.tasks.storage",
 ]
 
 # Configure the scheduler
-app.conf.beat_schedule = {}
+# celery_app.conf.beat_schedule = {
+#     "periodic-model-check": {
+#         "task": "owl.tasks.checks.test_models",
+#         "schedule": crontab(minute="*/10"),
+#     }
+# }
 
 # Add periodic storage update task if service_key_plain is not empty
 if ENV_CONFIG.service_key_plain != "":
-    app.conf.beat_schedule["periodic-storage-update"] = {
-        "task": "owl.tasks.storage.periodic_storage_update",
-        "schedule": crontab(minute=f"*/{ENV_CONFIG.owl_compute_storage_period_min}"),
+    celery_app.conf.beat_schedule["periodic-flush-clickhouse-buffer"] = {
+        "task": "owl.tasks.database.run_periodic_flush_buffer",
+        "schedule": timedelta(seconds=ENV_CONFIG.flush_clickhouse_buffer_sec),
     }
-
-# Add Lance-related tasks
-app.conf.beat_schedule.update(
-    {
-        "lance-periodic-reindex": {
-            "task": "owl.tasks.storage.lance_periodic_reindex",
-            "schedule": crontab(minute=f"*/{max(1,ENV_CONFIG.owl_reindex_period_sec//60)}"),
-        },
-        "lance-periodic-optimize": {
-            "task": "owl.tasks.storage.lance_periodic_optimize",
-            "schedule": crontab(minute=f"*/{max(1,ENV_CONFIG.owl_optimize_period_sec//60)}"),
-        },
-    }
-)
 
 # Check if S3-related environment variables are present and non-empty
 if all(
@@ -98,7 +119,7 @@ if all(
     ]
 ):
     logger.info("S3 Backup tasks has been configured.")
-    app.conf.beat_schedule.update(
+    celery_app.conf.beat_schedule.update(
         {
             "backup-to-s3": {
                 "task": "owl.tasks.genitor.backup_to_s3",

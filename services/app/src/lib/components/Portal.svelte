@@ -2,12 +2,17 @@
 	//see https://github.com/sveltejs/svelte/issues/3088#issuecomment-1065827485
 	import { onMount, onDestroy } from 'svelte';
 
-	export let target: HTMLElement | null | undefined = globalThis.document?.body;
+	interface Props {
+		target?: HTMLElement | null | undefined;
+		children?: import('svelte').Snippet;
+	}
 
-	let ref: HTMLElement;
+	let { target = globalThis.document?.body, children }: Props = $props();
+
+	let ref: HTMLElement | undefined = $state();
 
 	onMount(() => {
-		if (target) {
+		if (target && ref) {
 			target.appendChild(ref);
 		}
 	});
@@ -22,5 +27,5 @@
 </script>
 
 <div bind:this={ref}>
-	<slot />
+	{@render children?.()}
 </div>

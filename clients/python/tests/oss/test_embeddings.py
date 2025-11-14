@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from jamaibase import JamAI, JamAIAsync
-from jamaibase import protocol as p
+from jamaibase import types as t
 from jamaibase.utils import run
 
 CLIENT_CLS = [JamAI, JamAIAsync]
@@ -39,13 +39,13 @@ async def test_generate_embeddings(
     }
 
     # Get float embeddings
-    response = await run(jamai.generate_embeddings, p.EmbeddingRequest(**kwargs))
-    assert isinstance(response, p.EmbeddingResponse)
+    response = await run(jamai.generate_embeddings, t.EmbeddingRequest(**kwargs))
+    assert isinstance(response, t.EmbeddingResponse)
     assert isinstance(response.data, list)
-    assert all(isinstance(d, p.EmbeddingResponseData) for d in response.data)
+    assert all(isinstance(d, t.EmbeddingResponseData) for d in response.data)
     assert all(isinstance(d.embedding, list) for d in response.data)
     assert isinstance(response.model, str)
-    assert isinstance(response.usage, p.CompletionUsage)
+    assert isinstance(response.usage, t.CompletionUsage)
     if isinstance(inputs, str):
         assert len(response.data) == 1
     else:
@@ -54,13 +54,13 @@ async def test_generate_embeddings(
 
     # Get base64 embeddings
     kwargs["encoding_format"] = "base64"
-    response = await run(jamai.generate_embeddings, p.EmbeddingRequest(**kwargs))
-    assert isinstance(response, p.EmbeddingResponse)
+    response = await run(jamai.generate_embeddings, t.EmbeddingRequest(**kwargs))
+    assert isinstance(response, t.EmbeddingResponse)
     assert isinstance(response.data, list)
-    assert all(isinstance(d, p.EmbeddingResponseData) for d in response.data)
+    assert all(isinstance(d, t.EmbeddingResponseData) for d in response.data)
     assert all(isinstance(d.embedding, str) for d in response.data)
     assert isinstance(response.model, str)
-    assert isinstance(response.usage, p.CompletionUsage)
+    assert isinstance(response.usage, t.CompletionUsage)
     if isinstance(inputs, str):
         assert len(response.data) == 1
     else:

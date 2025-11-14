@@ -1,16 +1,16 @@
-import 'dotenv/config';
-import { handler } from '../build/handler.js';
-import express from 'express';
 import cors from 'cors';
+import 'dotenv/config';
+import express from 'express';
 import expressOpenIdConnect from 'express-openid-connect';
+import { handler } from '../build/handler.js';
 
-const { NODE_ENV, BASE_URL } = process.env;
+const { NODE_ENV, ORIGIN } = process.env;
 const FRONTEND_PORT = process.env.FRONTEND_PORT || 4000;
 
 const app = express();
 app.use(cors());
 
-if (process.env.PUBLIC_IS_LOCAL === 'false') {
+if (!!process.env.OWL_SERVICE_KEY && !!process.env.AUTH0_CLIENT_SECRET) {
 	// The `auth` router attaches /login, /logout and /callback routes to the baseURL
 	app.use(
 		expressOpenIdConnect.auth({
@@ -20,7 +20,7 @@ if (process.env.PUBLIC_IS_LOCAL === 'false') {
 			},
 			authRequired: false,
 			auth0Logout: true,
-			baseURL: NODE_ENV === 'production' ? BASE_URL : `http://localhost:${FRONTEND_PORT}`,
+			baseURL: NODE_ENV === 'production' ? ORIGIN : `http://localhost:${FRONTEND_PORT}`,
 			clientID: process.env.AUTH0_CLIENT_ID,
 			clientSecret: process.env.AUTH0_CLIENT_SECRET,
 			issuerBaseURL: process.env.AUTH0_ISSUER_BASE_URL,

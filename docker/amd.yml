@@ -45,16 +45,3 @@ services:
       - video
     # Alternatively, you could use privileged mode (use with caution):
     # privileged: true
-
-  docio:
-    cap_add:
-      - SYS_PTRACE
-    devices:
-      - /dev/kfd
-      - /dev/dri/renderD128
-    security_opt:
-      - seccomp:unconfined
-    group_add:
-      - video
-    # Alternatively, you could use privileged mode (use with caution):
-    # privileged: true

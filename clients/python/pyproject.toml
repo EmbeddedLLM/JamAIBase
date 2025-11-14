@@ -5,11 +5,11 @@
 # https://docs.pytest.org/en/latest/customize.html?highlight=pyproject#pyproject-toml
 
 [tool.pytest.ini_options]
-timeout = 90
+timeout = 120
 log_cli = true
 asyncio_mode = "auto"
 # log_cli_level = "DEBUG"
-addopts = "--cov=jamaibase --doctest-modules"
+addopts = "--doctest-modules -vv -ra --strict-markers --no-flaky-report"
 testpaths = ["tests"]
 filterwarnings = [
     "ignore::DeprecationWarning:tensorflow.*",
@@ -17,6 +17,20 @@ filterwarnings = [
     "ignore::DeprecationWarning:matplotlib.*",
     "ignore::DeprecationWarning:flatbuffers.*",
 ]
+markers = ["oss: Cloud-only tests", "cloud: Cloud-only tests"]
+
+# -----------------------------------------------------------------------------
+# Coverage configuration
+# https://coverage.readthedocs.io/en
+
+[tool.coverage.run]
+source = ["owl"]
+relative_files = true
+concurrency = ["multiprocessing", "thread", "greenlet"]
+parallel = true
+
+# [tool.coverage.paths]
+# source = ["services/api/src", "src"]
 
 # -----------------------------------------------------------------------------
 # Ruff configuration
@@ -25,7 +39,7 @@ filterwarnings = [
 [tool.ruff]
 line-length = 99
 indent-width = 4
-target-version = "py310"
+target-version = "py312"
 extend-include = [".pyi?$", ".ipynb"]
 extend-exclude = ["archive/*"]
 respect-gitignore = true
@@ -57,7 +71,7 @@ unfixable = ["B"]
 "**/{tests,docs,tools}/*" = ["E402"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["jamaibase", "owl", "docio"]
+known-first-party = ["jamaibase", "owl"]
 
 [tool.ruff.lint.flake8-bugbear]
 # Allow default arguments like, e.g., `data: List[str] = fastapi.Query(None)`.
@@ -74,16 +88,16 @@ extend-immutable-calls = [
 # https://setuptools.pypa.io/en/latest/userguide/pyproject_config.html
 
 [build-system]
-requires = ["setuptools>=61.0", "setuptools-scm"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "jamaibase"
 description = "JamAI Base: Let Your Database Orchestrate LLMs and RAG"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 # keywords = ["one", "two"]
-license = { text = "Apache 2.0" }
+license = "Apache-2.0"
 classifiers = [ # https://pypi.org/classifiers/
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3 :: Only",
@@ -91,40 +105,40 @@ classifiers = [ # https://pypi.org/classifiers/
     "Operating System :: Unix",
 ]
 # Sort your dependencies https://sortmylist.com/
+# In general, for v1 and above, we pin to minor version using ~=
 dependencies = [
-    "filetype~=1.2.0",
+    "filetype~=1.2",
     "httpx>=0.25.0",
     "loguru>=0.7.2",
-    "numpy>=1.26.0,<2.0.0",
-    "orjson>=3.9.7",
+    "natsort[fast]~=8.4",
+    "numpy>=1.26.0",
+    "orjson~=3.9",
     "pandas",
-    "Pillow>=10.0.1",
-    "pydantic-settings>=2.0.3",
-    "pydantic>=2.4.2",
-    "srsly>=2.4.8",
-    "toml>=0.10.2",
-    "typing_extensions>=4.10.0",
+    "Pillow>=10.0",
+    "pydantic-extra-types~=2.9",
+    "pydantic-settings~=2.4",
+    "pydantic[email,timezone]~=2.10",
+    "pyyaml~=6.0",
+    "toml~=0.10.2",
+    "typing_extensions~=4.10",
+    "uuid-utils~=0.9",
+    "uuid7~=0.1",
 ]
 dynamic = ["version"]
 
 [project.optional-dependencies]
-lint = ["ruff~=0.5.7"]
+lint = ["ruff~=0.12.9"]
 test = [
     "flaky~=3.8.1",
+    "locust~=2.39.1",
     "mypy~=1.11.1",
-    "pydub~=0.25.1",
     "pytest-asyncio>=0.23.8",
     "pytest-cov~=5.0.0",
     "pytest-timeout>=2.3.1",
     "pytest~=8.2.2",
-]
-docs = [
-    "furo~=2024.8.6",              # Sphinx theme (nice looking, with dark mode)
-    "myst-parser~=4.0.0",
-    "sphinx-autobuild~=2024.4.16",
     "sphinx-copybutton~=0.5.2",
     "sphinx>=7.0.0",
-    "sphinx_rtd_theme~=2.0.0",     # Sphinx theme
+    "sphinx_rtd_theme~=2.0.0",  # Sphinx theme
 ]
 build = [
     "build",
@@ -136,6 +150,12 @@ all = [
 
 # [project.scripts]
 # jamaibase = "jamaibase.scripts.example:main_cli"
+
+[project.urls]
+Homepage = "https://www.jamaibase.com/"
+Documentation = "https://docs.jamaibase.com/"
+Repository = "https://github.com/EmbeddedLLM/JamAIBase"
+Changelog = "https://github.com/EmbeddedLLM/JamAIBase/blob/main/CHANGELOG.md"
 
 [tool.setuptools.dynamic]
 version = { attr = "jamaibase.version.__version__" }

@@ -1,0 +1,25 @@
+services:
+  dragonfly:
+    ports:
+      - 6379:6379
+
+  clickhouse:
+    ports:
+      - 8123:8123
+
+  docling:
+    ports:
+      - 5001:5001
+
+  owl:
+    volumes:
+      - ${PWD}/docker_data/owl/db:/usr/src/app/db
+      - ${HOME}/.kube/config:/root/.kube/config
+    environment:
+      - KUBECONFIG=/root/.kube/config
+    ports:
+      - "${API_PORT:-6969}:${OWL_PORT:-6969}"
+    entrypoint:
+      - /bin/bash
+      - -c
+      - uv run coverage run --data-file=db/.coverage --rcfile=api/pyproject.toml -m owl.entrypoints.api

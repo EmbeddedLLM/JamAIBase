@@ -1,17 +1,18 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
+	import { tick } from 'svelte';
 	import debounce from 'lodash/debounce';
-	import Trash_2 from 'lucide-svelte/icons/trash-2';
+	import { PlusIcon, Trash2 } from '@lucide/svelte';
 	import { browser } from '$app/environment';
-	import { invalidate } from '$app/navigation';
-	import { page } from '$app/stores';
-	import { genTableRows, tableState } from '$lib/components/tables/tablesStore';
+	import { goto, invalidate } from '$app/navigation';
+	import { page } from '$app/state';
+	import { getTableState, getTableRowsState } from '$lib/components/tables/tablesState.svelte';
 	import { db } from '$lib/db';
 	import logger from '$lib/logger';
 	import type { GenTable } from '$lib/types';
 
 	import ActionTable from '$lib/components/tables/ActionTable.svelte';
-	import { ColumnSettings, TablePagination } from '$lib/components/tables/(sub)';
+	import { ColumnSettings, TablePagination, TableSorter } from '$lib/components/tables/(sub)';
 	import { ActionsDropdown, GenerateButton } from '../../(components)';
 	import { AddColumnDialog, DeleteDialogs } from '../../(dialogs)';
 	import SearchBar from '$lib/components/preset/SearchBar.svelte';
@@ -21,18 +22,20 @@
 	import ActionTableIcon from '$lib/icons/ActionTableIcon.svelte';
 	import ArrowBackIcon from '$lib/icons/ArrowBackIcon.svelte';
 
-	export let data;
-	$: ({ table, tableRows, userData } = data);
-	let tableData: GenTable | undefined;
-	let tableRowsCount: number | undefined;
-	let tableError: { error: number; message: Awaited<typeof table>['message'] } | undefined;
-	let tableLoaded = false;
+	const tableState = getTableState();
+	const tableRowsState = getTableRowsState();
 
-	$: table, resetTable();
+	let { data } = $props();
+	let tableData: GenTable | undefined = $state();
+	let tableRowsCount: number | undefined = $state();
+	let tableError: { error: number; message: Awaited<typeof data.table>['message'] } | undefined =
+		$state();
+	let tableLoaded = $state(false);
+
 	const resetTable = () => {
-		if (!('then' in table)) return;
+		if (!('then' in data.table)) return;
 		Promise.all([
-			table.then(async (tableRes) => {
+			data.table.then(async (tableRes) => {
 				tableData = structuredClone(tableRes.data); // Client reorder column
 				if (tableRes.error) {
 					tableError = { error: tableRes.error, message: tableRes.message };
@@ -40,74 +43,83 @@
 
 				if (tableData) tableState.setTemplateCols(tableData.cols);
 				if (browser && tableData) {
-					const savedColSizes = await db.action_table.get($page.params.table_id);
+					const savedColSizes = await db.action_table.get(page.params.table_id);
 					if (savedColSizes) {
-						$tableState.colSizes = savedColSizes.columns;
+						tableState.colSizes = savedColSizes.columns;
 					}
 					tableState.setTemplateCols(tableData.cols);
 				}
 			}),
-			tableRows.then((tableRowsRes) => {
-				$genTableRows = structuredClone(tableRowsRes.data?.rows); // Client reorder rows
+			data.tableRows.then((tableRowsRes) => {
+				tableRowsState.rows = structuredClone(tableRowsRes.data?.rows); // Client reorder rows
+				tableRowsState.loading = false;
 				tableRowsCount = tableRowsRes.data?.total_rows;
 			})
 		]).then(() => (tableLoaded = true));
 	};
 
-	let searchQuery = '';
+	let searchQuery = $state('');
 	let searchController: AbortController | null = null;
-	let isLoadingSearch = false;
+	let isLoadingSearch = $state(false);
 
-	let isAddingColumn: { type: 'input' | 'output'; showDialog: boolean } = {
+	let isAddingColumn: { type: 'input' | 'output'; showDialog: boolean } = $state({
 		type: 'input',
 		showDialog: false
-	};
-	let isDeletingRow: string[] | null = null;
+	});
+	let isDeletingRow: string[] | null = $state(null);
 
 	async function refetchTable(hideColumnSettings = true) {
 		//? Don't refetch while streaming
-		if (Object.keys($tableState.streamingRows).length === 0) {
-			if (searchQuery) {
-				await handleSearchRows(searchQuery);
-			} else {
-				searchController?.abort('Duplicate');
-				await invalidate('action-table:slug');
-				isLoadingSearch = false;
-			}
+		if (Object.keys(tableState.streamingRows).length === 0) {
+			searchController?.abort('Duplicate');
+			await invalidate('action-table:slug');
+			isLoadingSearch = false;
 
 			tableState.setSelectedRows([]);
 			if (hideColumnSettings)
-				tableState.setColumnSettings({ ...$tableState.columnSettings, isOpen: false });
+				tableState.setColumnSettings({ ...tableState.columnSettings, isOpen: false });
 		}
 	}
 
 	async function handleSearchRows(q: string) {
-		if (!tableData || !$genTableRows) return;
+		if (!tableData || !tableRowsState.rows) return;
 
 		isLoadingSearch = true;
 
-		if (!searchQuery) return refetchTable();
+		if (searchQuery) {
+			page.url.searchParams.set('q', searchQuery);
+		} else {
+			page.url.searchParams.delete('q');
+		}
+		goto(`?${page.url.searchParams}`, {
+			replaceState: true,
+			keepFocus: true,
+			invalidate: []
+		});
 
 		searchController?.abort('Duplicate');
 		searchController = new AbortController();
 
 		try {
+			const orderBy = page.url.searchParams.get('sort_by');
+			const orderAsc = parseInt(page.url.searchParams.get('asc') ?? '0');
+
 			const response = await fetch(
-				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/action/${tableData.id}/rows?${new URLSearchParams({
-					limit: (100).toString(),
-					search_query: q
-				})}`,
+				`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/action/rows/list?${new URLSearchParams([
+					['table_id', tableData.id],
+					['limit', (100).toString()],
+					['order_by', orderBy ?? 'ID'],
+					['order_ascending', orderAsc === 1 ? 'true' : 'false'],
+					['search_query', q]
+				])}`,
 				{
-					signal: searchController.signal,
-					headers: {
-						'x-project-id': $page.params.project_id
-					}
+					signal: searchController.signal
 				}
 			);
 
 			const responseBody = await response.json();
 			if (response.ok) {
-				$genTableRows = responseBody.items;
+				tableRowsState.rows = responseBody.items;
 			} else {
 				logger.error('ACTIONTBL_TBL_SEARCHROWS', responseBody);
 				console.error(responseBody);
@@ -130,96 +142,83 @@
 		}
 	}
 	const debouncedSearchRows = debounce(handleSearchRows, 300);
+	$effect(() => {
+		data.table, resetTable();
+	});
 </script>
 
 <svelte:head>
-	<title>{$page.params.table_id} - Action Table</title>
+	<title>{page.params.table_id} - Action Table</title>
 </svelte:head>
 
 <section
 	id="action-table"
-	class="relative flex flex-col pt-0 min-h-0 h-screen max-h-screen min-w-0 overflow-hidden"
+	class="relative flex h-screen max-h-screen min-h-0 min-w-0 flex-col overflow-hidden pt-0"
 >
 	<div
 		data-testid="table-title-row"
-		inert={$tableState.columnSettings.isOpen}
-		class="grid grid-cols-[minmax(0,max-content)_minmax(min-content,auto)] items-center pl-4 pr-2 sm:pr-4 pt-[1.5px] sm:pt-3 pb-1.5 sm:pb-3 gap-2"
+		inert={tableState.columnSettings.isOpen}
+		class="grid grid-cols-[minmax(0,max-content)_minmax(min-content,auto)] items-center gap-2 pb-1 pl-3 pr-2 pt-[1.5px] sm:pr-4 sm:pt-3"
 	>
 		<div class="flex items-center gap-2 text-sm sm:text-base">
-			<a
-				href="/project/{$page.params.project_id}/action-table"
-				class="[all:unset] !hidden sm:!block"
+			<Button
+				variant="ghost"
+				href="/project/{page.params.project_id}/action-table"
+				title="Back to action tables"
+				class="hidden aspect-square h-8 items-center justify-center p-0 sm:flex sm:h-9"
 			>
-				<Button
-					variant="ghost"
-					title="Back to action tables"
-					class="flex items-center justify-center p-0 h-8 sm:h-9 aspect-square"
-				>
-					<ArrowBackIcon class="h-7" />
-				</Button>
-			</a>
-			<ActionTableIcon class="flex-[0_0_auto] h-[18px] text-[#475467]" />
+				<ArrowBackIcon class="h-7" />
+			</Button>
+			<ActionTableIcon class="h-[18px] flex-[0_0_auto] text-[#475467]" />
 			<span
 				title={tableData
-					? $page.params.table_id
+					? page.params.table_id
 					: tableError?.error == 404
 						? 'Not found'
 						: 'Failed to load'}
-				class="font-medium text-[#344054] line-clamp-1 break-all"
+				class="line-clamp-1 break-all font-medium text-[#344054]"
 			>
-				{#await table}
-					{$page.params.table_id}
+				{#await data.table}
+					{page.params.table_id}
 				{:then { data }}
 					{data ? data.id : tableError?.error === 404 ? 'Not found' : 'Failed to load'}
 				{/await}
 			</span>
 		</div>
 
-		<div
-			style="grid-template-columns: minmax(min-content,auto) auto min-content;"
-			class="grid place-items-end gap-1 w-full"
-		>
-			{#if tableLoaded || (tableData && $genTableRows)}
-				<SearchBar
-					bind:searchQuery
-					{isLoadingSearch}
-					debouncedSearch={debouncedSearchRows}
-					label="Search rows"
-					class="{searchQuery ? 'w-[12rem]' : 'w-[6.5rem]'} place-self-start"
-				/>
-
+		<div style="grid-template-columns: auto min-content;" class="grid w-full place-items-end">
+			{#if tableLoaded || (tableData && tableRowsState.rows)}
 				<div
-					title={$tableState.selectedRows.length === 0
-						? 'Select row to generate output'
-						: undefined}
-					style="grid-template-columns: minmax(0, 1fr) {$tableState.selectedRows.length !== 0
+					title={tableState.selectedRows.length === 0 ? 'Select row to generate output' : undefined}
+					style="grid-template-columns: minmax(0, 1fr) {tableState.selectedRows.length !== 0
 						? 'minmax(0, 1fr)'
 						: 'minmax(0, 0fr)'};"
-					class="grid place-items-end items-center gap-1 {$tableState.selectedRows.length !== 0 ||
-					Object.keys($tableState.streamingRows).length !== 0
+					class="grid place-items-end items-center gap-1 {tableState.selectedRows.length !== 0 ||
+					Object.keys(tableState.streamingRows).length !== 0
 						? 'opacity-100'
-						: 'opacity-80 [&_*]:!text-[#98A2B3] [&_button]:bg-[#E4E7EC] [&>button>div]:bg-[#E4E7EC]'} transition-[opacity,grid-template-columns]"
+						: 'opacity-80 [&>button>div]:bg-[#E4E7EC] [&_*]:!text-[#98A2B3] [&_button]:bg-[#E4E7EC]'} transition-[opacity,grid-template-columns]"
 				>
 					<GenerateButton
-						inert={$tableState.selectedRows.length === 0 ? true : undefined}
+						inert={tableState.selectedRows.length === 0 ? true : undefined}
 						tableType="action"
 						{tableData}
 						{refetchTable}
-						class={$tableState.selectedRows.length === 0
-							? 'z-[5] translate-x-1 pointer-events-none'
+						class={tableState.selectedRows.length === 0
+							? 'pointer-events-none z-[5] translate-x-1'
 							: ''}
 					/>
 
 					<Button
-						inert={$tableState.selectedRows.length === 0 ? true : undefined}
+						variant="action"
+						inert={tableState.selectedRows.length === 0 ? true : undefined}
 						title="Delete row(s)"
-						on:click={() => (isDeletingRow = $tableState.selectedRows)}
-						class="flex items-center gap-2 p-0 md:px-3 h-8 sm:h-9 text-[#F04438] bg-[#F2F4F7] hover:bg-[#E4E7EC] focus-visible:bg-[#E4E7EC] active:bg-[#E4E7EC] aspect-square md:aspect-auto {$tableState
+						onclick={() => (isDeletingRow = tableState.selectedRows)}
+						class="flex aspect-square h-8 items-center gap-2 p-0 text-[#F04438] sm:h-9 md:aspect-auto md:px-3 {tableState
 							.selectedRows.length !== 0
 							? 'opacity-100'
-							: 'opacity-0 pointer-events-none'} transition-opacity"
+							: 'pointer-events-none opacity-0'} transition-[opacity,background-color]"
 					>
-						<Trash_2 class="h-4 w-4" />
+						<Trash2 class="h-4 w-4" />
 
 						<span class="hidden md:block">Delete row(s)</span>
 					</Button>
@@ -233,17 +232,56 @@
 						<CodeIcon class="h-5 w-5" />
 						Get Code
 					</Button> -->
-
-				<ActionsDropdown tableType="action" bind:isAddingColumn {tableData} {refetchTable} />
 			{:else}
-				<Skeleton class="h-[32px] sm:h-[36px] w-[32px] sm:w-[36px] rounded-full place-self-start" />
-				<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[100px] rounded-full" />
-				<Skeleton class="h-[32px] sm:h-[38px] w-[32px] sm:w-[38px] rounded-full" />
+				<Skeleton class="h-[32px] w-[32px] rounded-full sm:h-[38px] sm:w-[100px]" />
 			{/if}
 		</div>
 	</div>
 
-	<ActionTable bind:userData bind:tableData bind:tableError {refetchTable} />
+	<div
+		style="grid-template-columns: auto minmax(0, auto) min-content;"
+		class="grid w-full place-items-end gap-1 pb-1.5 pl-3 pr-2 sm:pb-3 sm:pr-4"
+	>
+		{#if tableLoaded || (tableData && tableRowsState.rows)}
+			<div class="flex gap-1 place-self-start">
+				<SearchBar
+					bind:searchQuery
+					{isLoadingSearch}
+					debouncedSearch={debouncedSearchRows}
+					label="Search rows"
+					class="w-[12rem] [&>input]:h-8 [&>input]:sm:h-9"
+				/>
+
+				<TableSorter {tableData} tableType="action" />
+			</div>
+
+			<div class="place-items-end">
+				<Button
+					variant="action"
+					title="New column"
+					onclick={async () => {
+						tableState.addingCol = true;
+						await tick();
+						const table = document.querySelector('[data-testid=table-area]')?.firstChild;
+						if (table) (table as HTMLElement).scrollLeft = 999999;
+					}}
+					class="flex aspect-square h-8 items-center gap-2 p-0 text-[#475467] sm:h-9 md:aspect-auto md:px-3"
+				>
+					<PlusIcon class="h-4 w-4" />
+
+					<span class="hidden md:block">New column</span>
+				</Button>
+			</div>
+
+			<ActionsDropdown tableType="action" {tableData} {refetchTable} />
+		{:else}
+			<Skeleton class="h-[32px] w-[32px] place-self-start rounded-full sm:h-[36px] sm:w-[36px]" />
+			<Skeleton class="h-[32px] w-[32px] rounded-full sm:h-[36px] sm:w-[127px]" />
+			<Skeleton class="h-[32px] w-[32px] place-self-start rounded-full sm:h-[36px] sm:w-[36px]" />
+		{/if}
+	</div>
+
+	<ActionTable bind:tableData bind:tableError user={data.user} {refetchTable} />
 
 	{#if !tableError}
 		<TablePagination tableType="action" bind:tableData {tableRowsCount} {searchQuery} />

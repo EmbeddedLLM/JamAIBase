@@ -1,1399 +1,1091 @@
 import re
+from asyncio import sleep
 from io import BytesIO
-from os import listdir, makedirs
-from os.path import isdir, join, splitext
-from shutil import copy2, copytree
+from os.path import join, splitext
 from tempfile import TemporaryDirectory
+from time import perf_counter
 from typing import Annotated, Any
 
-import numpy as np
-import pandas as pd
-import tiktoken
+from celery.result import AsyncResult
 from fastapi import (
     APIRouter,
     BackgroundTasks,
     Depends,
-    File,
     Form,
     Path,
     Query,
     Request,
     Response,
-    UploadFile,
 )
 from fastapi.responses import FileResponse, StreamingResponse
 from loguru import logger
+from pydantic import Field
 
-from jamaibase.exceptions import (
-    ResourceNotFoundError,
-    TableSchemaFixedError,
-    UnsupportedMediaTypeError,
-    make_validation_error,
+from owl.configs import CACHE
+from owl.db.gen_executor import MultiRowGenExecutor
+from owl.db.gen_table import (
+    ActionTable,
+    ChatTable,
+    ColumnMetadata,
+    KnowledgeTable,
+    TableMetadata,
 )
-from jamaibase.utils.io import csv_to_df, json_loads
-from owl.configs.manager import ENV_CONFIG
-from owl.db.gen_executor import MultiRowsGenExecutor
-from owl.db.gen_table import GenerativeTable
-from owl.llm import LLMEngine
-from owl.loaders import load_file
-from owl.models import CloudEmbedder, CloudReranker
-from owl.protocol import (
-    GEN_CONFIG_VAR_PATTERN,
-    TABLE_NAME_PATTERN,
+from owl.docparse import GeneralDocLoader
+from owl.tasks.gen_table import import_gen_table
+from owl.types import (
     ActionTableSchemaCreate,
-    AddActionColumnSchema,
-    AddChatColumnSchema,
-    AddKnowledgeColumnSchema,
-    ChatEntry,
     ChatTableSchemaCreate,
-    ChatThread,
-    CodeGenConfig,
-    ColName,
+    ChatThreadsResponse,
     ColumnDropRequest,
-    ColumnDtype,
     ColumnRenameRequest,
     ColumnReorderRequest,
     CSVDelimiter,
-    EmbedGenConfig,
-    GenConfig,
+    DuplicateTableQuery,
+    ExportTableDataQuery,
+    FileEmbedFormData,
     GenConfigUpdateRequest,
-    GenTableOrderBy,
+    GetTableRowQuery,
+    GetTableThreadsQuery,
     KnowledgeTableSchemaCreate,
-    LLMGenConfig,
+    ListTableQuery,
+    ListTableRowQuery,
+    MultiRowAddRequest,
+    MultiRowAddRequestWithLimit,
+    MultiRowDeleteRequest,
+    MultiRowRegenRequest,
+    MultiRowUpdateRequestWithLimit,
     OkResponse,
+    OrganizationRead,
     Page,
-    RowAddRequest,
-    RowAddRequestWithLimit,
-    RowDeleteRequest,
-    RowRegenRequest,
-    RowUpdateRequest,
+    ProjectRead,
+    RenameTableQuery,
     SearchRequest,
+    TableDataImportFormData,
+    TableImportFormData,
+    TableImportProgress,
     TableMetaResponse,
-    TableSchema,
     TableSchemaCreate,
     TableType,
+    UserAuth,
 )
-from owl.utils import uuid7_str
-from owl.utils.auth import ProjectRead, auth_user_project
-from owl.utils.exceptions import handle_exception
-from owl.utils.io import EMBED_WHITE_LIST_MIME, upload_file_to_s3
+from owl.utils.auth import auth_user_project, has_permissions
+from owl.utils.billing import BillingManager
+from owl.utils.exceptions import (
+    ServerBusyError,
+    UnexpectedError,
+    UnsupportedMediaTypeError,
+    handle_exception,
+)
+from owl.utils.io import EMBED_WHITE_LIST_MIME, guess_mime, s3_temporary_file, s3_upload
+from owl.utils.lm import LMEngine
+from owl.utils.mcp import MCP_TOOL_TAG
 
 router = APIRouter()
 
 
-def _validate_gen_config(
-    llm: LLMEngine,
-    gen_config: GenConfig | None,
-    table_type: TableType,
-    column_id: str,
-    image_column_ids: list[str],
-    audio_column_ids: list[str],
-) -> GenConfig | None:
-    if gen_config is None:
-        return gen_config
-    if isinstance(gen_config, LLMGenConfig):
-        # Set multi-turn for Chat Table
-        if table_type == TableType.CHAT and column_id.lower() == "ai":
-            gen_config.multi_turn = True
-        # Assign a LLM model if not specified
-        try:
-            capabilities = ["chat"]
-            for message in (gen_config.system_prompt, gen_config.prompt):
-                for col_id in re.findall(GEN_CONFIG_VAR_PATTERN, message):
-                    if col_id in image_column_ids:
-                        capabilities = ["image"]
-                    if col_id in audio_column_ids:
-                        capabilities = ["audio"]
-                        break
-            gen_config.model = llm.validate_model_id(
-                model=gen_config.model,
-                capabilities=capabilities,
-            )
-        except ValueError as e:
-            raise ResourceNotFoundError("There is no chat model available.") from e
-        except ResourceNotFoundError as e:
-            raise ResourceNotFoundError(
-                f'Column {column_id} used a chat model "{gen_config.model}" that is not available.'
-            ) from e
-        # Check Knowledge Table existence
-        if gen_config.rag_params is None:
-            return gen_config
-        ref_table_id = gen_config.rag_params.table_id
-        kt_table_dir = join(
-            ENV_CONFIG.owl_db_dir,
-            llm.organization_id,
-            llm.project_id,
-            TableType.KNOWLEDGE,
-            f"{ref_table_id}.lance",
-        )
-        if not (isdir(kt_table_dir) and len(listdir(kt_table_dir)) > 0):
-            raise ResourceNotFoundError(
-                f"Column {column_id} referred to a Knowledge Table '{ref_table_id}' that does not exist."
-            )
-        # Validate Reranking Model
-        reranking_model = gen_config.rag_params.reranking_model
-        if reranking_model is None:
-            return gen_config
-        try:
-            gen_config.rag_params.reranking_model = llm.validate_model_id(
-                model=reranking_model,
-                capabilities=["rerank"],
-            )
-        except ValueError as e:
-            raise ResourceNotFoundError("There is no reranking model available.") from e
-        except ResourceNotFoundError as e:
-            raise ResourceNotFoundError(
-                f'Column {column_id} used a reranking model "{reranking_model}" that is not available.'
-            ) from e
-    elif isinstance(gen_config, CodeGenConfig):
-        pass
-    elif isinstance(gen_config, EmbedGenConfig):
-        pass
-    return gen_config
+TABLE_CLS: dict[TableType, ActionTable | KnowledgeTable | ChatTable] = {
+    TableType.ACTION: ActionTable,
+    TableType.KNOWLEDGE: KnowledgeTable,
+    TableType.CHAT: ChatTable,
+}
 
 
-def _create_table(
+async def _create_table(
+    *,
     request: Request,
-    organization_id: str,
-    project_id: str,
+    user: UserAuth,
+    project: ProjectRead,
+    org: OrganizationRead,
     table_type: TableType,
     schema: TableSchemaCreate,
 ) -> TableMetaResponse:
-    # Validate
-    llm = LLMEngine(request=request)
-    image_column_ids = [
-        col.id
-        for col in schema.cols
-        if col.dtype == ColumnDtype.IMAGE and not col.id.endswith("_")
-    ]
-    audio_column_ids = [
-        col.id
-        for col in schema.cols
-        if col.dtype == ColumnDtype.AUDIO and not col.id.endswith("_")
-    ]
-    for col in schema.cols:
-        col.gen_config = _validate_gen_config(
-            llm=llm,
-            gen_config=col.gen_config,
-            table_type=table_type,
-            column_id=col.id,
-            image_column_ids=image_column_ids,
-            audio_column_ids=audio_column_ids,
-        )
-    if table_type == TableType.KNOWLEDGE:
-        try:
-            embedding_model = schema.embedding_model
-            schema.embedding_model = llm.validate_model_id(
-                model=embedding_model,
-                capabilities=["embed"],
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    # Check quota
+    billing: BillingManager = request.state.billing
+    billing.has_db_storage_quota()
+    billing.has_egress_quota()
+    kwargs = dict(
+        project_id=project.id,
+        table_metadata=TableMetadata(
+            table_id=schema.id,
+            created_by=user.id,
+        ),
+        column_metadata_list=[
+            ColumnMetadata(
+                table_id=schema.id,
+                column_id=col.id,
+                dtype=col.dtype.to_column_type(),
+                vlen=col.vlen,
+                gen_config=col.gen_config,
             )
-        except ValueError as e:
-            raise ResourceNotFoundError("There is no embedding model available.") from e
-        except ResourceNotFoundError as e:
-            raise ResourceNotFoundError(
-                f'Column used a embedding model "{embedding_model}" that is not available.'
-            ) from e
-    table = GenerativeTable.from_ids(organization_id, project_id, table_type)
-    # Create
-    with table.create_session() as session:
-        _, meta = (
-            table.create_table(session, schema, request.state.all_models)
-            if table_type == TableType.KNOWLEDGE
-            else table.create_table(session, schema)
-        )
-    meta = TableMetaResponse(**meta.model_dump(), num_rows=0)
-    return meta
+            for col in schema.cols
+        ],
+    )
+    if table_type == TableType.KNOWLEDGE:
+        table = await KnowledgeTable.create_table(embedding_model=schema.embedding_model, **kwargs)
+    else:
+        table = await TABLE_CLS[table_type].create_table(**kwargs)
+    return table.v1_meta_response
 
 
-@router.post("/v1/gen_tables/action")
+@router.post(
+    "/v2/gen_tables/action",
+    summary="Create an action table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
 @handle_exception
-def create_action_table(
+async def create_action_table(
     request: Request,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
     body: ActionTableSchemaCreate,
 ) -> TableMetaResponse:
-    return _create_table(request, project.organization.id, project.id, TableType.ACTION, body)
+    user, project, org = auth_info
+    return await _create_table(
+        request=request,
+        user=user,
+        project=project,
+        org=org,
+        table_type=TableType.ACTION,
+        schema=body,
+    )
 
 
-@router.post("/v1/gen_tables/knowledge")
+@router.post(
+    "/v2/gen_tables/knowledge",
+    summary="Create a knowledge table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
 @handle_exception
-def create_knowledge_table(
+async def create_knowledge_table(
     request: Request,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
     body: KnowledgeTableSchemaCreate,
 ) -> TableMetaResponse:
-    return _create_table(request, project.organization.id, project.id, TableType.KNOWLEDGE, body)
+    user, project, org = auth_info
+    return await _create_table(
+        request=request,
+        user=user,
+        project=project,
+        org=org,
+        table_type=TableType.KNOWLEDGE,
+        schema=body,
+    )
 
 
-@router.post("/v1/gen_tables/chat")
+@router.post(
+    "/v2/gen_tables/chat",
+    summary="Create a chat table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
 @handle_exception
-def create_chat_table(
+async def create_chat_table(
     request: Request,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
     body: ChatTableSchemaCreate,
 ) -> TableMetaResponse:
-    return _create_table(request, project.organization.id, project.id, TableType.CHAT, body)
+    user, project, org = auth_info
+    return await _create_table(
+        request=request,
+        user=user,
+        project=project,
+        org=org,
+        table_type=TableType.CHAT,
+        schema=body,
+    )
 
 
-def _duplicate_table(
-    organization_id: str,
-    project_id: str,
-    table_type: TableType,
-    table_id_src: str,
-    table_id_dst: str,
-    include_data: bool,
-    create_as_child: bool,
-) -> TableMetaResponse:
-    # Duplicate
-    table = GenerativeTable.from_ids(organization_id, project_id, table_type)
-    with table.create_session() as session:
-        meta = table.duplicate_table(
-            session,
-            table_id_src,
-            table_id_dst,
-            include_data,
-            create_as_child=create_as_child,
-        )
-    meta = TableMetaResponse(**meta.model_dump(), num_rows=table.count_rows(meta.id))
-    return meta
-
-
-@router.post("/v1/gen_tables/{table_type}/duplicate/{table_id_src}")
+@router.post(
+    "/v2/gen_tables/{table_type}/duplicate",
+    summary="Duplicate a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
 @handle_exception
-def duplicate_table(
+async def duplicate_table(
     *,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: TableType,
-    table_id_src: str = Path(pattern=TABLE_NAME_PATTERN, description="Source table name or ID."),
-    table_id_dst: str | None = Query(
-        default=None, pattern=TABLE_NAME_PATTERN, description="Destination table name or ID."
-    ),
-    include_data: bool = Query(
-        default=True,
-        description="_Optional_. Whether to include the data from the source table in the duplicated table. Defaults to `True`.",
-    ),
-    create_as_child: bool = Query(
-        default=False,
-        description=(
-            "_Optional_. Whether the new table is a child table. Defaults to `False`. "
-            "If this is True, then `include_data` will be set to True."
-        ),
-    ),
-) -> TableMetaResponse:
-    if create_as_child:
-        include_data = True
-    if not table_id_dst:
-        table_id_dst = f"{table_id_src}_{uuid7_str()}"
-    return _duplicate_table(
-        organization_id=project.organization.id,
-        project_id=project.id,
-        table_type=table_type,
-        table_id_src=table_id_src,
-        table_id_dst=table_id_dst,
-        include_data=include_data,
-        create_as_child=create_as_child,
-    )
-
-
-@router.post("/v1/gen_tables/{table_type}/duplicate/{table_id_src}/{table_id_dst}")
-@handle_exception
-def duplicate_table_deprecated(
-    *,
-    response: Response,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: TableType,
-    table_id_src: str = Path(pattern=TABLE_NAME_PATTERN, description="Source table name or ID."),
-    table_id_dst: str = Path(
-        pattern=TABLE_NAME_PATTERN, description="Destination table name or ID."
-    ),
-    include_data: bool = Query(
-        default=True,
-        description="_Optional_. Whether to include the data from the source table in the duplicated table. Defaults to `True`.",
-    ),
-    deploy: bool = Query(
-        default=False,
-        description="_Optional_. Whether to deploy the duplicated table. Defaults to `False`.",
-    ),
-) -> TableMetaResponse:
-    response.headers["Warning"] = (
-        '299 - "This endpoint is deprecated and will be removed in v0.4. '
-        "Use '/v1/gen_tables/{table_type}/duplicate/{table_id_src}' instead."
-        '"'
-    )
-    return _duplicate_table(
-        organization_id=project.organization.id,
-        project_id=project.id,
-        table_type=table_type,
-        table_id_src=table_id_src,
-        table_id_dst=table_id_dst,
-        include_data=include_data,
-        create_as_child=deploy,
-    )
-
-
-@router.post("/v1/gen_tables/{table_type}/rename/{table_id_src}/{table_id_dst}")
-@handle_exception
-def rename_table(
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: Annotated[TableType, Path(description="Table type.")],
-    table_id_src: Annotated[str, Path(description="Source table name or ID.")],  # Don't validate
-    table_id_dst: Annotated[
-        str,
-        Path(
-            pattern=TABLE_NAME_PATTERN,
-            description="Destination table name or ID.",
-        ),
+    request: Request,
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
     ],
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    params: Annotated[DuplicateTableQuery, Query()],
 ) -> TableMetaResponse:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    with table.create_session() as session:
-        meta = table.rename_table(session, table_id_src, table_id_dst)
-    meta = TableMetaResponse(**meta.model_dump(), num_rows=table.count_rows(table_id_dst))
-    return meta
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    # Check quota
+    billing: BillingManager = request.state.billing
+    billing.has_db_storage_quota()
+    billing.has_egress_quota()
+    table = await TABLE_CLS[table_type].open_table(
+        project_id=project.id, table_id=params.table_id_src
+    )
+    table = await table.duplicate_table(
+        project_id=project.id,
+        table_id_src=params.table_id_src,
+        table_id_dst=params.table_id_dst,
+        include_data=params.include_data,
+        create_as_child=params.create_as_child,
+        created_by=user.id,
+    )
+    return table.v1_meta_response
 
 
-@router.delete("/v1/gen_tables/{table_type}/{table_id}")
+@router.get(
+    "/v2/gen_tables/{table_type}",
+    summary="Get a specific table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
 @handle_exception
-def delete_table(
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
+async def get_table(
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
     table_type: Annotated[TableType, Path(description="Table type.")],
-    table_id: Annotated[str, Path(description="The ID of the table to delete.")],  # Don't validate
-) -> OkResponse:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    with table.create_session() as session:
-        table.delete_table(session, table_id)
-        return OkResponse()
+    table_id: Annotated[str, Query(description="Name of the table to fetch.")],
+) -> TableMetaResponse:
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=table_id)
+    return table.v1_meta_response
 
 
-@router.get("/v1/gen_tables/{table_type}")
-@handle_exception
-def list_tables(
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: Annotated[TableType, Path(description="Table type.")],
-    offset: Annotated[
-        int,
-        Query(
-            ge=0,
-            description="_Optional_. Item offset for pagination. Defaults to 0.",
-        ),
-    ] = 0,
-    limit: Annotated[
-        int,
-        Query(
-            gt=0,
-            le=100,
-            description="_Optional_. Number of tables to return (min 1, max 100). Defaults to 100.",
-        ),
-    ] = 100,
-    parent_id: Annotated[
+class _ListTableQuery(ListTableQuery):
+    created_by: Annotated[
         str | None,
-        Query(
-            description=(
-                "_Optional_. Parent ID of tables to return. Defaults to None (return all tables). "
-                "Additionally for Chat Table, you can list: "
-                '(1) all chat agents by passing in "_agent_"; or '
-                '(2) all chats by passing in "_chat_".'
-            ),
-        ),
-    ] = None,
-    search_query: Annotated[
-        str,
-        Query(
-            max_length=100,
-            description='_Optional_. A string to search for within table IDs as a filter. Defaults to "" (no filter).',
-        ),
-    ] = "",
-    order_by: Annotated[
-        GenTableOrderBy,
-        Query(
+        Field(
             min_length=1,
-            description='_Optional_. Sort tables by this attribute. Defaults to "updated_at".',
+            description="Return tables created by this user. Defaults to None (return all tables).",
         ),
-    ] = GenTableOrderBy.UPDATED_AT,
-    order_descending: Annotated[
-        bool,
-        Query(description="_Optional_. Whether to sort by descending order. Defaults to True."),
-    ] = True,
-    count_rows: Annotated[
-        bool,
-        Query(
-            description="_Optional_. Whether to count the rows of the tables. Defaults to False."
-        ),
-    ] = False,
+    ] = None
+
+
+@router.get(
+    "/v2/gen_tables/{table_type}/list",
+    summary="List tables of a specific type.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
+@handle_exception
+async def list_tables(
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    params: Annotated[_ListTableQuery, Query()],
 ) -> Page[TableMetaResponse]:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    with table.create_session() as session:
-        metas, total = table.list_meta(
-            session,
-            offset=offset,
-            limit=limit,
-            remove_state_cols=True,
-            parent_id=parent_id,
-            search_query=search_query,
-            order_by=order_by,
-            order_descending=order_descending,
-            count_rows=count_rows,
-        )
-        return Page[TableMetaResponse](
-            items=metas,
-            offset=offset,
-            limit=limit,
-            total=total,
-        )
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    metas = await TABLE_CLS[table_type].list_tables(
+        project_id=project.id,
+        limit=params.limit,
+        offset=params.offset,
+        order_by=params.order_by,
+        order_ascending=params.order_ascending,
+        created_by=getattr(params, "created_by", None),
+        parent_id=params.parent_id,
+        search_query=params.search_query,
+        count_rows=params.count_rows,
+    )
+    return metas
 
 
-@router.get("/v1/gen_tables/{table_type}/{table_id}")
+@router.post(
+    "/v2/gen_tables/{table_type}/rename",
+    summary="Rename a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
 @handle_exception
-def get_table(
-    request: Request,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
+async def rename_table(
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
     table_type: Annotated[TableType, Path(description="Table type.")],
-    table_id: str = Path(pattern=TABLE_NAME_PATTERN, description="The ID of the table to fetch."),
+    params: Annotated[RenameTableQuery, Query()],
 ) -> TableMetaResponse:
-    organization_id = project.organization.id
-    project_id = project.id
-    try:
-        table = GenerativeTable.from_ids(organization_id, project_id, table_type)
-        with table.create_session() as session:
-            meta = table.open_meta(session, table_id, remove_state_cols=True)
-        meta = TableMetaResponse(**meta.model_dump(), num_rows=table.count_rows(meta.id))
-        return meta
-    except ResourceNotFoundError:
-        lance_path = join(
-            ENV_CONFIG.owl_db_dir,
-            organization_id,
-            project_id,
-            table_type,
-            f"{table_id}.lance",
-        )
-        if isdir(lance_path):
-            logger.exception(
-                f"{request.state.id} - Table cannot be opened but the directory exists !!!"
-            )
-            dst_dir = join(
-                ENV_CONFIG.owl_db_dir,
-                "problematic",
-                organization_id,
-                project_id,
-                table_type,
-            )
-            makedirs(dst_dir, exist_ok=True)
-            _uuid = uuid7_str()
-            copytree(lance_path, join(dst_dir, f"{table_id}_{_uuid}.lance"))
-            copy2(
-                join(
-                    ENV_CONFIG.owl_db_dir,
-                    organization_id,
-                    project_id,
-                    f"{table_type}.db",
-                ),
-                join(
-                    ENV_CONFIG.owl_db_dir,
-                    "problematic",
-                    organization_id,
-                    project_id,
-                    f"{table_type}_{_uuid}.db",
-                ),
-            )
-        raise
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(
+        project_id=project.id, table_id=params.table_id_src
+    )
+    table = await table.rename_table(params.table_id_dst)
+    return table.v1_meta_response
 
 
-@router.post("/v1/gen_tables/{table_type}/gen_config/update")
+@router.delete(
+    "/v2/gen_tables/{table_type}",
+    summary="Delete a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+)
 @handle_exception
-def update_gen_config(
-    request: Request,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
+async def delete_table(
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
     table_type: Annotated[TableType, Path(description="Table type.")],
-    updates: GenConfigUpdateRequest,
-) -> TableMetaResponse:
-    # Validate
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    with table.create_session() as session:
-        meta = table.open_meta(session, updates.table_id)
-        llm = LLMEngine(request=request)
-        image_column_ids = [
-            col["id"]
-            for col in meta.cols
-            if col["dtype"] == ColumnDtype.IMAGE and not col["id"].endswith("_")
-        ]
-        audio_column_ids = [
-            col["id"]
-            for col in meta.cols
-            if col["dtype"] == ColumnDtype.AUDIO and not col["id"].endswith("_")
-        ]
-
-        if table_type == TableType.KNOWLEDGE:
-            # Knowledge Table "Title Embed" and "Text Embed" columns must always have gen config
-            for c in ["Title Embed", "Text Embed"]:
-                if c in updates.column_map and updates.column_map[c] is None:
-                    updates.column_map.pop(c)
-        elif table_type == TableType.CHAT:
-            # Chat Table AI column must always have gen config
-            if "AI" in updates.column_map and updates.column_map["AI"] is None:
-                updates.column_map.pop("AI")
-
-        updates.column_map = {
-            col_id: _validate_gen_config(
-                llm=llm,
-                gen_config=gen_config,
-                table_type=table_type,
-                column_id=col_id,
-                image_column_ids=image_column_ids,
-                audio_column_ids=audio_column_ids,
-            )
-            for col_id, gen_config in updates.column_map.items()
-        }
-        # Update
-        meta = table.update_gen_config(session, updates)
-    meta = TableMetaResponse(**meta.model_dump(), num_rows=table.count_rows(meta.id))
-    return meta
+    table_id: Annotated[str, Query(description="Name of the table to be deleted.")],
+) -> OkResponse:
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=table_id)
+    await table.drop_table()
+    return OkResponse()
 
 
-def _add_columns(
+@router.post(
+    "/v2/gen_tables/{table_type}/columns/add",
+    summary="Add columns to a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
+@handle_exception
+async def add_columns(
     request: Request,
-    organization_id: str,
-    project_id: str,
-    table_type: TableType,
-    schema: TableSchemaCreate,
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    body: TableSchemaCreate,
 ) -> TableMetaResponse:
-    # Validate
-    table = GenerativeTable.from_ids(organization_id, project_id, table_type)
-    with table.create_session() as session:
-        meta = table.open_meta(session, schema.id)
-        llm = LLMEngine(request=request)
-        cols = TableSchema(
-            id=meta.id, cols=[c.model_dump() for c in meta.cols_schema + schema.cols]
-        ).cols
-        image_column_ids = [
-            col.id for col in cols if col.dtype == ColumnDtype.IMAGE and not col.id.endswith("_")
-        ]
-        audio_column_ids = [
-            col.id for col in cols if col.dtype == ColumnDtype.AUDIO and not col.id.endswith("_")
-        ]
-        schema.cols = [col for col in cols if col.id in set(c.id for c in schema.cols)]
-        for col in schema.cols:
-            col.gen_config = _validate_gen_config(
-                llm=llm,
-                gen_config=col.gen_config,
-                table_type=table_type,
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=body.id)
+    # Check quota
+    billing: BillingManager = request.state.billing
+    billing.has_gen_table_quota(table)
+    billing.has_db_storage_quota()
+    billing.has_egress_quota()
+    for col in body.cols:
+        table = await table.add_column(
+            ColumnMetadata(
+                table_id=body.id,
                 column_id=col.id,
-                image_column_ids=image_column_ids,
-                audio_column_ids=audio_column_ids,
+                dtype=col.dtype.to_column_type(),
+                vlen=col.vlen,
+                gen_config=col.gen_config,
             )
-        # Create
-        _, meta = table.add_columns(session, schema)
-    meta = TableMetaResponse(**meta.model_dump(), num_rows=table.count_rows(meta.id))
-    return meta
+        )
+    return table.v1_meta_response
 
 
-@router.post("/v1/gen_tables/action/columns/add")
+@router.post(
+    "/v2/gen_tables/{table_type}/columns/rename",
+    summary="Rename columns in a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
 @handle_exception
-def add_action_columns(
-    request: Request,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    body: AddActionColumnSchema,
-) -> TableMetaResponse:
-    return _add_columns(request, project.organization.id, project.id, TableType.ACTION, body)
-
-
-@router.post("/v1/gen_tables/knowledge/columns/add")
-@handle_exception
-def add_knowledge_columns(
-    request: Request,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    body: AddKnowledgeColumnSchema,
-) -> TableMetaResponse:
-    return _add_columns(request, project.organization.id, project.id, TableType.KNOWLEDGE, body)
-
-
-@router.post("/v1/gen_tables/chat/columns/add")
-@handle_exception
-def add_chat_columns(
-    request: Request,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    body: AddChatColumnSchema,
-) -> TableMetaResponse:
-    return _add_columns(request, project.organization.id, project.id, TableType.CHAT, body)
-
-
-def _create_indexes(
-    project: ProjectRead,
-    table_type: TableType,
-    table_id: str,
-) -> TableMetaResponse:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    with table.create_session() as session:
-        table.create_indexes(session, table_id)
-
-
-@router.post("/v1/gen_tables/{table_type}/columns/drop")
-@handle_exception
-def drop_columns(
-    bg_tasks: BackgroundTasks,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: Annotated[TableType, Path(description="Table type.")],
-    body: ColumnDropRequest,
-) -> TableMetaResponse:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    with table.create_session() as session:
-        _, meta = table.drop_columns(session, body.table_id, body.column_names)
-    meta = TableMetaResponse(**meta.model_dump(), num_rows=table.count_rows(meta.id))
-    bg_tasks.add_task(_create_indexes, project, table_type, body.table_id)
-    return meta
-
-
-@router.post("/v1/gen_tables/{table_type}/columns/rename")
-@handle_exception
-def rename_columns(
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
+async def rename_columns(
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
     table_type: Annotated[TableType, Path(description="Table type.")],
     body: ColumnRenameRequest,
 ) -> TableMetaResponse:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    with table.create_session() as session:
-        meta = table.rename_columns(session, body.table_id, body.column_map)
-    meta = TableMetaResponse(**meta.model_dump(), num_rows=table.count_rows(meta.id))
-    return meta
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=body.table_id)
+    table = await table.rename_columns(body.column_map)
+    return table.v1_meta_response
 
 
-@router.post("/v1/gen_tables/{table_type}/columns/reorder")
+@router.patch(
+    "/v2/gen_tables/{table_type}/gen_config",
+    summary="Update generation configuration for table columns.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
 @handle_exception
-def reorder_columns(
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
+async def update_gen_config(
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    updates: GenConfigUpdateRequest,
+) -> TableMetaResponse:
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(
+        project_id=project.id, table_id=updates.table_id
+    )
+    table = await table.update_gen_config(update_mapping=updates.column_map)
+    return table.v1_meta_response
+
+
+@router.post(
+    "/v2/gen_tables/{table_type}/columns/reorder",
+    summary="Reorder columns in a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
+@handle_exception
+async def reorder_columns(
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
     table_type: Annotated[TableType, Path(description="Table type.")],
     body: ColumnReorderRequest,
 ) -> TableMetaResponse:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    with table.create_session() as session:
-        meta = table.reorder_columns(session, body.table_id, body.column_names)
-    meta = TableMetaResponse(**meta.model_dump(), num_rows=table.count_rows(meta.id))
-    return meta
-
-
-@router.get("/v1/gen_tables/{table_type}/{table_id}/rows")
-@handle_exception
-def list_rows(
-    *,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: Annotated[TableType, Path(description="Table type.")],
-    table_id: str = Path(pattern=TABLE_NAME_PATTERN, description="Table ID or name."),
-    offset: int = Query(
-        default=0,
-        ge=0,
-        description="_Optional_. Item offset for pagination. Defaults to 0.",
-    ),
-    limit: int = Query(
-        default=100,
-        gt=0,
-        le=100,
-        description="_Optional_. Number of rows to return (min 1, max 100). Defaults to 100.",
-    ),
-    search_query: str = Query(
-        default="",
-        max_length=10_000,
-        description='_Optional_. A string to search for within the rows as a filter. Defaults to "" (no filter).',
-    ),
-    columns: list[ColName] | None = Query(
-        default=None,
-        description="_Optional_. A list of column names to include in the response. Default is to return all columns.",
-    ),
-    float_decimals: int = Query(
-        default=0,
-        ge=0,
-        description="_Optional_. Number of decimals for float values. Defaults to 0 (no rounding).",
-    ),
-    vec_decimals: int = Query(
-        default=0,
-        description="_Optional_. Number of decimals for vectors. If its negative, exclude vector columns. Defaults to 0 (no rounding).",
-    ),
-    order_descending: Annotated[
-        bool,
-        Query(description="_Optional_. Whether to sort by descending order. Defaults to True."),
-    ] = True,
-) -> Page[dict[ColName, Any]]:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    if search_query == "":
-        rows, total = table.list_rows(
-            table_id=table_id,
-            offset=offset,
-            limit=limit,
-            columns=columns,
-            convert_null=True,
-            remove_state_cols=True,
-            json_safe=True,
-            include_original=True,
-            float_decimals=float_decimals,
-            vec_decimals=vec_decimals,
-            order_descending=order_descending,
-        )
-    else:
-        with table.create_session() as session:
-            rows = table.regex_search(
-                session=session,
-                table_id=table_id,
-                query=search_query,
-                columns=columns,
-                convert_null=True,
-                remove_state_cols=True,
-                json_safe=True,
-                include_original=True,
-                float_decimals=float_decimals,
-                vec_decimals=vec_decimals,
-                order_descending=order_descending,
-            )
-            total = len(rows)
-            rows = rows[offset : offset + limit]
-    return Page[dict[ColName, Any]](items=rows, offset=offset, limit=limit, total=total)
-
-
-@router.get("/v1/gen_tables/{table_type}/{table_id}/rows/{row_id}")
-@handle_exception
-def get_row(
-    *,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: Annotated[TableType, Path(description="Table type.")],
-    table_id: str = Path(pattern=TABLE_NAME_PATTERN, description="Table ID or name."),
-    row_id: Annotated[str, Path(description="The ID of the specific row to fetch.")],
-    columns: list[ColName] | None = Query(
-        default=None,
-        description="_Optional_. A list of column names to include in the response. Default is to return all columns.",
-    ),
-    float_decimals: int = Query(
-        default=0,
-        ge=0,
-        description="_Optional_. Number of decimals for float values. Defaults to 0 (no rounding).",
-    ),
-    vec_decimals: int = Query(
-        default=0,
-        description="_Optional_. Number of decimals for vectors. If its negative, exclude vector columns. Defaults to 0 (no rounding).",
-    ),
-) -> dict[ColName, Any]:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    row = table.get_row(
-        table_id,
-        row_id,
-        columns=columns,
-        convert_null=True,
-        remove_state_cols=True,
-        json_safe=True,
-        include_original=True,
-        float_decimals=float_decimals,
-        vec_decimals=vec_decimals,
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
     )
-    return row
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=body.table_id)
+    table = await table.reorder_columns(body.column_names)
+    return table.v1_meta_response
 
 
-@router.post("/v1/gen_tables/{table_type}/rows/add")
+@router.post(
+    "/v2/gen_tables/{table_type}/columns/drop",
+    summary="Drop columns from a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
+@handle_exception
+async def drop_columns(
+    request: Request,
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    body: ColumnDropRequest,
+) -> TableMetaResponse:
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=body.table_id)
+    # Check quota
+    billing: BillingManager = request.state.billing
+    billing.has_db_storage_quota()
+    billing.has_egress_quota()
+    table = await table.drop_columns(body.column_names)
+    return table.v1_meta_response
+
+
+@router.post(
+    "/v2/gen_tables/{table_type}/rows/add",
+    summary="Add rows to a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
 @handle_exception
 async def add_rows(
     request: Request,
-    bg_tasks: BackgroundTasks,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
     table_type: Annotated[TableType, Path(description="Table type.")],
-    body: RowAddRequestWithLimit,
+    body: MultiRowAddRequestWithLimit,
 ):
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    # Check quota
-    request.state.billing.check_gen_table_llm_quota(table, body.table_id)
-    # Checks
-    with table.create_session() as session:
-        meta = table.open_meta(session, body.table_id)
-    has_chat_cols = (
-        sum(
-            col["gen_config"] is not None and col["gen_config"].get("multi_turn", False)
-            for col in meta.cols
-        )
-        > 0
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
     )
-    # Maybe re-index
-    if body.reindex or (
-        body.reindex is None
-        and table.count_rows(body.table_id) <= ENV_CONFIG.owl_immediate_reindex_max_rows
-    ):
-        bg_tasks.add_task(_create_indexes, project, table_type, body.table_id)
-    executor = MultiRowsGenExecutor(
-        table=table,
-        meta=meta,
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=body.table_id)
+    # Check quota
+    billing: BillingManager = request.state.billing
+    billing.has_gen_table_quota(table)
+    billing.has_db_storage_quota()
+    billing.has_egress_quota()
+    executor = MultiRowGenExecutor(
         request=request,
+        table=table,
+        organization=org,
+        project=project,
         body=body,
-        rows_batch_size=(1 if has_chat_cols else ENV_CONFIG.owl_concurrent_rows_batch_size),
-        cols_batch_size=ENV_CONFIG.owl_concurrent_cols_batch_size,
-        max_write_batch_size=(1 if has_chat_cols else ENV_CONFIG.owl_max_write_batch_size),
     )
     if body.stream:
         return StreamingResponse(
-            content=await executor.gen_rows(),
+            content=await executor.generate(),
             status_code=200,
             media_type="text/event-stream",
             headers={"X-Accel-Buffering": "no"},
         )
     else:
-        return await executor.gen_rows()
+        return await executor.generate()
 
 
-@router.post("/v1/gen_tables/{table_type}/rows/regen")
+@router.get(
+    "/v2/gen_tables/{table_type}/rows/list",
+    summary="List rows in a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
 @handle_exception
-async def regen_rows(
-    request: Request,
-    bg_tasks: BackgroundTasks,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
+async def list_rows(
+    *,
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
     table_type: Annotated[TableType, Path(description="Table type.")],
-    body: RowRegenRequest,
-):
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    # Check quota
-    request.state.billing.check_gen_table_llm_quota(table, body.table_id)
-    # Checks
-    with table.create_session() as session:
-        meta = table.open_meta(session, body.table_id)
-    if body.output_column_id is not None:
-        output_column_ids = [col["id"] for col in meta.cols if col["gen_config"] is not None]
-        if len(output_column_ids) > 0 and body.output_column_id not in output_column_ids:
-            raise ResourceNotFoundError(
-                (
-                    f'`output_column_id` "{body.output_column_id}" is not found. '
-                    f"Available output columns: {output_column_ids}"
-                )
+    params: Annotated[ListTableRowQuery, Query()],
+) -> Page[dict[str, Any]]:
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=params.table_id)
+    rows = await table.list_rows(
+        limit=params.limit,
+        offset=params.offset,
+        order_by=[params.order_by],
+        order_ascending=params.order_ascending,
+        columns=params.columns,
+        where=params.where,
+        search_query=params.search_query,
+        search_columns=params.search_columns,
+        remove_state_cols=False,
+    )
+    return Page[dict[str, Any]](
+        items=table.postprocess_rows(
+            rows.items,
+            float_decimals=params.float_decimals,
+            vec_decimals=params.vec_decimals,
+        ),
+        offset=params.offset,
+        limit=params.limit,
+        total=rows.total,
+    )
+
+
+@router.get(
+    "/v2/gen_tables/{table_type}/rows",
+    summary="Get a specific row from a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
+@handle_exception
+async def get_row(
+    *,
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    params: Annotated[GetTableRowQuery, Query()],
+) -> dict[str, Any]:
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=params.table_id)
+    row = await table.get_row(
+        row_id=params.row_id,
+        columns=params.columns,
+        remove_state_cols=False,
+    )
+    row = table.postprocess_rows(
+        [row],
+        float_decimals=params.float_decimals,
+        vec_decimals=params.vec_decimals,
+    )[0]
+    return row
+
+
+@router.get(
+    "/v2/gen_tables/{table_type}/threads",
+    summary="Get all multi-turn / conversation threads from a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
+@handle_exception
+async def get_conversation_threads(
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    params: Annotated[GetTableThreadsQuery, Query()],
+) -> ChatThreadsResponse:
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table_id = params.table_id
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=table_id)
+    if params.column_ids:
+        for column_id in params.column_ids:
+            table.check_multiturn_column(column_id)
+        cols = params.column_ids
+    else:
+        cols = [c.column_id for c in table.column_metadata if c.is_chat_column]
+    return ChatThreadsResponse(
+        threads={
+            c: await table.get_conversation_thread(
+                column_id=c,
+                row_id=params.row_id,
+                include_row=params.include_row,
             )
-    has_chat_cols = (
-        sum(
-            col["gen_config"] is not None and col["gen_config"].get("multi_turn", False)
-            for col in meta.cols
-        )
-        > 0
-    )
-    # Maybe re-index
-    if body.reindex or (
-        body.reindex is None
-        and table.count_rows(body.table_id) <= ENV_CONFIG.owl_immediate_reindex_max_rows
-    ):
-        bg_tasks.add_task(_create_indexes, project, table_type, body.table_id)
-    executor = MultiRowsGenExecutor(
-        table=table,
-        meta=meta,
-        request=request,
-        body=body,
-        rows_batch_size=(1 if has_chat_cols else ENV_CONFIG.owl_concurrent_rows_batch_size),
-        cols_batch_size=ENV_CONFIG.owl_concurrent_cols_batch_size,
-        max_write_batch_size=(1 if has_chat_cols else ENV_CONFIG.owl_max_write_batch_size),
-    )
-    if body.stream:
-        return StreamingResponse(
-            content=await executor.gen_rows(),
-            status_code=200,
-            media_type="text/event-stream",
-            headers={"X-Accel-Buffering": "no"},
-        )
-    else:
-        return await executor.gen_rows()
-
-
-@router.post("/v1/gen_tables/{table_type}/rows/update")
-@handle_exception
-def update_row(
-    bg_tasks: BackgroundTasks,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: Annotated[TableType, Path(description="Table type.")],
-    body: RowUpdateRequest,
-) -> OkResponse:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    # Check column type
-    if table_type == TableType.KNOWLEDGE:
-        col_names = set(n.lower() for n in body.data.keys())
-        if "text embed" in col_names or "title embed" in col_names:
-            raise TableSchemaFixedError("Cannot update 'Text Embed' or 'Title Embed'.")
-    # Update
-    with table.create_session() as session:
-        table.update_rows(
-            session,
-            body.table_id,
-            where=f"`ID` = '{body.row_id}'",
-            values=body.data,
-        )
-    if body.reindex or (
-        body.reindex is None
-        and table.count_rows(body.table_id) <= ENV_CONFIG.owl_immediate_reindex_max_rows
-    ):
-        bg_tasks.add_task(_create_indexes, project, table_type, body.table_id)
-    return OkResponse()
-
-
-@router.post("/v1/gen_tables/{table_type}/rows/delete")
-@handle_exception
-def delete_rows(
-    bg_tasks: BackgroundTasks,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: Annotated[TableType, Path(description="Table type.")],
-    body: RowDeleteRequest,
-) -> OkResponse:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    with table.create_session() as session:
-        table.delete_rows(session, body.table_id, body.row_ids, body.where)
-    if body.reindex or (
-        body.reindex is None
-        and table.count_rows(body.table_id) <= ENV_CONFIG.owl_immediate_reindex_max_rows
-    ):
-        bg_tasks.add_task(_create_indexes, project, table_type, body.table_id)
-    return OkResponse()
-
-
-@router.delete("/v1/gen_tables/{table_type}/{table_id}/rows/{row_id}")
-@handle_exception
-def delete_row(
-    bg_tasks: BackgroundTasks,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: Annotated[TableType, Path(description="Table type.")],
-    table_id: str = Path(pattern=TABLE_NAME_PATTERN, description="Table ID or name."),
-    row_id: str = Path(description="The ID of the specific row to delete."),
-    reindex: Annotated[bool, Query(description="Whether to reindex immediately.")] = True,
-) -> OkResponse:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    with table.create_session() as session:
-        table.delete_row(session, table_id, row_id)
-    if reindex:
-        bg_tasks.add_task(_create_indexes, project, table_type, table_id)
-    return OkResponse()
-
-
-@router.get("/v1/gen_tables/{table_type}/{table_id}/thread")
-@handle_exception
-def get_conversation_thread(
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: Annotated[TableType, Path(description="Table type.")],
-    table_id: Annotated[str, Path(pattern=TABLE_NAME_PATTERN, description="Table ID or name.")],
-    column_id: Annotated[str, Query(description="ID / name of the column to fetch.")],
-    row_id: Annotated[
-        str,
-        Query(
-            description='_Optional_. ID / name of the last row in the thread. Defaults to "" (export all rows).'
-        ),
-    ] = "",
-    include: Annotated[
-        bool,
-        Query(
-            description="_Optional_. Whether to include the row specified by `row_id`. Defaults to True."
-        ),
-    ] = True,
-) -> ChatThread:
-    # Fetch
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    return table.get_conversation_thread(
+            for c in cols
+        },
         table_id=table_id,
-        column_id=column_id,
-        row_id=row_id,
-        include=include,
     )
 
 
-@router.post("/v1/gen_tables/{table_type}/hybrid_search")
+@router.post(
+    "/v2/gen_tables/{table_type}/hybrid_search",
+    summary="Perform hybrid search on a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
 @handle_exception
 async def hybrid_search(
     request: Request,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
     table_type: Annotated[TableType, Path(description="Table type.")],
     body: SearchRequest,
-) -> list[dict[ColName, Any]]:
-    # Search
-    embedder = CloudEmbedder(request=request)
-    if body.reranking_model is not None:
-        reranker = CloudReranker(request=request)
-    else:
-        reranker = None
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    with table.create_session() as session:
-        rows = await table.hybrid_search(
-            session,
-            body.table_id,
-            query=body.query,
-            where=body.where,
-            limit=body.limit,
-            metric=body.metric,
-            nprobes=body.nprobes,
-            refine_factor=body.refine_factor,
-            embedder=embedder,
-            reranker=reranker,
-            reranking_model=body.reranking_model,
-            vec_decimals=body.vec_decimals,
-            convert_null=True,
-            remove_state_cols=True,
-            json_safe=True,
-            include_original=True,
-        )
+) -> list[dict[str, Any]]:
+    # TODO: Maybe this should return `Page` instead of `list`
+    def split_query_to_or_terms(query):
+        # Regular expression to match either quoted phrases or words
+        pattern = r'("[^"]*"|\S+)'
+        parts = re.findall(pattern, query)
+        return " OR ".join(parts)
+
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=body.table_id)
+    # Check quota
+    billing: BillingManager = request.state.billing
+    billing.has_gen_table_quota(table)
+    billing.has_db_storage_quota()
+    billing.has_egress_quota()
+    lm = LMEngine(
+        organization=org,
+        project=project,
+        request=request,
+    )
+    # Do a split and OR join for fts query
+    fts_query = split_query_to_or_terms(body.query)
+
+    # As of 2025-04-17, this endpoint does not perform query rewrite
+    rows = await table.hybrid_search(
+        fts_query=fts_query,
+        vs_query=body.query,
+        embedding_fn=lm.embed_query_as_vector,
+        vector_column_names=None,
+        limit=body.limit,
+        offset=0,
+        remove_state_cols=False,
+    )
+    # Rerank
+    if len(rows) > 0 and body.reranking_model is not None:
+        order = (
+            await lm.rerank_documents(
+                model=body.reranking_model,
+                query=body.query,
+                documents=table.rows_to_documents(rows),
+            )
+        ).results
+        rows = [rows[i.index] for i in order]
+    rows = rows[: body.limit]
+    rows = table.postprocess_rows(
+        rows,
+        float_decimals=body.float_decimals,
+        vec_decimals=body.vec_decimals,
+    )
     return rows
 
 
-def list_files():
-    pass
-
-
-def _truncate_text(text: str, max_context_length: int, encoding_name: str = "cl100k_base") -> str:
-    """Truncates the text to fit within the max_context_length."""
-
-    encoding = tiktoken.get_encoding(encoding_name)
-    encoded_text = encoding.encode(text)
-
-    if len(encoded_text) <= max_context_length:
-        return text
-
-    truncated_encoded = encoded_text[:max_context_length]
-    truncated_text = encoding.decode(truncated_encoded)
-    return truncated_text
-
-
-async def _embed(
-    embedder_name: str, embedder: CloudEmbedder, texts: list[str], embed_dtype: str
-) -> np.ndarray:
-    if len(texts) == 0:
-        raise make_validation_error(
-            ValueError("There is no text or content to embed."), loc=("body", "file")
-        )
-    embeddings = await embedder.embed_documents(embedder_name, texts=texts)
-    embeddings = np.asarray([d.embedding for d in embeddings.data], dtype=embed_dtype)
-    embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
-    return embeddings
-
-
-async def _embed_file(
+@router.post(
+    "/v2/gen_tables/{table_type}/rows/regen",
+    summary="Regenerate rows in a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
+@handle_exception
+async def regen_rows(
     request: Request,
-    bg_tasks: BackgroundTasks,
-    project: ProjectRead,
-    table_id: str,
-    file_name: str,
-    file_content: bytes,
-    file_uri: str,
-    chunk_size: int,
-    chunk_overlap: int,
-) -> OkResponse:
-    request_id = request.state.id
-    logger.info(f'{request_id} - Parsing file "{file_name}".')
-    chunks = await load_file(file_name, file_content, chunk_size, chunk_overlap)
-    logger.info(f'{request_id} - Embedding file "{file_name}" with {len(chunks):,d} chunks.')
-
-    # --- Extract title --- #
-    excerpt = "".join(d.text for d in chunks[:8])[:50000]
-    llm = LLMEngine(request=request)
-    model = llm.validate_model_id(
-        model="",
-        capabilities=["chat"],
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    body: MultiRowRegenRequest,
+):
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
     )
-    logger.debug(f"{request_id} - Performing title extraction using: {model}")
-    try:
-        response = await llm.generate(
-            id=request_id,
-            model=model,
-            messages=[
-                ChatEntry.system("You are an concise assistant."),
-                ChatEntry.user(
-                    (
-                        f"CONTEXT:\n{excerpt}\n\n"
-                        "From the excerpt, extract the document title or guess a possible title. "
-                        "Provide the title without explanation."
-                    )
-                ),
-            ],
-            max_tokens=200,
-            temperature=0.01,
-            top_p=0.01,
-            stream=False,
-        )
-        title = response.text.strip()
-        if title.startswith('"') and title.endswith('"'):
-            title = title[1:-1]
-    except Exception:
-        logger.exception(f"{request_id} - Title extraction errored for excerpt: \n{excerpt}\n")
-        title = ""
-
-    # --- Add into Knowledge Table --- #
-    organization_id = project.organization.id
-    project_id = project.id
-    table = GenerativeTable.from_ids(organization_id, project_id, TableType.KNOWLEDGE)
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=body.table_id)
     # Check quota
-    request.state.billing.check_gen_table_llm_quota(table, table_id)
-    with table.create_session() as session:
-        meta = table.open_meta(session, table_id)
-        title_embed = None
-        text_embeds = []
-        for col in meta.cols:
-            if col["vlen"] == 0:
-                continue
-            gen_config = EmbedGenConfig.model_validate(col["gen_config"])
-            request.state.billing.check_embedding_quota(model_id=gen_config.embedding_model)
-            embedder = CloudEmbedder(request=request)
-            if col["id"] == "Title Embed":
-                title_embed = await _embed(
-                    gen_config.embedding_model, embedder, [title], col["dtype"]
-                )
-                title_embed = title_embed[0]
-            elif col["id"] == "Text Embed":
-                # Truncate based on embedder context length
-                embedder_context_length = (
-                    (llm.model_info(gen_config.embedding_model)).data[0].context_length
-                )
-                texts = [_truncate_text(chunk.text, embedder_context_length) for chunk in chunks]
+    billing: BillingManager = request.state.billing
+    billing.has_gen_table_quota(table)
+    billing.has_db_storage_quota()
+    billing.has_egress_quota()
+    executor = MultiRowGenExecutor(
+        request=request,
+        table=table,
+        organization=org,
+        project=project,
+        body=body,
+    )
+    if body.stream:
+        return StreamingResponse(
+            content=await executor.generate(),
+            status_code=200,
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no"},
+        )
+    else:
+        return await executor.generate()
 
-                text_embeds = await _embed(
-                    gen_config.embedding_model,
-                    embedder,
-                    texts,
-                    col["dtype"],
-                )
-            else:
-                continue
-        if title_embed is None or len(text_embeds) == 0:
-            raise RuntimeError(
-                "Sorry we encountered an issue during embedding. Please try again later."
-            )
-        row_add_data = [
-            {
-                "Text": chunk.text,
-                "Text Embed": text_embed,
-                "Title": title,
-                "Title Embed": title_embed,
-                "File ID": file_uri,
-                "Page": chunk.page,
-            }
-            for chunk, text_embed in zip(chunks, text_embeds, strict=True)
-        ]
-        logger.info(
-            f'{request_id} - Writing file "{file_name}" with {len(chunks):,d} chunks to DB.'
-        )
-        await add_rows(
-            request=request,
-            bg_tasks=bg_tasks,
-            project=project,
-            table_type=TableType.KNOWLEDGE,
-            body=RowAddRequest.model_construct(table_id=table_id, data=row_add_data, stream=False),
-        )
-        bg_tasks.add_task(_create_indexes, project, "knowledge", table_id)
+
+@router.patch(
+    "/v2/gen_tables/{table_type}/rows",
+    summary="Update rows in a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
+@handle_exception
+async def update_rows(
+    request: Request,
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    body: MultiRowUpdateRequestWithLimit,
+) -> OkResponse:
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=body.table_id)
+    # Check quota
+    billing: BillingManager = request.state.billing
+    billing.has_gen_table_quota(table)
+    billing.has_db_storage_quota()
+    billing.has_egress_quota()
+    await table.update_rows(body.data)
     return OkResponse()
 
 
-@router.options("/v1/gen_tables/knowledge/embed_file")
-@router.options("/v1/gen_tables/knowledge/upload_file", deprecated=True)
+@router.post(
+    "/v2/gen_tables/{table_type}/rows/delete",
+    summary="Delete rows from a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER", "project.MEMBER"],
+)
 @handle_exception
-async def embed_file_options(request: Request, response: Response):
+async def delete_rows(
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    body: MultiRowDeleteRequest,
+) -> OkResponse:
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=body.table_id)
+    await table.delete_rows(row_ids=body.row_ids, where=body.where)
+    return OkResponse()
+
+
+@router.options(
+    "/v2/gen_tables/knowledge/embed_file",
+    summary="Get CORS preflight options for file embedding endpoint",
+    description="Permissions: None, publicly accessible.",
+)
+@handle_exception
+async def embed_file_options():
     headers = {
         "Allow": "POST, OPTIONS",
         "Accept": ", ".join(EMBED_WHITE_LIST_MIME),
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
     }
-    if "upload_file" in request.url.path:
-        response.headers["Warning"] = (
-            '299 - "This endpoint is deprecated and will be removed in v0.4. '
-            "Use '/v1/gen_tables/{table_type}/embed_file' instead."
-            '"'
-        )
     return Response(content=None, headers=headers)
 
 
-@router.post("/v1/gen_tables/knowledge/embed_file")
-@router.post("/v1/gen_tables/knowledge/upload_file", deprecated=True)
+@router.post(
+    "/v2/gen_tables/knowledge/embed_file",
+    summary="Embed a file into a knowledge table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+)
 @handle_exception
 async def embed_file(
     *,
     request: Request,
-    response: Response,
-    bg_tasks: BackgroundTasks,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    file: Annotated[UploadFile, File(description="The file.")],
-    file_name: Annotated[str, Form(description="File name.", deprecated=True)] = "",
-    table_id: Annotated[str, Form(pattern=TABLE_NAME_PATTERN, description="Knowledge Table ID.")],
-    # overwrite: Annotated[
-    #     bool, Form(description="Whether to overwrite old file with the same name.")
-    # ] = False,
-    chunk_size: Annotated[
-        int, Form(description="Maximum chunk size (number of characters). Must be > 0.", gt=0)
-    ] = 2000,
-    chunk_overlap: Annotated[
-        int, Form(description="Overlap in characters between chunks. Must be >= 0.", ge=0)
-    ] = 200,
-    # stream: Annotated[
-    #     bool, Form(description="Whether or not to stream the LLM generation.")
-    # ] = True,
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
+    data: Annotated[FileEmbedFormData, Form()],
 ) -> OkResponse:
-    if "upload_file" in request.url.path:
-        response.headers["Warning"] = (
-            '299 - "This endpoint is deprecated and will be removed in v0.4. '
-            "Use '/v1/gen_tables/{table_type}/embed_file' instead."
-            '"'
-        )
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
     # Validate the Content-Type of the uploaded file
-    file_name = file.filename or file_name
-    if splitext(file_name)[1].lower() == ".jsonl":
-        file_content_type = "application/jsonl"
-    elif splitext(file_name)[1].lower() == ".md":
-        file_content_type = "text/markdown"
-    elif splitext(file_name)[1].lower() == ".tsv":
-        file_content_type = "text/tab-separated-values"
-    else:
-        file_content_type = file.content_type
-    if file_content_type not in EMBED_WHITE_LIST_MIME:
+    file_name = data.file.filename or data.file_name
+    mime = guess_mime(file_name)
+    if mime == "application/octet-stream":
+        mime = data.file.content_type
+    if mime not in EMBED_WHITE_LIST_MIME:
         raise UnsupportedMediaTypeError(
-            f"File type '{file_content_type}' is unsupported. Accepted types are: {', '.join(EMBED_WHITE_LIST_MIME)}"
+            f'File type "{mime}" is unsupported. Accepted types are: {", ".join(EMBED_WHITE_LIST_MIME)}'
         )
-    # --- Add into File Table --- #
-    content = await file.read()
-    uri = await upload_file_to_s3(
+    table = await KnowledgeTable.open_table(
+        project_id=project.id,
+        table_id=data.table_id,
+    )
+    # Check quota
+    request_id: str = request.state.id
+    billing: BillingManager = request.state.billing
+    billing.has_gen_table_quota(table)
+    billing.has_db_storage_quota()
+    billing.has_egress_quota()
+    # --- Store original file into S3 --- #
+    file_content = await data.file.read()
+    file_uri = await s3_upload(
         project.organization.id,
         project.id,
-        content,
-        file_content_type,
-        file_name,
+        file_content,
+        content_type=mime,
+        filename=file_name,
     )
     # if overwrite:
     #     file_table.delete_file(file_name=file_name)
     # --- Add into Knowledge Table --- #
-    return await _embed_file(
-        request=request,
-        bg_tasks=bg_tasks,
-        project=project,
-        table_id=table_id,
-        file_name=file_name,
-        file_content=content,
-        file_uri=uri,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
+    logger.info(f'{request_id} - Parsing file "{file_name}".')
+    doc_parser = GeneralDocLoader(request_id=request_id)
+    chunks = await doc_parser.load_document_chunks(
+        file_name, file_content, data.chunk_size, data.chunk_overlap
     )
+    logger.info(f'{request_id} - Embedding file "{file_name}" with {len(chunks):,d} chunks.')
+
+    # --- Extract title --- #
+    lm = LMEngine(
+        organization=org,
+        project=project,
+        request=request,
+    )
+    ext = splitext(file_name)[1].lower()
+    if ext in [".pdf", ".pptx", ".xlsx"]:
+        first_page_chunks = [d.text for d in chunks if d.page == 1]
+        # If the first page content is too short, use the first 8 chunks instead
+        if len(first_page_chunks) < 3:
+            first_page_chunks = [d.text for d in chunks[:8]]
+        excerpt = "".join(first_page_chunks)[:50000]
+    else:
+        excerpt = "".join(d.text for d in chunks[:8])[:50000]
+    logger.debug(f"{request_id} - Performing title extraction.")
+    title = await lm.generate_title(excerpt=excerpt, model="")
+
+    # --- Embed --- #
+    title_embed = text_embeds = None
+    for col in table.column_metadata:
+        if col.column_id.lower() == "title embed":
+            title_embed = await lm.embed_documents(
+                model=col.gen_config.embedding_model,
+                texts=[title],
+                encoding_format="float",
+            )
+            title_embed = title_embed.data[0].embedding
+        elif col.column_id.lower() == "text embed":
+            text_embeds = await lm.embed_documents(
+                model=col.gen_config.embedding_model,
+                texts=[chunk.text for chunk in chunks],
+                encoding_format="float",
+            )
+            text_embeds = [data.embedding for data in text_embeds.data]
+
+    if title_embed is None or text_embeds is None or len(text_embeds) == 0:
+        raise UnexpectedError(
+            "Sorry we encountered an issue during embedding. If this issue persists, please contact support."
+        )
+    # --- Store into Knowledge Table --- #
+    row_add_data = [
+        {
+            "Title": title,
+            "Title Embed": title_embed,
+            "Text": chunk.text,
+            "Text Embed": text_embed,
+            "File ID": file_uri,
+            "Page": chunk.page,
+        }
+        for chunk, text_embed in zip(chunks, text_embeds, strict=True)
+    ]
+    await table.add_rows(row_add_data)
+    return OkResponse()
 
 
-@router.post("/v1/gen_tables/{table_type}/import_data")
+@router.post(
+    "/v2/gen_tables/{table_type}/import_data",
+    summary="Import data into a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+)
 @handle_exception
 async def import_table_data(
     request: Request,
-    bg_tasks: BackgroundTasks,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: Annotated[TableType, Path(description="Table type.")],
-    file: Annotated[UploadFile, File(description="The CSV or TSV file.")],
-    table_id: Annotated[
-        str,
-        Form(
-            pattern=TABLE_NAME_PATTERN,
-            description="ID or name of the table that the data should be imported into.",
-        ),
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
     ],
-    stream: Annotated[
-        bool, Form(description="Whether or not to stream the LLM generation.")
-    ] = True,
-    # List of inputs is bugged as of 2024-07-14: https://github.com/tiangolo/fastapi/pull/9928/files
-    # column_names: Annotated[
-    #     list[ColName] | None,
-    #     Form(
-    #         description="_Optional_. A list of columns names if the CSV does not have header row. Defaults to None (read from CSV).",
-    #     ),
-    # ] = None,
-    # columns: Annotated[
-    #     list[ColName] | None,
-    #     Form(
-    #         description="_Optional_. A list of columns to be imported. Defaults to None (import all columns except 'ID' and 'Updated at').",
-    #     ),
-    # ] = None,
-    delimiter: Annotated[
-        CSVDelimiter,
-        Form(description='The delimiter, can be "," or "\\t". Defaults to ",".'),
-    ] = CSVDelimiter.COMMA,
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    data: Annotated[TableDataImportFormData, Form()],
 ):
-    # Get column info
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    with table.create_session() as session:
-        meta = table.open_meta(session, table_id, remove_state_cols=True)
-        cols = {
-            c.id.lower(): c for c in meta.cols_schema if c.id.lower() not in ("id", "updated at")
-        }
-        cols_dtype = {
-            c.id: c.dtype
-            for c in meta.cols_schema
-            if c.id.lower() not in ("id", "updated at") and c.vlen == 0
-        }
-    # --- Read file as DataFrame --- #
-    content = await file.read()
-    try:
-        df = csv_to_df(content.decode("utf-8"), sep=delimiter.value)
-        # Do not import "ID" and "Updated at"
-        keep_cols = [c for c in df.columns.tolist() if c.lower() in cols]
-        df = df.filter(items=keep_cols, axis="columns")
-    except ValueError as e:
-        raise make_validation_error(e, loc=("body", "file")) from e
-    # if isinstance(columns, list) and len(columns) > 0:
-    #     df = df[columns]
-    if len(df) == 0:
-        raise make_validation_error(
-            ValueError("The file provided is empty."), loc=("body", "file")
-        )
-    # Convert vector data
-    for col_id in df.columns.tolist():
-        if cols[col_id.lower()].vlen > 0:
-            df[col_id] = df[col_id].apply(json_loads)
-    # Cast data to follow column dtype
-    for col_id, dtype in cols_dtype.items():
-        if col_id not in df.columns:
-            continue
-        try:
-            if dtype == "str":
-                df[col_id] = df[col_id].apply(lambda x: str(x) if not pd.isna(x) else x)
-            else:
-                if dtype in [ColumnDtype.IMAGE, ColumnDtype.AUDIO]:
-                    dtype = "str"
-                df[col_id] = df[col_id].astype(dtype, errors="raise")
-        except ValueError as e:
-            raise make_validation_error(e, loc=("body", "file")) from e
-    # Convert DF to list of dicts
-    row_add_data = df.to_dict(orient="records")
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=data.table_id)
+    # Check quota
+    billing: BillingManager = request.state.billing
+    billing.has_gen_table_quota(table)
+    billing.has_db_storage_quota()
+    billing.has_egress_quota()
+    # Import data
+    rows = await table.read_csv(
+        input_path=BytesIO(await data.file.read()),
+        column_id_mapping=None,
+        delimiter=data.delimiter,
+        ignore_info_columns=True,  # Ignore "ID" and "Updated at" columns
+    )
     return await add_rows(
         request=request,
-        bg_tasks=bg_tasks,
-        project=project,
+        auth_info=auth_info,
         table_type=table_type,
-        body=RowAddRequest(table_id=table_id, data=row_add_data, stream=stream),
+        body=MultiRowAddRequest(table_id=data.table_id, data=rows, stream=data.stream),
     )
 
 
-@router.get("/v1/gen_tables/{table_type}/{table_id}/export_data")
+@router.get(
+    "/v2/gen_tables/{table_type}/export_data",
+    summary="Export data from a table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+)
 @handle_exception
-def export_table_data(
-    *,
+async def export_table_data(
+    request: Request,
     bg_tasks: BackgroundTasks,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: Annotated[TableType, Path(description="Table type.")],
-    table_id: Annotated[
-        str,
-        Path(pattern=TABLE_NAME_PATTERN, description="ID or name of the table to be exported."),
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
     ],
-    delimiter: Annotated[
-        CSVDelimiter,
-        Query(description='The delimiter, can be "," or "\\t". Defaults to ",".'),
-    ] = CSVDelimiter.COMMA,
-    columns: Annotated[
-        list[ColName] | None,
-        Query(
-            min_length=1,
-            description="_Optional_. A list of columns to be exported. Defaults to None (export all columns).",
-        ),
-    ] = None,
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    params: Annotated[ExportTableDataQuery, Query()],
 ) -> FileResponse:
-    # Export data
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    ext = ".csv" if delimiter == CSVDelimiter.COMMA else ".tsv"
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=params.table_id)
+    # Check quota
+    billing: BillingManager = request.state.billing
+    billing.has_gen_table_quota(table)
+    billing.has_db_storage_quota()
+    billing.has_egress_quota()
+    # Temporary file
+    ext = ".csv" if params.delimiter == CSVDelimiter.COMMA else ".tsv"
     tmp_dir = TemporaryDirectory()
-    filename = f"{table_id}{ext}"
+    filename = f"{params.table_id}{ext}"
     filepath = join(tmp_dir.name, filename)
     # Keep a reference to the directory and only delete upon completion
     bg_tasks.add_task(tmp_dir.cleanup)
-    # Get column ordering
-    with table.create_session() as session:
-        meta = table.open_meta(session, table_id, remove_state_cols=True)
-        columns_order = [c.id for c in meta.cols_schema]
-    if columns is None:
-        columns_to_export = columns_order
-    else:
-        columns_to_export = [
-            col for col in columns_order if col in columns or col.lower() in ("id", "updated at")
-        ]
-    table.export_csv(
-        table_id=table_id,
-        columns=columns_to_export,
-        file_path=filepath,
-        delimiter=delimiter,
+    # Export
+    await table.export_data(
+        output_path=filepath,
+        columns=params.columns,
+        where="",
+        limit=None,
+        offset=0,
+        delimiter=params.delimiter,
     )
     return FileResponse(
         path=filepath,
@@ -1402,53 +1094,97 @@ def export_table_data(
     )
 
 
-@router.post("/v1/gen_tables/{table_type}/import")
+@router.post(
+    "/v2/gen_tables/{table_type}/import",
+    summary="Import a table including its metadata.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+)
 @handle_exception
 async def import_table(
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: Annotated[TableType, Path(description="Table type.")],
-    file: Annotated[UploadFile, File(description="The parquet file.")],
-    table_id_dst: Annotated[
-        str | None,
-        Form(pattern=TABLE_NAME_PATTERN, description="The ID or name of the new table."),
-    ] = None,
-) -> TableMetaResponse:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
-    with BytesIO(await file.read()) as source:
-        with table.create_session() as session:
-            _, meta = await table.import_parquet(
-                session=session,
-                source=source,
-                table_id_dst=table_id_dst,
-            )
-    meta = TableMetaResponse(**meta.model_dump(), num_rows=table.count_rows(meta.id))
-    return meta
-
-
-@router.get("/v1/gen_tables/{table_type}/{table_id}/export")
-@handle_exception
-def export_table(
-    *,
-    bg_tasks: BackgroundTasks,
-    project: Annotated[ProjectRead, Depends(auth_user_project)],
-    table_type: Annotated[TableType, Path(description="Table type.")],
-    table_id: Annotated[
-        str,
-        Path(pattern=TABLE_NAME_PATTERN, description="ID or name of the table to be exported."),
+    request: Request,
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
     ],
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    data: Annotated[TableImportFormData, Form()],
+) -> TableMetaResponse | OkResponse:
+    user, project, org = auth_info
+    if not data.migrate:
+        has_permissions(
+            user,
+            ["organization.MEMBER", "project.MEMBER"],
+            organization_id=org.id,
+            project_id=project.id,
+        )
+        # Check quota
+        billing: BillingManager = request.state.billing
+        billing.has_db_storage_quota()
+        billing.has_egress_quota()
+    # Import
+    async with s3_temporary_file(await data.file.read(), "application/vnd.apache.parquet") as uri:
+        result: AsyncResult = import_gen_table.delay(
+            source=uri,
+            project_id=project.id,
+            table_type=table_type,
+            table_id_dst=data.table_id_dst,
+            reupload_files=not data.migrate,
+            progress_key=data.progress_key,
+            verbose=data.migrate,
+        )
+        # Poll progress
+        initial_wait: float = 0.5
+        max_wait: float = 30 * 60  # 30 minutes
+        t0 = perf_counter()
+        i = 1
+        while (not result.ready()) and ((perf_counter() - t0) < max_wait):
+            await sleep(min(initial_wait * i, 5.0))
+            if not data.blocking:
+                prog = await CACHE.get_progress(data.progress_key, TableImportProgress)
+                if prog.load_data.progress == 100:
+                    return OkResponse(progress_key=data.progress_key)
+            i += 1
+        if (perf_counter() - t0) >= max_wait:
+            raise ServerBusyError(
+                "Table import took too long to complete. Please try again later."
+            )
+        return TableMetaResponse.model_validate_json(result.get(propagate=True))
+
+
+@router.get(
+    "/v2/gen_tables/{table_type}/export",
+    summary="Export a table including its metadata.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+)
+@handle_exception
+async def export_table(
+    request: Request,
+    bg_tasks: BackgroundTasks,
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
+    table_type: Annotated[TableType, Path(description="Table type.")],
+    table_id: Annotated[str, Query(description="Table name.")],
 ) -> FileResponse:
-    table = GenerativeTable.from_ids(project.organization.id, project.id, table_type)
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    # Check quota
+    billing: BillingManager = request.state.billing
+    billing.has_db_storage_quota()
+    billing.has_egress_quota()
+    table = await TABLE_CLS[table_type].open_table(project_id=project.id, table_id=table_id)
+    # Temporary file
     tmp_dir = TemporaryDirectory()
     filename = f"{table_id}.parquet"
     filepath = join(tmp_dir.name, filename)
     # Keep a reference to the directory and only delete upon completion
     bg_tasks.add_task(tmp_dir.cleanup)
-    with table.create_session() as session:
-        table.dump_parquet(
-            session=session,
-            table_id=table_id,
-            dest=filepath,
-        )
+    # Export
+    await table.export_table(filepath)
     return FileResponse(
         path=filepath,
         filename=filename,

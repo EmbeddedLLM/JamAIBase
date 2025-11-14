@@ -231,14 +231,9 @@ describe("APIClient LLM", () => {
     });
 
     it("generate chat completion", async () => {
-        try {
-            console.log("model: ", requestDataChat.model);
-            const response = await client.llm.generateChatCompletions(requestDataChat);
+        const response = await client.llm.generateChatCompletions(requestDataChat);
 
-            expect(ChatCompletionChunkSchema.parse(response)).toEqual(response);
-        } catch (err: any) {
-            console.log("error: ", err.response.data);
-        }
+        expect(ChatCompletionChunkSchema.parse(response)).toEqual(response);
     });
 
     it("generate chat completion - stream", async () => {

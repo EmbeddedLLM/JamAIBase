@@ -1,32 +1,42 @@
 <script lang="ts">
-	import { PUBLIC_IS_LOCAL, PUBLIC_JAMAI_URL } from '$env/static/public';
+	import { env as publicEnv } from '$env/dynamic/public';
 	import toUpper from 'lodash/toUpper';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { showLoadingOverlay } from '$globalStore';
 	import { textToFileDownload } from '$lib/utils';
 	import logger from '$lib/logger';
 
 	import { CustomToastDesc, toast } from '$lib/components/ui/sonner';
 
-	export let tableType: 'action' | 'knowledge' | 'chat';
-	export let tableId: string | undefined;
+	const { PUBLIC_JAMAI_URL } = publicEnv;
+
+	interface Props {
+		tableType: 'action' | 'knowledge' | 'chat';
+		tableId: string | undefined;
+		children?: import('svelte').Snippet<[any]>;
+	}
+
+	let { tableType, tableId, children }: Props = $props();
 
 	async function handleExportTable() {
 		if (!tableId || $showLoadingOverlay) return;
 		if (!confirm(`Export table ${tableId}?`)) return;
 
-		if (PUBLIC_IS_LOCAL === 'false') {
+		if (page.data.ossMode) {
 			window
-				.open(`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableId}/export`, '_blank')
+				.open(
+					`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/${tableType}/export?${new URLSearchParams([['table_id', tableId]])}`,
+					'_blank'
+				)
 				?.focus();
 		} else {
 			$showLoadingOverlay = true;
 
 			const response = await fetch(
-				`${PUBLIC_JAMAI_URL}/api/v1/gen_tables/${tableType}/${tableId}/export`,
+				`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/${tableType}/export?${new URLSearchParams([['table_id', tableId]])}`,
 				{
 					headers: {
-						'x-project-id': $page.params.project_id
+						'x-project-id': page.params.project_id
 					}
 				}
 			);
@@ -58,4 +68,4 @@
 	}
 </script>
 
-<slot {handleExportTable} />
+{@render children?.({ handleExportTable })}

@@ -3,7 +3,7 @@
 	import axios from 'axios';
 	import debounce from 'lodash/debounce';
 	import toUpper from 'lodash/toUpper';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { fileColumnFiletypes } from '$lib/constants';
 	import logger from '$lib/logger';
 	import type { GenTableCol } from '$lib/types';
@@ -13,18 +13,29 @@
 	import CloseIcon from '$lib/icons/CloseIcon.svelte';
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
 
-	export let tableType: 'action' | 'knowledge' | 'chat';
-	export let controller: (string | AbortController) | (AbortController | undefined);
-	export let selectCb: (files: File[]) => void = handleSaveEditFile;
-	export let column: GenTableCol;
-	/** Edit cell function for tables */
-	export let saveEditCell:
-		| ((cellToUpdate: { rowID: string; columnID: string }, editedValue: string) => Promise<void>)
-		| undefined = undefined;
-	export let cellToUpdate: { rowID: string; columnID: string } | undefined = undefined;
+	interface Props {
+		tableType: 'action' | 'knowledge' | 'chat';
+		controller: (string | AbortController) | (AbortController | undefined);
+		selectCb?: (files: File[]) => void;
+		column: GenTableCol;
+		/** Edit cell function for tables */
+		saveEditCell?:
+			| ((cellToUpdate: { rowID: string; columnID: string }, editedValue: string) => Promise<void>)
+			| undefined;
+		cellToUpdate?: { rowID: string; columnID: string } | undefined;
+	}
 
-	let container: HTMLDivElement;
-	let filesDragover = false;
+	let {
+		tableType,
+		controller = $bindable(),
+		selectCb = handleSaveEditFile,
+		column,
+		saveEditCell = undefined,
+		cellToUpdate = undefined
+	}: Props = $props();
+
+	let container: HTMLDivElement | undefined = $state();
+	let filesDragover = $state(false);
 
 	/** Validate before upload */
 	function handleSelectFiles(files: File[]) {
@@ -76,10 +87,10 @@
 		formData.append('file', files[0]);
 
 		try {
-			const uploadRes = await axios.post(`${PUBLIC_JAMAI_URL}/api/v1/files/upload`, formData, {
+			const uploadRes = await axios.post(`${PUBLIC_JAMAI_URL}/api/owl/files/upload`, formData, {
 				headers: {
 					'Content-Type': 'multipart/form-data',
-					'x-project-id': $page.params.project_id
+					'x-project-id': page.params.project_id
 				},
 				signal: controller.signal
 			});
@@ -118,18 +129,20 @@
 	const handleDragLeave = () => (filesDragover = false);
 </script>
 
-<!-- svelte-ignore a11y-no-static-element-interactions -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
 	bind:this={container}
-	on:dragover|preventDefault={(e) => {
+	ondragover={(e) => {
+		e.preventDefault();
 		if (e.dataTransfer?.items) {
 			if ([...e.dataTransfer.items].some((item) => item.kind === 'file')) {
 				filesDragover = true;
 			}
 		}
 	}}
-	on:dragleave={debounce(handleDragLeave, 50)}
-	on:drop|preventDefault={(e) => {
+	ondragleave={debounce(handleDragLeave, 50)}
+	ondrop={(e) => {
+		e.preventDefault();
 		filesDragover = false;
 		if (e.dataTransfer?.items) {
 			handleSelectFiles(
@@ -152,17 +165,17 @@
 			handleSelectFiles([...(e.dataTransfer?.files ?? [])]);
 		}
 	}}
-	class="flex flex-col gap-1 px-2 py-2 h-full w-full"
+	class="flex h-full w-full flex-col gap-1 px-2 py-2"
 >
 	<Button
 		variant="action"
-		on:click={(e) => {
+		onclick={(e) => {
 			if (controller === undefined) {
 				e.currentTarget.querySelector('input')?.click();
 			}
 		}}
-		class="gap-1 pl-3 w-min h-8 text-[#475467] {controller !== undefined
-			? 'pr-2 pointer-events-none'
+		class="h-8 w-min gap-1 pl-3 text-[#475467] {controller !== undefined
+			? 'pointer-events-none pr-2'
 			: 'pr-3'}"
 	>
 		{#if controller === undefined}
@@ -176,7 +189,7 @@
 			<LoadingSpinner class="ml-0 mr-1 h-3 w-3" />
 			Uploading
 			<Button
-				on:click={(e) => {
+				onclick={(e) => {
 					e.stopPropagation();
 					const uploadController = controller;
 					if (typeof uploadController !== 'string') {
@@ -184,7 +197,7 @@
 					}
 				}}
 				variant="ghost"
-				class="p-0 h-6 rounded-full aspect-square pointer-events-auto"
+				class="pointer-events-auto aspect-square h-6 rounded-full p-0"
 			>
 				<CloseIcon class="h-4 w-4" />
 			</Button>
@@ -196,9 +209,12 @@
 				.filter(({ type }) => column.dtype === type)
 				.map(({ ext }) => ext)
 				.join(',')}
-			on:change|preventDefault={(e) => handleSelectFiles([...(e.currentTarget.files ?? [])])}
+			onchange={(e) => {
+				e.preventDefault();
+				handleSelectFiles([...(e.currentTarget.files ?? [])]);
+			}}
 			multiple={false}
-			class="fixed max-h-[0] max-w-0 !p-0 !border-none overflow-hidden"
+			class="fixed max-h-[0] max-w-0 overflow-hidden !border-none !p-0"
 		/>
 	</Button>
 

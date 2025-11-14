@@ -1,5 +1,5 @@
-import 'dotenv/config';
 import { expect, type Locator, type Page } from '@playwright/test';
+import 'dotenv/config';
 import { LayoutPage } from './layout.page';
 
 /** Only to be instantiated in a project */
@@ -190,7 +190,7 @@ export class TablePage extends LayoutPage {
 	}
 
 	/** Add column */
-	async addColumn(type: 'input' | 'output', datatype: 'str' | 'file' = 'str') {
+	async addColumn(type: 'input' | 'output', datatype: 'str' | 'image' = 'str') {
 		await this.actionsBtn.click();
 		await this.page
 			.getByTestId('table-actions-dropdown')
@@ -205,9 +205,9 @@ export class TablePage extends LayoutPage {
 		await newColDialog.getByLabel('Column ID').fill(`transient-${type}-column`);
 		await newColDialog.getByTestId('datatype-select-btn').click();
 		if (type === 'input') {
-			await newColDialog
-				.getByTestId('datatype-select-btn')
-				.locator('div[role="option"]', { hasText: datatype === 'str' ? 'Text' : 'File' })
+			await this.page
+				.getByTestId('datatype-select-list')
+				.locator('div[role="option"]', { hasText: datatype === 'str' ? 'Text' : 'Image' })
 				.click();
 		}
 		if (type === 'output') {
