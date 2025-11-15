@@ -55,8 +55,7 @@ class EnvConfig(BaseSettings):
     # Starling database configs
     flush_clickhouse_buffer_sec: int = 60
     # Generative Table configs
-    concurrent_rows_batch_size: int = 3
-    concurrent_cols_batch_size: int = 5
+    concurrent_cell_batch_size: int = 15
     max_write_batch_size: int = 100
     max_file_cache_size: int = 20
     # PDF Loader configs

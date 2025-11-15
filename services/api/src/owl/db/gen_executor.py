@@ -1,9 +1,10 @@
 import base64
 import re
 from asyncio import Queue, TaskGroup
+from collections import defaultdict, deque
 from os.path import basename, splitext
 from time import perf_counter, time
-from typing import Any, AsyncGenerator, Literal
+from typing import Any, AsyncGenerator, Literal, Sequence
 
 import numpy as np
 from async_lru import alru_cache
@@ -13,7 +14,11 @@ from loguru import logger
 from pydantic import BaseModel
 
 from owl.configs import ENV_CONFIG
-from owl.db.gen_table import GenerativeTableCore, KnowledgeTable
+from owl.db.gen_table import (
+    ColumnMetadata,
+    GenerativeTableCore,
+    KnowledgeTable,
+)
 from owl.docparse import GeneralDocLoader
 from owl.types import (
     AUDIO_FILE_EXTENSIONS,
@@ -56,6 +61,7 @@ from owl.types import (
 from owl.utils import mask_string, uuid7_draft2_str
 from owl.utils.billing import BillingManager
 from owl.utils.code import code_executor
+from owl.utils.concurrency import determine_concurrent_batches
 from owl.utils.exceptions import (
     BadInputError,
     JamaiException,
@@ -98,6 +104,8 @@ class _Executor:
         organization: OrganizationRead,
         project: ProjectRead,
         body: MultiRowAddRequest | MultiRowRegenRequest | RowAdd | RowRegen,
+        col_batch_size: int,
+        row_batch_size: int,
     ) -> None:
         self.request = request
         self._request_id: str = request.state.id
@@ -110,12 +118,12 @@ class _Executor:
             raise ValueError(f"{body.table_id=} but {table.table_id=}")
         self.body = body
         self._stream = self.body.stream
-        # Determine batch sizes
+
         self._multi_turn = (
             sum(getattr(col.gen_config, "multi_turn", False) for col in table.column_metadata) > 0
         )
-        self._col_batch_size = ENV_CONFIG.concurrent_cols_batch_size if body.concurrent else 1
-        self._row_batch_size = 1 if self._multi_turn else ENV_CONFIG.concurrent_rows_batch_size
+        self._col_batch_size = col_batch_size
+        self._row_batch_size = row_batch_size
 
     @classmethod
     def _log(cls, msg: str, level: str = "INFO", request_id: str = "", **kwargs):
@@ -144,6 +152,104 @@ class _Executor:
         else:
             return f"type={type(x)}"
 
+    @staticmethod
+    def _parse_prompt_dependencies(prompt: str | None) -> list[str]:
+        if not prompt:
+            return []
+        return re.findall(GEN_CONFIG_VAR_PATTERN, prompt)
+
+    def _extract_upstream_columns(self, prompt: str | None) -> list[str]:
+        return self._parse_prompt_dependencies(prompt)
+
+    def _extract_all_upstream_columns(self, output_column_name: str) -> list[str]:
+        return self._extract_all_upstream_columns_from(
+            self.table.column_metadata, output_column_name
+        )
+
+    @staticmethod
+    def _extract_all_upstream_columns_from(
+        columns: Sequence[ColumnMetadata], output_column_name: str
+    ) -> list[str]:
+        try:
+            idx = next(i for i, c in enumerate(columns) if c.column_id == output_column_name)
+        except StopIteration:
+            return []
+        return [
+            c.column_id
+            for c in columns[:idx]
+            if not (c.is_info_column or c.is_state_column or c.is_vector_column)
+        ]
+
+    @classmethod
+    def _collect_column_dependencies(
+        cls,
+        column: ColumnMetadata,
+        *,
+        columns: Sequence[ColumnMetadata],
+        output_column_ids: set[str],
+    ) -> list[str]:
+        gen_config = column.gen_config
+        if gen_config is None:
+            return []
+
+        dependencies: list[str]
+        if isinstance(gen_config, PythonGenConfig):
+            dependencies = cls._extract_all_upstream_columns_from(columns, column.column_id)
+        elif isinstance(gen_config, (CodeGenConfig, EmbedGenConfig)):
+            dependencies = [gen_config.source_column]
+        elif isinstance(gen_config, LLMGenConfig):
+            dependencies = cls._parse_prompt_dependencies(gen_config.prompt)
+        else:
+            dependencies = []
+
+        return [dep for dep in dependencies if dep in output_column_ids]
+
+    @classmethod
+    def build_dependency_levels(cls, columns: Sequence[ColumnMetadata]) -> list[list[str]]:
+        output_columns = [col for col in columns if col.is_output_column]
+        if not output_columns:
+            return []
+
+        adjacency: dict[str, list[str]] = defaultdict(list)
+        in_degree: dict[str, int] = defaultdict(int)
+        output_column_ids = {col.column_id for col in output_columns}
+
+        for column in output_columns:
+            in_degree[column.column_id] = 0
+
+        for column in output_columns:
+            dependencies = cls._collect_column_dependencies(
+                column,
+                columns=columns,
+                output_column_ids=output_column_ids,
+            )
+            for dep in dependencies:
+                adjacency[dep].append(column.column_id)
+                in_degree[column.column_id] += 1
+
+        queue = deque([col.column_id for col in output_columns if in_degree[col.column_id] == 0])
+        levels: list[list[str]] = []
+
+        while queue:
+            current_level = list(queue)
+            levels.append(current_level)
+            queue = deque()
+
+            for col_id in current_level:
+                for dependent in adjacency[col_id]:
+                    in_degree[dependent] -= 1
+                    if in_degree[dependent] == 0:
+                        queue.append(dependent)
+
+        return levels
+
+    @classmethod
+    def get_max_concurrent_columns(cls, columns: Sequence[ColumnMetadata]) -> int:
+        dependency_levels = cls.build_dependency_levels(columns)
+        if not dependency_levels:
+            return 1
+        return max(len(level) for level in dependency_levels)
+
 
 class MultiRowGenExecutor(_Executor):
     def __init__(
@@ -155,8 +261,48 @@ class MultiRowGenExecutor(_Executor):
         project: ProjectRead,
         body: MultiRowAddRequest | MultiRowRegenRequest,
     ) -> None:
-        _kwargs = dict(request=request, table=table, organization=organization, project=project)
-        super().__init__(body=body, **_kwargs)
+        concurrent = body.concurrent
+        multi_turn = (
+            sum(getattr(col.gen_config, "multi_turn", False) for col in table.column_metadata) > 0
+        )
+        max_concurrent_cols = self.get_max_concurrent_columns(table.column_metadata)
+        col_batch_size, row_batch_size = determine_concurrent_batches(
+            columns=table.column_metadata,
+            body=body,
+            concurrent=concurrent,
+            multi_turn=multi_turn,
+            cell_limit=ENV_CONFIG.concurrent_cell_batch_size,
+            max_concurrent_cols=max_concurrent_cols,
+        )
+
+        _context = dict(
+            request=request,
+            table=table,
+            organization=organization,
+            project=project,
+        )
+        super().__init__(
+            body=body,
+            col_batch_size=col_batch_size,
+            row_batch_size=row_batch_size,
+            **_context,
+        )
+        self.log(
+            (
+                "Concurrency plan determined: "
+                f"columns={col_batch_size}, rows={row_batch_size}, multi_turn={multi_turn}, concurrent={concurrent}"
+            ),
+            level="DEBUG",
+            columns=col_batch_size,
+            rows=row_batch_size,
+            multi_turn=multi_turn,
+            concurrent=concurrent,
+        )
+
+        # Store pre-computed sizes for child executors
+        self._col_batch_size = col_batch_size
+        self._row_batch_size = row_batch_size
+
         # Executors
         if isinstance(body, MultiRowAddRequest):
             self._is_regen = False
@@ -168,7 +314,9 @@ class MultiRowGenExecutor(_Executor):
                         stream=body.stream,
                         concurrent=body.concurrent,
                     ),
-                    **_kwargs,
+                    col_batch_size=self._col_batch_size,
+                    row_batch_size=self._row_batch_size,
+                    **_context,
                 )
                 for row_data in body.data
             ]
@@ -184,7 +332,9 @@ class MultiRowGenExecutor(_Executor):
                         stream=body.stream,
                         concurrent=body.concurrent,
                     ),
-                    **_kwargs,
+                    col_batch_size=self._col_batch_size,
+                    row_batch_size=self._row_batch_size,
+                    **_context,
                 )
                 for row_id in body.row_ids
             ]
@@ -303,10 +453,19 @@ class GenExecutor(_Executor):
         organization: OrganizationRead,
         project: ProjectRead,
         body: RowAdd | RowRegen,
+        col_batch_size: int,
+        row_batch_size: int,
     ) -> None:
         super().__init__(
-            request=request, table=table, organization=organization, project=project, body=body
+            request=request,
+            table=table,
+            organization=organization,
+            project=project,
+            body=body,
+            col_batch_size=col_batch_size,
+            row_batch_size=row_batch_size,
         )
+
         # Engines
         self.lm = LMEngine(organization=organization, project=project, request=request)
         # Tasks
@@ -1031,23 +1190,6 @@ class GenExecutor(_Executor):
         message = ChatEntry.user(content=contents)
         # logger.warning(f"{message=}")
         return message
-
-    def _extract_upstream_columns(self, prompt: str) -> list[str]:
-        col_ids = re.findall(GEN_CONFIG_VAR_PATTERN, prompt)
-        # return the content inside ${...}
-        return col_ids
-
-    def _extract_all_upstream_columns(self, output_column_name: str) -> list[str]:
-        cols = self.table.column_metadata
-        try:
-            idx = next(i for i, c in enumerate(cols) if c.column_id == output_column_name)
-        except StopIteration:
-            return []
-        return [
-            c.column_id
-            for c in cols[:idx]
-            if not (c.is_info_column or c.is_state_column or c.is_vector_column)
-        ]
 
     def _check_upstream_error(self, upstream_cols: list[str]) -> None:
         if not isinstance(upstream_cols, list):
