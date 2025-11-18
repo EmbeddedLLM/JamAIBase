@@ -307,13 +307,13 @@ services:
       - jamai
 
   kopi:
-    image: hoipangg/v8-kopi:0.4
+    image: ghcr.io/embeddedllm/v8-kopi/v8-kopi:latest
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/health || exit 1"]
-      interval: 10s
-      timeout: 2s
-      retries: 20
-      start_period: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
     environment:
       - PORT=3000
