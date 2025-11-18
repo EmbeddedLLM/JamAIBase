@@ -310,6 +310,15 @@ def test_model_info(setup: ServingContext):
     assert isinstance(response, ModelInfoListResponse)
     assert len(response.data) == 4
 
+    # Test Bearer Auth case-insensitivity
+    response = JamAI(
+        user_id=setup.user_id,
+        project_id=setup.project_ids[0],
+        headers={"Authorization": f"beaRER    {ENV_CONFIG.service_key_plain}"},
+    ).model_info()
+    assert isinstance(response, ModelInfoListResponse)
+    assert len(response.data) == 4
+
     response = client.model_info(model=chat_model_id)
     assert len(response.data) == 1
     assert response.data[0].id == chat_model_id

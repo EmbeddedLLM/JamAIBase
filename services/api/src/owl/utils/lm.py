@@ -234,7 +234,7 @@ class DeploymentRouter:
         messages: list[dict] | None = None,
         **hyperparams,
     ) -> Exception:
-        messages = [mask_content(m) for m in messages]
+        messages = [mask_content(m) for m in messages] if messages else None
         err_mssg = getattr(e, "message", str(e))
         if isinstance(e, JamaiException):
             return e

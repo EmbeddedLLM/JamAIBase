@@ -87,8 +87,10 @@ def make_response(
     headers["x-request-id"] = request.headers.get("x-request-id", "")
     request_headers = {k.lower(): v for k, v in request.headers.items()}
     token = request_headers.get("authorization", "")
-    if token.startswith("Bearer "):
-        request_headers["authorization"] = f"Bearer {mask_string(token[7:], include_len=False)}"
+    if token.lower().startswith("bearer "):
+        request_headers["authorization"] = (
+            f"{token[:6]} {mask_string(token[7:], include_len=False)}"
+        )
     else:
         request_headers["authorization"] = mask_string(token, include_len=False)
     response = ORJSONResponse(
