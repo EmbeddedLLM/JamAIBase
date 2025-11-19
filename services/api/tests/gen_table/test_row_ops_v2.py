@@ -1531,6 +1531,58 @@ def test_concurrency_stream(
             assert not _assert_consecutive(chunk_rows)
 
 
+def test_public_web_image(setup: ServingContext):
+    """
+    Tests support for public web image file
+    - As input to model
+    - Has valid raw and thumbnail URLs
+    - Reject private URLs
+    - Empty input is OK
+    """
+    table_type = TableType.ACTION
+    client = JamAI(user_id=setup.superuser_id, project_id=setup.project_id)
+    cols = [
+        ColumnSchemaCreate(id="image", dtype="image"),
+        ColumnSchemaCreate(
+            id="ocr",
+            dtype="str",
+            gen_config=LLMGenConfig(
+                model=setup.gpt_llm_model_id,
+                system_prompt="",
+                prompt="${image} What is the text in the image?",
+                max_tokens=20,
+            ),
+        ),
+    ]
+    image_uri = "https://raw.githubusercontent.com/EmbeddedLLM/JamAIBase/refs/heads/main/services/api/tests/files/jpeg/xlsx.jpg"
+    with (
+        create_table(client, table_type, cols=cols) as table,
+    ):
+        kwargs = dict(client=client, table_type=table_type, table_name=table.id, stream=False)
+        # The model should be able to view the image
+        row = add_table_rows(data=[dict(image=image_uri)], **kwargs).rows[0]
+        assert "xlsx" in row.columns["ocr"].content
+        # Both raw and thumbnail URLs should just be the original URL
+        response = client.file.get_raw_urls([image_uri])
+        assert isinstance(response, GetURLResponse)
+        assert response.urls[0] == image_uri
+        response = client.file.get_thumbnail_urls([image_uri])
+        assert isinstance(response, GetURLResponse)
+        assert response.urls[0] == image_uri
+        # Private URLs should be rejected
+        row = add_table_rows(
+            data=[dict(image="https://host.docker.internal:8080")], **kwargs
+        ).rows[0]
+        assert "cannot be opened" in row.columns["ocr"].content, row
+        row = add_table_rows(data=[dict(image="https://localhost")], **kwargs).rows[0]
+        assert "cannot be opened" in row.columns["ocr"].content, row
+        row = add_table_rows(data=[dict(image="https://192.168.0.1")], **kwargs).rows[0]
+        assert "cannot be opened" in row.columns["ocr"].content, row
+        # Empty is OK
+        row = add_table_rows(data=[dict()], **kwargs).rows[0]
+        assert len(row.columns["ocr"].content) > 0, row
+
+
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 @pytest.mark.parametrize("stream", **STREAM_PARAMS)
 def test_multimodal_multiturn(

@@ -604,10 +604,16 @@ async def _export_project_as_pa_table(
         uri: str | None = project_meta.get(f"{pic_type}_url", None)
         if uri is None:
             continue
-        async with open_uri_async(uri) as (f, mime):
-            project_meta[pic_type] = (
-                f"data:{mime};base64,{base64.b64encode(await f.read()).decode('utf-8')}"
+        try:
+            async with open_uri_async(uri) as (f, mime):
+                project_meta[pic_type] = (
+                    f"data:{mime};base64,{base64.b64encode(await f.read()).decode('utf-8')}"
+                )
+        except Exception:
+            logger.warning(
+                f"Failed to download {pic_type} for project {project.id}. ({request.state.id})"
             )
+            continue
     # Bundle everything into a single PyArrow Table
     table_metas = [
         {"table_type": table_type, "table_meta": meta.model_dump(mode="json")}

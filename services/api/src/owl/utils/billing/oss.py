@@ -1,8 +1,10 @@
+from asyncio.coroutines import iscoroutine
 from collections import defaultdict
 from time import perf_counter
 from typing import Any, DefaultDict
 
 import clickhouse_connect
+from clickhouse_connect.driver.asyncclient import AsyncClient
 from cloudevents.conversion import to_dict
 from cloudevents.http import CloudEvent
 from fastapi import Request
@@ -90,7 +92,7 @@ class ClickHouseAsyncClient:
         self.password = password
         self.database = database
         self.port = port
-        self.client = None
+        self.client: AsyncClient | None = None
 
     async def _get_client(self):
         """Initialize client on first use"""
@@ -102,7 +104,6 @@ class ClickHouseAsyncClient:
                 database=self.database,
                 port=self.port,
             )
-        return self.client
 
     def _log_debug(self, message: str):
         logger.debug(f"{self.__class__.__name__}: {message}")
@@ -112,6 +113,13 @@ class ClickHouseAsyncClient:
 
     def _log_error(self, message: str):
         logger.error(f"{self.__class__.__name__}: {message}")
+
+    async def close(self) -> None:
+        if self.client is None:
+            return
+        ret = self.client.close()
+        if iscoroutine(ret):
+            await ret
 
     async def query(self, sql: str):
         await self._get_client()
@@ -123,6 +131,7 @@ class ClickHouseAsyncClient:
             raise
 
     async def _insert_llm_usage(self, usages: list[LlmUsageData]):
+        await self._get_client()
         try:
             usages_list = [usage.as_list() for usage in usages]
             result = await self.client.insert(
@@ -154,6 +163,7 @@ class ClickHouseAsyncClient:
             raise
 
     async def _insert_embed_usage(self, usages: list[EmbedUsageData]):
+        await self._get_client()
         try:
             usages_list = [usage.as_list() for usage in usages]
             result = await self.client.insert(
@@ -182,6 +192,7 @@ class ClickHouseAsyncClient:
             raise
 
     async def _insert_rerank_usage(self, usages: list[RerankUsageData]):
+        await self._get_client()
         try:
             usages_list = [usage.as_list() for usage in usages]
             result = await self.client.insert(
@@ -210,6 +221,7 @@ class ClickHouseAsyncClient:
             raise
 
     async def _insert_egress_usage(self, usages: list[EgressUsageData]):
+        await self._get_client()
         try:
             usages_list = [usage.as_list() for usage in usages]
             result = await self.client.insert(
@@ -237,6 +249,7 @@ class ClickHouseAsyncClient:
             raise
 
     async def _insert_file_storage_usage(self, usages: list[FileStorageUsageData]):
+        await self._get_client()
         try:
             usages_list = [usage.as_list() for usage in usages]
             result = await self.client.insert(
@@ -265,6 +278,7 @@ class ClickHouseAsyncClient:
             raise
 
     async def _insert_db_storage_usage(self, usages: list[DBStorageUsageData]):
+        await self._get_client()
         try:
             usages_list = [usage.as_list() for usage in usages]
             result = await self.client.insert(
@@ -298,7 +312,6 @@ class ClickHouseAsyncClient:
         reraise=True,
     )
     async def insert_usage(self, usage: UsageData):
-        await self._get_client()
         llm_result = await self._insert_llm_usage(usage.llm_usage)
         embed_result = await self._insert_embed_usage(usage.embed_usage)
         rerank_result = await self._insert_rerank_usage(usage.rerank_usage)

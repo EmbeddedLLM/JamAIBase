@@ -1,12 +1,16 @@
+import ipaddress
 import os
+import socket
 from contextlib import asynccontextmanager
 from hashlib import blake2b
 from io import BytesIO
 from os.path import join, splitext
 from pathlib import Path
-from typing import AsyncGenerator, BinaryIO
+from typing import AsyncGenerator
+from urllib.parse import urlparse, urlunparse
 
 import aioboto3
+import httpx
 from botocore.exceptions import ClientError
 from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
@@ -65,6 +69,13 @@ AUDIO_WHITE_LIST_EXT = set(ext for exts in AUDIO_WHITE_LIST.values() for ext in 
 UPLOAD_WHITE_LIST_MIME = set(UPLOAD_WHITE_LIST.keys())
 UPLOAD_WHITE_LIST_EXT = set(ext for exts in UPLOAD_WHITE_LIST.values() for ext in exts)
 
+HTTP_ACLIENT = httpx.AsyncClient(
+    timeout=10.0,
+    transport=httpx.AsyncHTTPTransport(retries=3),
+    follow_redirects=False,  # Prevent redirect-based SSRF
+    max_redirects=0,
+)
+
 
 @asynccontextmanager
 async def get_s3_aclient():
@@ -77,10 +88,49 @@ async def get_s3_aclient():
         yield aclient
 
 
+class AsyncResponse:
+    """A simple wrapper for `open_uri_async` result."""
+
+    def __init__(self, content: bytes):
+        self.content = content
+
+    async def read(self, *_, **__) -> bytes:
+        return self.content
+
+
+def _is_private_or_local_ip(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return True  # treat invalid as unsafe
+    return addr.is_private or addr.is_loopback or addr.is_link_local
+
+
+def validate_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme == "s3":
+        return url
+    if parsed.scheme != "https":
+        raise BadInputError(f"Unsupported scheme: {parsed.scheme}")
+    if not parsed.hostname:
+        raise BadInputError("URL must contain hostname.")
+    try:
+        ips = {info[4][0] for info in socket.getaddrinfo(parsed.hostname, None)}
+    except socket.gaierror as e:
+        raise BadInputError("Failed to resolve hostname.") from e
+    if not ips:
+        raise BadInputError("Failed to resolve hostname.")
+    if any(_is_private_or_local_ip(ip) for ip in ips):
+        raise BadInputError(f"Target '{url}' resolves to private or local IP.")
+    return url
+
+
 # Asynchronous version
 @asynccontextmanager
-async def open_uri_async(uri: str) -> AsyncGenerator[tuple[BinaryIO | BytesIO, str], None]:
-    if isinstance(uri, str) and uri.startswith("s3://"):
+async def open_uri_async(uri: str) -> AsyncGenerator[tuple[AsyncResponse, str], None]:
+    if not isinstance(uri, str):
+        raise BadInputError(f"URI must be a string, got {type(uri)} instead.")
+    if uri.startswith("s3://"):
         try:
             bucket_name, key = uri[5:].split("/", 1)
             async with get_s3_aclient() as aclient:
@@ -90,12 +140,30 @@ async def open_uri_async(uri: str) -> AsyncGenerator[tuple[BinaryIO | BytesIO, s
             if "NoSuchKey" in str(e):
                 raise ResourceNotFoundError(f'File "{uri}" is not found.') from e
             logger.warning(f'Failed to open "{uri}" due to {e.__class__.__name__}: {e}')
-            raise ResourceNotFoundError(f'File "{uri}" cannot be opened.') from e
+            raise BadInputError(f'File "{uri}" cannot be opened.') from e
         except Exception as e:
             logger.exception(f'Failed to open "{uri}" due to {e.__class__.__name__}: {e}')
-            raise ResourceNotFoundError(f'File "{uri}" cannot be opened.') from e
+            raise BadInputError(f'File "{uri}" cannot be opened.') from e
+    elif uri.startswith("https://"):
+        try:
+            uri = validate_url(uri)
+            response = await HTTP_ACLIENT.get(uri)
+            response.raise_for_status()
+            mime = response.headers.get("Content-Type", "application/octet-stream")
+            yield (AsyncResponse(response.content), mime)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise ResourceNotFoundError(f'File "{uri}" is not found.') from e
+            logger.warning(f'Failed to open "{uri}" due to {e.__class__.__name__}: {e}')
+            raise BadInputError(f'File "{uri}" cannot be opened.') from e
+        except BadInputError as e:
+            logger.warning(f'Failed to open "{uri}" due to {e.__class__.__name__}: {e}')
+            raise BadInputError(f'File "{uri}" cannot be opened.') from e
+        except Exception as e:
+            logger.exception(f'Failed to open "{uri}" due to {e.__class__.__name__}: {e}')
+            raise BadInputError(f'File "{uri}" cannot be opened.') from e
     else:
-        raise ResourceNotFoundError(f'File "{uri}" cannot be opened.')
+        raise BadInputError(f'File "{uri}" cannot be opened.')
 
 
 def get_bytes_size_mb(bytes_content: bytes, decimal_places: int = 3) -> float:
@@ -491,6 +559,41 @@ async def s3_temporary_file(
                 logger.info(f"Temporary S3 file deleted: {uri}")
             except Exception as e:
                 logger.warning(f'Failed to delete temporary S3 file "{uri}": {repr(e)}')
+
+
+async def generate_presigned_s3_url(s3_client, bucket_name: str, key: str) -> str:
+    try:
+        response = await s3_client.list_objects_v2(Bucket=bucket_name, Prefix=key, MaxKeys=1)
+        if "Contents" not in response:
+            return ""
+        presigned_url = await s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket_name, "Key": key},
+            ExpiresIn=3600,
+        )
+        parsed_url = urlparse(presigned_url)
+        return urlunparse(
+            (
+                parsed_url.scheme,
+                ENV_CONFIG.file_proxy_url,
+                "/api/v2/files" + parsed_url.path,
+                parsed_url.params,
+                parsed_url.query,
+                parsed_url.fragment,
+            )
+        )
+    except Exception as e:
+        err_mssg = str(e)
+        if "NoSuchBucket" in err_mssg:
+            pass
+        else:
+            logger.exception(
+                (
+                    "Error generating pre-signed URL for "
+                    f"(bucket='{bucket_name}' prefix='{key}') due to {e.__class__.__name__}: {e}"
+                )
+            )
+        return ""
 
 
 def get_global_thumbnail_path(extension: str) -> str:

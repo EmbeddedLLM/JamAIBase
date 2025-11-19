@@ -1,12 +1,10 @@
 import os
 from os.path import splitext
 from typing import Annotated
-from urllib.parse import quote, urlparse, urlunparse
+from urllib.parse import quote
 
-import httpx
 from fastapi import APIRouter, Depends, Request, Response, UploadFile
 from fastapi.responses import ORJSONResponse
-from loguru import logger
 
 from owl.configs import ENV_CONFIG
 from owl.types import (
@@ -22,41 +20,17 @@ from owl.utils.billing import BillingManager
 from owl.utils.exceptions import handle_exception
 from owl.utils.io import (
     AUDIO_WHITE_LIST_EXT,
+    HTTP_ACLIENT,
     NON_PDF_DOC_WHITE_LIST_EXT,
     UPLOAD_WHITE_LIST_MIME,
+    generate_presigned_s3_url,
     get_global_thumbnail_path,
     get_s3_aclient,
     guess_mime,
     s3_upload,
 )
 
-HTTP_ACLIENT = httpx.AsyncClient(
-    timeout=10.0,
-    transport=httpx.AsyncHTTPTransport(retries=3),
-)
 router = APIRouter()
-
-
-async def _generate_presigned_url(s3_client, bucket_name: str, key: str) -> str:
-    response = await s3_client.list_objects_v2(Bucket=bucket_name, Prefix=key, MaxKeys=1)
-    if "Contents" not in response:
-        return ""
-    presigned_url = await s3_client.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": bucket_name, "Key": key},
-        ExpiresIn=3600,
-    )
-    parsed_url = urlparse(presigned_url)
-    return urlunparse(
-        (
-            parsed_url.scheme,
-            ENV_CONFIG.file_proxy_url,
-            "/api/v2/files" + parsed_url.path,
-            parsed_url.params,
-            parsed_url.query,
-            parsed_url.fragment,
-        )
-    )
 
 
 @router.get("/v2/files/{path:path}")
@@ -139,18 +113,13 @@ async def get_raw_file_urls(body: GetURLRequest) -> GetURLResponse:
     results = []
     async with get_s3_aclient() as aclient:
         for uri in body.uris:
-            file_url = ""
-            try:
+            if uri.startswith("s3://"):
                 bucket_name, key = uri[5:].split("/", 1)
-                file_url = await _generate_presigned_url(aclient, bucket_name, key)
-            except Exception as e:
-                err_mssg = str(e)
-                if "NoSuchBucket" in err_mssg:
-                    pass
-                else:
-                    logger.exception(
-                        f'Error generating URL for "{uri}" due to {e.__class__.__name__}: {e}'
-                    )
+                file_url = await generate_presigned_s3_url(aclient, bucket_name, key)
+            elif uri.startswith(("http://", "https://")):
+                file_url = uri
+            else:
+                file_url = ""
             results.append(file_url)
     return GetURLResponse(urls=results)
 
@@ -162,8 +131,7 @@ async def get_thumbnail_urls(body: GetURLRequest) -> GetURLResponse:
     results = []
     async with get_s3_aclient() as aclient:
         for uri in body.uris:
-            file_url = ""
-            try:
+            if uri.startswith("s3://"):
                 ext = splitext(uri)[1].lower()
                 bucket_name, key = uri[5:].split("/", 1)
                 thumb_ext = "mp3" if ext in AUDIO_WHITE_LIST_EXT else "webp"
@@ -175,14 +143,10 @@ async def get_thumbnail_urls(body: GetURLRequest) -> GetURLResponse:
                 else:
                     thumb_key = key.replace("raw", "thumb")
                     thumb_key = f"{os.path.splitext(thumb_key)[0]}.{thumb_ext}"
-                file_url = await _generate_presigned_url(aclient, bucket_name, thumb_key)
-            except Exception as e:
-                err_mssg = str(e)
-                if "NoSuchBucket" in err_mssg:
-                    pass
-                else:
-                    logger.exception(
-                        f'Error generating URL for "{uri}" due to {e.__class__.__name__}: {e}'
-                    )
+                file_url = await generate_presigned_s3_url(aclient, bucket_name, thumb_key)
+            elif uri.startswith(("http://", "https://")):
+                file_url = uri
+            else:
+                file_url = ""
             results.append(file_url)
     return GetURLResponse(urls=results)

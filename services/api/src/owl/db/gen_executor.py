@@ -819,7 +819,7 @@ class GenExecutor(_Executor):
             if references is not None:
                 state["references"] = references.model_dump(mode="json")
             if reasoning:
-                state["reasoning"] = reasoning
+                state["reasoning_content"] = reasoning
             self._column_dict[state_col] = state
             await self._signal_task_completion(task, result)
             self.log(f'Streamed completion for column "{output_column}": <{mask_string(result)}>.')
@@ -1167,7 +1167,7 @@ class GenExecutor(_Executor):
             if isinstance(c, TextContent):
                 contents.append(c)
             else:
-                data = await _load_uri_as_base64(str(c.uri))
+                data = await _load_uri_as_base64(c.uri)
                 if getattr(self._col_map.get(c.column_name, None), "is_document_column", False):
                     # Document (data could be None)
                     replacements[c.column_name] = str(data)
@@ -1298,6 +1298,30 @@ class GenExecutor(_Executor):
 
 
 @alru_cache(maxsize=ENV_CONFIG.max_file_cache_size, ttl=ENV_CONFIG.document_loader_cache_ttl_sec)
+async def _load_uri_as_bytes(uri: str | None) -> bytes | None:
+    """
+    Loads a file from URI as raw bytes.
+    Args:
+        uri (str): The URI of the file.
+    Returns:
+        content (bytes | None): The raw file content as bytes, or None if loading fails.
+    Raises:
+        BadInputError: If the URI is invalid or file cannot be accessed.
+    """
+    if not uri:
+        return None
+
+    try:
+        async with open_uri_async(str(uri)) as (file_handle, _):
+            file_binary = await file_handle.read()
+            return file_binary
+    except (BadInputError, ResourceNotFoundError):
+        raise
+    except Exception as e:
+        logger.warning(f'Failed to load file "{uri}" due to error: {repr(e)}')
+        return None
+
+
 async def _load_uri_as_base64(uri: str | None) -> str | AudioContent | ImageContent | None:
     """
     Loads a file from URI for LLM inference.
@@ -1313,15 +1337,10 @@ async def _load_uri_as_base64(uri: str | None) -> str | AudioContent | ImageCont
     """
     if not uri:
         return None
-    try:
-        extension = splitext(uri)[1].lower()
-        async with open_uri_async(uri) as (file_handle, _):
-            file_binary = await file_handle.read()
-    except BadInputError:
-        raise
-    except Exception as e:
-        logger.warning(f'Failed to load file "{uri}" due to error: {repr(e)}')
+    file_binary = await _load_uri_as_bytes(uri)
+    if file_binary is None:
         return None
+    extension = splitext(uri)[1].lower()
     try:
         # Load as document
         if extension in DOCUMENT_FILE_EXTENSIONS:
@@ -1348,29 +1367,4 @@ async def _load_uri_as_base64(uri: str | None) -> str | AudioContent | ImageCont
         raise
     except Exception as e:
         logger.warning(f'Failed to parse file "{uri}" due to error: {repr(e)}')
-        return None
-
-
-@alru_cache(maxsize=ENV_CONFIG.max_file_cache_size, ttl=ENV_CONFIG.document_loader_cache_ttl_sec)
-async def _load_uri_as_bytes(uri: str | None) -> bytes | None:
-    """
-    Loads a file from URI as raw bytes.
-    Args:
-        uri (str): The URI of the file.
-    Returns:
-        content (bytes | None): The raw file content as bytes, or None if loading fails.
-    Raises:
-        BadInputError: If the URI is invalid or file cannot be accessed.
-    """
-    if not uri:
-        return None
-
-    try:
-        async with open_uri_async(str(uri)) as (file_handle, _):
-            file_binary = await file_handle.read()
-            return file_binary
-    except BadInputError:
-        raise
-    except Exception as e:
-        logger.warning(f'Failed to load file "{uri}" due to error: {repr(e)}')
         return None

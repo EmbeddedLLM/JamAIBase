@@ -1,5 +1,4 @@
 import asyncio
-from asyncio.coroutines import iscoroutine
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from time import perf_counter
@@ -36,6 +35,7 @@ from owl.utils import uuid7_str
 from owl.utils.billing import CLICKHOUSE_CLIENT, BillingManager
 from owl.utils.exceptions import JamaiException
 from owl.utils.handlers import exception_handler, make_request_log_str, path_not_found_handler
+from owl.utils.io import HTTP_ACLIENT
 from owl.utils.logging import setup_logger_sinks, suppress_logging_handlers
 from owl.utils.mcp import get_mcp_router
 from owl.utils.mcp.server import MCP_TOOL_TAG
@@ -91,9 +91,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to flush buffer: {repr(e)}")
     finally:
-        ret = CLICKHOUSE_CLIENT.client.close()
-        if iscoroutine(ret):
-            await ret
+        await CLICKHOUSE_CLIENT.close()
+
+    # Close HTTPX client
+    await HTTP_ACLIENT.aclose()
     logger.info("Shutdown complete.")
 
 

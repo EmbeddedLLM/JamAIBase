@@ -1415,7 +1415,7 @@ class GenerativeTableCore:
                 def create_vector_validator(col: ColumnMetadata):
                     @field_validator(col.column_id, mode="after")
                     @classmethod
-                    def vector_validator(cls, v: np.ndarray | None):
+                    def vector_validator(cls, v: np.ndarray | None) -> np.ndarray | None:
                         if v is not None and len(v) != col.vlen:
                             raise ValueError(
                                 f"Array input for column {col.column_id} must have length {col.vlen}"
@@ -1427,6 +1427,17 @@ class GenerativeTableCore:
                 validators[f"validate_{col.column_id}"] = create_vector_validator(col)
                 field_definitions[col.column_id] = (NumpyArray | None, Field(default=None))
             else:
+                # if col.is_file_column:
+                #     # Create URL validator
+                #     def create_url_validator(col: ColumnMetadata):
+                #         @field_validator(col.column_id, mode="after")
+                #         @classmethod
+                #         def url_validator(cls, v: str | None) -> str | None:
+                #             return validate_url(v) if v else None
+
+                #         return url_validator
+
+                #     validators[f"validate_{col.column_id}"] = create_url_validator(col)
                 # Get the Python type from ColumnDtype
                 py_type = col.dtype.to_python_type()
                 field_definitions[col.column_id] = (py_type | None, Field(default=None))
@@ -2060,12 +2071,14 @@ class GenerativeTableCore:
         }
 
         # Add file data into Arrow Table
-        async def _download(uri: str) -> tuple[str, bytes, str]:
+        async def _download(uri: str | None) -> tuple[str, bytes, str]:
+            if not uri:
+                return (uri, b"", "")
             async with semaphore:
                 try:
                     async with open_uri_async(uri) as (f, mime):
                         return (uri, await f.read(), mime)
-                except ResourceNotFoundError:
+                except Exception:
                     return (uri, b"", "")
 
         async def _download_files(col_ids: list[str]) -> dict[str, tuple[bytes, str]]:
@@ -2075,7 +2088,7 @@ class GenerativeTableCore:
                 if f"{col_id}__" in col_dtype_map:
                     raise BadInputError(f'Table "{self.table_id}" has bad column "{col_id}__".')
                 for row in rows:
-                    uri = row[col_id]
+                    uri: str | None = row[col_id]
                     if uri in _uri_bytes:
                         continue
                     # Create the coroutine

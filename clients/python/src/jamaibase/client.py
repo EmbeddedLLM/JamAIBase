@@ -2262,7 +2262,7 @@ class _FileClientAsync(_ClientAsync):
         Get download URLs for raw files.
 
         Args:
-            uris (List[str]): List of file URIs to download.
+            uris (list[str]): List of file URIs to download.
 
         Returns:
             response (GetURLResponse): The response containing download information for the files.
@@ -2279,7 +2279,7 @@ class _FileClientAsync(_ClientAsync):
         Get download URLs for file thumbnails.
 
         Args:
-            uris (List[str]): List of file URIs to get thumbnails for.
+            uris (list[str]): List of file URIs to get thumbnails for.
 
         Returns:
             response (GetURLResponse): The response containing download information for the thumbnails.
