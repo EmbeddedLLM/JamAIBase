@@ -14,7 +14,7 @@ services:
     # https://docs.docker.com/compose/compose-file/compose-file-v3/#network_mode
     # network_mode: "host"
     # volumes:
-    #   - ${PWD}/docker_data/dragonfly:/data
+    #   - ../docker_data/dragonfly:/data
     networks:
       - jamai
 
@@ -22,7 +22,7 @@ services:
     image: otel/opentelemetry-collector-contrib:0.113.0
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
-      - ${PWD}/docker/otel_configs/otel-collector-config.yaml:/etc/otelcol/config.yaml
+      - ./otel_configs/otel-collector-config.yaml:/etc/otelcol/config.yaml
     networks:
       - jamai
 
@@ -32,7 +32,7 @@ services:
       - "--selfScrapeInterval=15s"
       - "--retentionPeriod=100y"
     volumes:
-      - ${PWD}/docker_data/vm_data:/victoria-metrics-data
+      - ../docker_data/vm_data:/victoria-metrics-data
     networks:
       - jamai
     healthcheck:
@@ -47,7 +47,7 @@ services:
     command:
       - "--auth.config=/etc/config.yml"
     volumes:
-      - ${PWD}/docker/vmauth/config.yml:/etc/config.yml
+      - ./vmauth/config.yml:/etc/config.yml
     networks:
       - jamai
     healthcheck:
@@ -62,7 +62,7 @@ services:
     command:
       - "--retentionPeriod=100y"
     volumes:
-      - ${PWD}/docker_data/vl_data:/victoria-logs-data
+      - ../docker_data/vl_data:/victoria-logs-data
     networks:
       - jamai
     healthcheck:
@@ -82,8 +82,8 @@ services:
       victorialogs:
         condition: service_healthy
     volumes:
-      - ${PWD}/docker/vmagent/streamingAggregation.yaml:/etc/config/streamingAggregation.yaml
-      - ${PWD}/docker_data/vmagent:/tmp/vmagent
+      - ./vmagent/streamingAggregation.yaml:/etc/config/streamingAggregation.yaml
+      - ../docker_data/vmagent:/tmp/vmagent
     command:
       # - "--promscrape.config=/etc/prometheus/prometheus.yml"
       - "--remoteWrite.url=http://vmauth:8427/vm/api/v1/write"
@@ -99,11 +99,11 @@ services:
   clickhouse:
     image: clickhouse:24.10.2.80
     volumes:
-      - ${PWD}/docker_data/ch_data:/var/lib/clickhouse/
-      - ${PWD}/docker_data/ch_logs:/var/log/clickhouse-server/
-      - ${PWD}/docker/ch_configs/clickhouse_config.xml:/etc/clickhouse-server/config.d/custom_config.xml
-      - ${PWD}/docker/ch_configs/clickhouse_user_config.xml:/etc/clickhouse-server/users.d/custom_config.xml
-      - ${PWD}/docker/ch_configs/create_ch_prom_db.sh:/docker-entrypoint-initdb.d/create_ch_prom_db.sh
+      - ../docker_data/ch_data:/var/lib/clickhouse/
+      - ../docker_data/ch_logs:/var/log/clickhouse-server/
+      - ./ch_configs/clickhouse_config.xml:/etc/clickhouse-server/config.d/custom_config.xml
+      - ./ch_configs/clickhouse_user_config.xml:/etc/clickhouse-server/users.d/custom_config.xml
+      - ./ch_configs/create_ch_prom_db.sh:/docker-entrypoint-initdb.d/create_ch_prom_db.sh
     environment:
       - CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS=1
       - CLICKHOUSE_USER=${CLICKHOUSE_USER:-owluser}
@@ -146,7 +146,7 @@ services:
       PGPASSWORD: owlpgpassword
       PGDATABASE: jamaibase_owl
     volumes:
-      - ${PWD}/docker_data/postgres_db:/var/lib/postgresql/data
+      - ../docker_data/postgres_db:/var/lib/postgresql/data
     networks:
       - jamai
     healthcheck:
@@ -201,7 +201,7 @@ services:
     networks:
       - jamai
     volumes:
-      - ${PWD}/docker_data/minio:/data
+      - ../docker_data/minio:/data
 
   docling:
     image: ghcr.io/embeddedllm/docling-serve:20250528
@@ -230,9 +230,9 @@ services:
     networks:
       - jamai
     volumes:
-      - ${PWD}/docker_data/owl/db:/usr/src/app/db
-      - ${PWD}/docker_data/owl/logs:/usr/src/app/logs
-      - ${PWD}/docker_data/owl/file:/usr/src/app/file
+      - ../docker_data/owl/db:/usr/src/app/db
+      - ../docker_data/owl/logs:/usr/src/app/logs
+      - ../docker_data/owl/file:/usr/src/app/file
     depends_on:
       dragonfly:
         condition: service_healthy

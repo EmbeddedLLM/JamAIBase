@@ -17,6 +17,10 @@ JamAI Base is an open-source RAG (Retrieval-Augmented Generation) backend platfo
 
 ![JamAI Base Demo](jamaibase.webp)
 
+## Migration Guide from v1 to v2
+
+Refer to [Migration Guide](./MIGRATION_GUIDE.md)
+
 ## Key Features
 
 - Embedded database (SQLite) and vector database (LanceDB)
