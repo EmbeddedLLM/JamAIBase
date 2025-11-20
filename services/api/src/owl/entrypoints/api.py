@@ -73,7 +73,7 @@ async def lifespan(app: FastAPI):
     # Close DB connection
     logger.info("Closing DB connection.")
     try:
-        await (await create_db_engine_async()).dispose()
+        await create_db_engine_async().dispose()
     except Exception as e:
         logger.warning(f"Failed to close DB connection: {repr(e)}")
 

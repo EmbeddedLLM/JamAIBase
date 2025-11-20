@@ -2,7 +2,6 @@ from contextlib import asynccontextmanager, contextmanager
 from functools import lru_cache
 from typing import AsyncGenerator, Callable, Generator
 
-from async_lru import alru_cache
 from loguru import logger
 from sqlalchemy import Connection, Engine, NullPool, TextClause, text
 from sqlalchemy.exc import OperationalError
@@ -66,8 +65,8 @@ def create_db_engine() -> Engine:
     return engine
 
 
-@alru_cache(maxsize=1)
-async def create_db_engine_async() -> AsyncEngine:
+@lru_cache(maxsize=1)
+def create_db_engine_async() -> AsyncEngine:
     engine = _create_db_engine(
         ENV_CONFIG.db_path,
         engine_create_fn=create_async_engine,
@@ -82,7 +81,7 @@ def yield_session() -> Generator[Session, None, None]:
 
 
 async def yield_async_session() -> AsyncGenerator[AsyncSession, None]:
-    async with AsyncSession(await create_db_engine_async(), expire_on_commit=False) as session:
+    async with AsyncSession(create_db_engine_async(), expire_on_commit=False) as session:
         yield session
 
 
@@ -133,7 +132,7 @@ async def reset_db(*, reset_max_users: int = 3):
         await session.exec(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
         await session.exec(text(f"CREATE SCHEMA {SCHEMA}"))
         # Reapply default privileges for the new schema OID
-        await _grant_auditor_privilege(await create_db_engine_async())
+        await _grant_auditor_privilege(create_db_engine_async())
         await session.commit()
         stmt = """
         SELECT schema_name
@@ -375,7 +374,7 @@ async def _migrate_verification_codes(engine: AsyncEngine) -> bool:
 
 
 async def migrate_db():
-    engine = await create_db_engine_async()
+    engine = create_db_engine_async()
     migrated = [
         await _create_schema(engine),
         await _grant_auditor_privilege(engine),

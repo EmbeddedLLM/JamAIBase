@@ -523,8 +523,11 @@ class DeploymentRouter:
                 hyperparams["reasoning_effort"] = "disable"
                 return
             elif ctx.inference_provider == CloudProvider.GEMINI:
+                # 3-Pro cannot disable thinking
+                if "3-pro" in ctx.routing_id:
+                    hyperparams["reasoning_effort"] = "low"
                 # 2.5 Pro cannot disable thinking
-                if "2.5-pro" in ctx.routing_id:
+                elif "2.5-pro" in ctx.routing_id:
                     hyperparams["thinking"] = {"type": "enabled", "budget_tokens": 128}
                 else:
                     hyperparams["reasoning_effort"] = "disable"
@@ -575,6 +578,13 @@ class DeploymentRouter:
                 hyperparams["reasoning_effort"] = reasoning_effort
                 return
             elif ctx.inference_provider in [CloudProvider.GEMINI, CloudProvider.ANTHROPIC]:
+                # Gemini 3-Pro recommends reasoning_effort
+                # https://ai.google.dev/gemini-api/docs/openai
+                if "3-pro" in ctx.routing_id:
+                    hyperparams["reasoning_effort"] = (
+                        "high" if reasoning_effort == "high" else "low"
+                    )
+                    return
                 if not thinking_budget:
                     if reasoning_effort == "low":
                         thinking_budget = 1024

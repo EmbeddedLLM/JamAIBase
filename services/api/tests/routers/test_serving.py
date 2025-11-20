@@ -822,36 +822,36 @@ def test_chat_reasoning_anthropic(setup: ServingContext, stream: bool):
     assert med_response.usage.reasoning_tokens > 0
 
 
-# @flaky(max_runs=3, min_passes=1)
-# @pytest.mark.parametrize("stream", **STREAM_PARAMS)
-# def test_chat_reasoning_gemini(setup: ServingContext, stream: bool):
-#     kwargs = dict(
-#         setup=setup,
-#         provider=CloudProvider.GEMINI,
-#         stream=stream,
-#         max_tokens=1024,
-#     )
-#     # Test default params
-#     response = _test_chat_reasoning_cloud(
-#         routing_id="gemini-2.5-flash-lite",
-#         **kwargs,
-#     )
-#     assert len(response.content) > 0
-#     # Test disabling reasoning
-#     response = _test_chat_reasoning_cloud(
-#         reasoning_effort="disable",
-#         routing_id="gemini-2.5-pro",
-#         **kwargs,
-#     )
-#     assert len(response.content) > 0
-#     # Test reasoning effort
-#     high_response = _test_chat_reasoning_cloud(
-#         thinking_budget=512,
-#         routing_id="gemini-2.5-flash",
-#         **kwargs,
-#     )
-#     assert len(high_response.content) > 0
-#     assert high_response.reasoning_tokens > 0
+@flaky(max_runs=3, min_passes=1)
+@pytest.mark.parametrize("stream", **STREAM_PARAMS)
+def test_chat_reasoning_gemini(setup: ServingContext, stream: bool):
+    kwargs = dict(
+        setup=setup,
+        provider=CloudProvider.GEMINI,
+        stream=stream,
+        max_tokens=1024,
+    )
+    # # Test default params
+    # response = _test_chat_reasoning_cloud(
+    #     routing_id="gemini-2.5-flash-lite",
+    #     **kwargs,
+    # )
+    # assert len(response.content) > 0
+    # # Test disabling reasoning
+    # response = _test_chat_reasoning_cloud(
+    #     reasoning_effort="disable",
+    #     routing_id="gemini-2.5-pro",
+    #     **kwargs,
+    # )
+    # assert len(response.content) > 0
+    # Test reasoning effort
+    response = _test_chat_reasoning_cloud(
+        reasoning_effort="low",
+        routing_id="gemini-3-pro-preview",
+        **kwargs,
+    )
+    assert len(response.content) > 0
+    assert response.reasoning_tokens > 0
 
 
 @flaky(max_runs=5, min_passes=1)

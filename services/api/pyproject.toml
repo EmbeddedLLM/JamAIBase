@@ -137,7 +137,7 @@ dependencies = [
     "lancedb==0.12.0",
     "langchain~=0.2.0",
     "limits~=3.14.0",
-    "litellm~=1.75.0",
+    "litellm~=1.80.0",
     "loguru~=0.7.0",
     "natsort[fast]~=8.4.0",
     "nltk~=3.9.0",

@@ -138,11 +138,13 @@ jobs:
         env:
           OWL_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OWL_COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          OWL_DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OWL_ELLM_API_KEY: ${{ secrets.CUSTOM_API_KEY }}
+          OWL_GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OWL_HYPERBOLIC_API_KEY: ${{ secrets.HYPERBOLIC_API_KEY }}
           OWL_JINA_AI_API_KEY: ${{ secrets.JINA_AI_API_KEY }}
           OWL_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OWL_TOGETHER_AI_API_KEY: ${{ secrets.TOGETHER_AI_API_KEY }}
-          OWL_ELLM_API_KEY: ${{ secrets.CUSTOM_API_KEY }}
           OWL_STRIPE_WEBHOOK_SECRET_TEST: ${{ secrets.OWL_STRIPE_WEBHOOK_SECRET_TEST }}
           OWL_STRIPE_PUBLISHABLE_KEY_TEST: ${{ secrets.OWL_STRIPE_PUBLISHABLE_KEY_TEST }}
 
