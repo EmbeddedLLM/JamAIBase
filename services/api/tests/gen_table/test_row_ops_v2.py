@@ -2149,3 +2149,163 @@ def test_multiturn_regen(
             chat = row.columns["AI"].content.strip()
             assert chat != "How are you?", f"{row.columns=}"
             assert "10" in chat, f"{row.columns=}"
+
+
+@pytest.mark.parametrize("table_type", TABLE_TYPES)
+@pytest.mark.parametrize("stream", **STREAM_PARAMS)
+def test_null_input_llm_output(
+    setup: ServingContext,
+    table_type: TableType,
+    stream: bool,
+):
+    """
+    Test that LLM output columns handle null input values correctly.
+    When an input column is None:
+    - For non-file columns (str, int, float): interpolated as "None" string
+    - For file columns (document, image, audio): interpolated as empty string ""
+    The LLM execution should complete normally without errors in both cases.
+    """
+    client = JamAI(user_id=setup.superuser_id, project_id=setup.project_id)
+    cols = [
+        ColumnSchemaCreate(id="input_text", dtype="str"),
+        ColumnSchemaCreate(id="input_int", dtype="int"),
+        ColumnSchemaCreate(id="input_float", dtype="float"),
+        ColumnSchemaCreate(id="input_document", dtype="document"),
+        ColumnSchemaCreate(id="input_image", dtype="image"),
+        ColumnSchemaCreate(id="input_audio", dtype="audio"),
+        ColumnSchemaCreate(
+            id="llm_output",
+            dtype="str",
+            gen_config=LLMGenConfig(
+                model=setup.lorem_llm_model_id,
+                system_prompt="You are a helpful assistant.",
+                prompt=(
+                    "Input text: ${input_text}, Input int: ${input_int}, Input float: ${input_float}. "
+                    "Document: ${input_document}, Image: ${input_image}, Audio: ${input_audio}. "
+                    "Respond with 'OK'."
+                ),
+                max_tokens=10,
+            ),
+        ),
+    ]
+    with create_table(client, table_type, cols=cols) as table:
+        # Test with various combinations of null and non-null inputs
+        data = [
+            # All null inputs
+            {
+                "input_text": None,
+                "input_int": None,
+                "input_float": None,
+                "input_document": None,
+                "input_image": None,
+                "input_audio": None,
+            },
+            # All non-null inputs
+            {
+                "input_text": "test",
+                "input_int": 42,
+                "input_float": 3.14,
+                "input_document": setup.document_uri,
+                "input_image": setup.image_uri,
+                "input_audio": setup.audio_uri,
+            },
+            # Mixed: null primitives, non-null files
+            {
+                "input_text": None,
+                "input_int": None,
+                "input_float": None,
+                "input_document": setup.document_uri,
+                "input_image": setup.image_uri,
+                "input_audio": setup.audio_uri,
+            },
+            # Mixed: non-null primitives, null files
+            {
+                "input_text": "test",
+                "input_int": 10,
+                "input_float": 2.5,
+                "input_document": None,
+                "input_image": None,
+                "input_audio": None,
+            },
+        ]
+        response = add_table_rows(
+            client, table_type, table.id, data, stream=stream, check_usage=False
+        )
+        assert len(response.rows) == len(data)
+
+        # Verify all rows completed without errors
+        rows = list_table_rows(client, table_type, table.id)
+        assert rows.total == len(data)
+
+        for i, row in enumerate(rows.values):
+            llm_output = row["llm_output"]
+            assert llm_output is not None, f"Row {i}: LLM output should not be None"
+            assert not llm_output.startswith("[ERROR]"), (
+                f"Row {i}: LLM output should not contain error: {llm_output}"
+            )
+            assert len(llm_output) > 0, f"Row {i}: LLM output should not be empty"
+
+
+@pytest.mark.parametrize("stream", **STREAM_PARAMS)
+async def test_null_input_python_fixed_function(
+    setup: ServingContext,
+    stream: bool,
+):
+    """
+    Test that Python fixed function output columns handle null input values correctly.
+    The Python code should be able to handle None values in the row data gracefully.
+    """
+    table_type = TableType.ACTION
+    client = JamAI(user_id=setup.superuser_id, project_id=setup.project_id)
+
+    # Python code that handles null values
+    python_code = """
+if row.get('input_str') is None:
+    row['output'] = 'Input was None'
+else:
+    row['output'] = f"Input was: {row['input_str']}"
+"""
+
+    cols = [
+        ColumnSchemaCreate(id="input_str", dtype="str"),
+        ColumnSchemaCreate(id="input_int", dtype="int"),
+        ColumnSchemaCreate(
+            id="output",
+            dtype="str",
+            gen_config=PythonGenConfig(python_code=python_code),
+        ),
+    ]
+    with create_table(client, table_type, cols=cols) as table:
+        data = [
+            {"input_str": None, "input_int": None},
+            {"input_str": "test value", "input_int": 42},
+            {"input_str": None, "input_int": 10},
+            {"input_str": "", "input_int": None},
+        ]
+        response = add_table_rows(
+            client, table_type, table.id, data, stream=stream, check_usage=False
+        )
+        assert len(response.rows) == len(data)
+
+        rows = list_table_rows(client, table_type, table.id)
+        row_ids = [r.row_id for r in response.rows]
+        assert rows.total == len(data)
+
+        assert rows.values[0]["output"] == "Input was None"
+        assert rows.values[1]["output"] == "Input was: test value"
+        assert rows.values[2]["output"] == "Input was None"
+        assert rows.values[3]["output"] == "Input was: "
+
+        # Test regen with null values
+        response = regen_table_rows(
+            client, table_type, table.id, row_ids, stream=stream, check_usage=False
+        )
+        assert len(response.rows) == len(data)
+
+        rows = list_table_rows(client, table_type, table.id)
+        assert rows.total == len(data)
+
+        assert rows.values[0]["output"] == "Input was None"
+        assert rows.values[1]["output"] == "Input was: test value"
+        assert rows.values[2]["output"] == "Input was None"
+        assert rows.values[3]["output"] == "Input was: "
