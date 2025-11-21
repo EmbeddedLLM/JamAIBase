@@ -31,14 +31,14 @@ image: jamai/owl:v1
 
 ```
 cd /path/to/your/v1/dir
-docker compose --env-file .env -f docker/compose.cpu.yml up --scale infinity=0 --scale starling=0 --scale frontend=0 --scale docling=0
+docker compose -p v1 --env-file .env -f docker/compose.cpu.yml up --scale infinity=0 --scale starling=0 --scale frontend=0 --scale docling=0
 ```
 
 > if on windows (powershell)
 
 ```
 cd C:\path\to\your\v1\dir
-docker compose -p jamai --env-file .env -f docker/compose.cpu.yml up --scale infinity=0 --scale starling=0 --scale frontend=0 --scale docling=0
+docker compose -p v1 --env-file .env -f docker/compose.cpu.yml up --scale infinity=0 --scale starling=0 --scale frontend=0 --scale docling=0
 ```
 
 ---
