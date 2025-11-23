@@ -228,9 +228,6 @@ def test_update_org():
         assert isinstance(org, OrganizationRead)
         assert org.name == "Updated Name"
         assert org.timezone == "Asia/Kuala_Lumpur"
-        with pytest.raises(BadInputError, match="currency"):
-            # Only USD is accepted for now
-            client.organizations.update_organization(ctx.org.id, dict(currency="EUR"))
         with pytest.raises(BadInputError, match="timezone"):
             # Strict timezone validation
             client.organizations.update_organization(

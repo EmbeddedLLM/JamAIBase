@@ -246,6 +246,24 @@ async def _create_pg_functions(engine: AsyncEngine) -> bool:
     return False
 
 
+async def _check_table_exists(
+    conn: Connection,
+    schema: str,
+    table_name: str,
+) -> bool:
+    return (
+        await conn.execute(
+            text(
+                (
+                    f"SELECT EXISTS ("
+                    f"SELECT FROM information_schema.tables WHERE table_schema = '{schema}' AND table_name = '{table_name}'"
+                    ");"
+                )
+            )
+        )
+    ).scalar()
+
+
 async def _check_column_exists(
     conn: Connection,
     table_name: str,
@@ -373,6 +391,105 @@ async def _migrate_verification_codes(engine: AsyncEngine) -> bool:
     return True
 
 
+async def _migrate_reasoning_jsonb_keys(engine: AsyncEngine) -> bool:
+    """
+    Migrate JSONB columns ending with underscore in generative table schemas.
+    Update the key "reasoning" to "reasoning_content" in JSONB data.
+    Targets:
+    - Schemas matching: proj_*_action, proj_*_knowledge, proj_*_chat
+    - Tables excluding: TableMetadata, ColumnMetadata
+    - Columns: ending with underscore and of type JSONB
+    """
+    marker_schema = "proj_dummy_action"
+    marker_table = "marker"
+    async with engine.begin() as conn:
+        if await _check_table_exists(
+            conn,
+            schema=marker_schema,
+            table_name=marker_table,
+        ):
+            logger.info("Skipping reasoning content migration.")
+            return False
+
+    # Create marker table
+    async with engine.begin() as conn:
+        sql = text(
+            (
+                f"""
+                DROP TABLE IF EXISTS "{marker_schema}".{marker_table};
+                CREATE SCHEMA IF NOT EXISTS "{marker_schema}";
+                CREATE TABLE IF NOT EXISTS "{marker_schema}".{marker_table} (
+                    "test col" INT PRIMARY KEY,
+                    "test col_" JSONB
+                );
+
+                INSERT INTO "{marker_schema}".{marker_table} ("test col", "test col_") VALUES
+                """
+                """
+                (0, '{"a": 9}'),
+                (1, '{"reasoning": "Thinking", "a": 9}'),
+                (2, '{"reasoning": "Yes", "reasoning_content": "Thinking", "a": 9}');
+                """
+            )
+        )
+        await conn.execute(sql)
+        await conn.commit()
+
+    # We use '=' instead of ':=' for assignment to avoid SQLAlchemy treating it as a bind parameter.
+    migration_sql = text("""
+        DO $$
+        DECLARE
+            rec RECORD;
+            rows_updated INTEGER;
+            total_updates INTEGER = 0;
+        BEGIN
+            FOR rec IN
+                SELECT table_schema, table_name, column_name
+                FROM information_schema.columns
+                WHERE table_schema ~ '^proj_.*_(action|knowledge|chat)$'
+                    AND table_name NOT IN ('TableMetadata', 'ColumnMetadata')
+                    AND column_name LIKE '%_'
+                    AND data_type = 'jsonb'
+                ORDER BY column_name
+            LOOP
+                EXECUTE format(
+                    'UPDATE %I.%I
+                     SET %I = (jsonb_build_object(''reasoning_content'', %I -> ''reasoning'') || %I) - ''reasoning''
+                     WHERE %I ? ''reasoning''',
+                    rec.table_schema,
+                    rec.table_name,
+                    rec.column_name,
+                    rec.column_name,
+                    rec.column_name,
+                    rec.column_name
+                );
+                GET DIAGNOSTICS rows_updated = ROW_COUNT;
+                IF rows_updated > 0 THEN
+                    total_updates = total_updates + rows_updated;
+                    RAISE NOTICE 'Updated % rows in %.%.% (reasoning -> reasoning_content)',
+                        rows_updated, rec.table_schema, rec.table_name, rec.column_name;
+                END IF;
+            END LOOP;
+            IF total_updates > 0 THEN
+                RAISE NOTICE 'Reasoning JSONB migration completed. Total rows updated: %', total_updates;
+            END IF;
+        END $$;
+    """)
+    async with engine.begin() as conn:
+        await conn.execute(migration_sql)
+        res = (
+            await conn.execute(
+                text(f'SELECT * FROM "{marker_schema}".{marker_table} ORDER BY "test col";')
+            )
+        ).all()
+        assert res[0][1] == {"a": 9}
+        assert res[1][1] == {"reasoning_content": "Thinking", "a": 9}
+        assert res[2][1] == {"reasoning_content": "Thinking", "a": 9}
+        await conn.commit()
+        logger.info("Reasoning JSONB migration completed successfully.")
+        return True
+
+
 async def migrate_db():
     engine = create_db_engine_async()
     migrated = [
@@ -383,6 +500,7 @@ async def migrate_db():
         await _add_egress_updated_at_column(engine),
         await _add_project_description_column(engine),
         await _migrate_verification_codes(engine),
+        await _migrate_reasoning_jsonb_keys(engine),
     ]
     if any(migrated):
         logger.success("DB migrations performed.")

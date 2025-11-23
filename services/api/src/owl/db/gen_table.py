@@ -3620,6 +3620,7 @@ class GenerativeTableCore:
             else:
                 user_prompt = None
             row_id = str(row["ID"])
+            state = row.get(f"{column_id}_", {})
             thread.append(
                 ChatThreadEntry.user(
                     self.interpolate_column(gen_config.prompt, row),
@@ -3630,7 +3631,9 @@ class GenerativeTableCore:
             thread.append(
                 ChatThreadEntry.assistant(
                     row[column_id],
-                    references=row.get(f"{column_id}_", {}).get("references", None),
+                    references=state.get("references", None),
+                    reasoning_content=state.get("reasoning_content", None),
+                    reasoning_time=state.get("reasoning_time", None),
                     row_id=row_id,
                 )
             )

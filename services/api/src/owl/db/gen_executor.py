@@ -692,7 +692,9 @@ class GenExecutor(_Executor):
 
         # Perform completion
         result = ""
+        reasoning = ""
         references = None
+        reasoning_time = None
         try:
             # Error circuit breaker
             self._check_upstream_error(self._extract_upstream_columns(body.prompt))
@@ -723,8 +725,6 @@ class GenExecutor(_Executor):
             )
             req, references = await self._setup_rag(req)
             if self._stream:
-                reasoning = ""
-                result = ""
                 if references is not None:
                     ref = CellReferencesResponse(
                         **references.model_dump(exclude=["object"]),
@@ -738,12 +738,16 @@ class GenExecutor(_Executor):
                             row_id=self._row_id,
                         )
                     )
+
+                t0 = perf_counter()
                 async for chunk in self.lm.chat_completion_stream(
                     messages=req.messages,
                     **req.hyperparams,
                 ):
                     reasoning += chunk.reasoning_content
                     result += chunk.content
+                    if chunk.content and reasoning_time is None:
+                        reasoning_time = perf_counter() - t0
                     # if chunk.content is None and chunk.usage is None:
                     #     continue
                     chunk = CellCompletionResponse(
@@ -820,6 +824,8 @@ class GenExecutor(_Executor):
                 state["references"] = references.model_dump(mode="json")
             if reasoning:
                 state["reasoning_content"] = reasoning
+            if reasoning_time is not None:
+                state["reasoning_time"] = reasoning_time
             self._column_dict[state_col] = state
             await self._signal_task_completion(task, result)
             self.log(f'Streamed completion for column "{output_column}": <{mask_string(result)}>.')

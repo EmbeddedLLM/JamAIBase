@@ -1010,10 +1010,6 @@ class OrganizationUpdate(_BaseModel):
         max_length=255,
         description="Organization name.",
     )
-    currency: ISO4217 = Field(
-        "USD",
-        description="Currency of the organization.",
-    )
     timezone: TimeZoneName | None = Field(
         None,
         description="Timezone specifier.",
@@ -1030,13 +1026,6 @@ class OrganizationUpdate(_BaseModel):
         v = {k.strip().lower(): v.strip() for k, v in v.items() if v.strip()}
         return v
 
-    @field_validator("currency", mode="after")
-    @classmethod
-    def validate_currency(cls, v: str) -> str:
-        if v != "USD":
-            raise ValueError("Currently only USD is supported.")
-        return v
-
 
 class OrganizationCreate(OrganizationUpdate):
     name: SanitisedNonEmptyStr = Field(
@@ -1048,6 +1037,10 @@ class OrganizationCreate(OrganizationUpdate):
 class Organization_(OrganizationCreate, _TableBase):
     id: str = Field(
         description="Organization ID.",
+    )
+    currency: ISO4217 = Field(
+        "USD",
+        description="Currency of the organization.",
     )
     created_by: str = Field(
         description="ID of the user that created this organization.",
