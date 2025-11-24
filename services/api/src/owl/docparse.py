@@ -510,11 +510,12 @@ class DoclingLoader(BaseLoader):
                 time_slept += sleep_for
             else:  # Executed if the while loop completes without a 'break'
                 logger.error(
-                    f"{self.request_id} - Polling timed out for Docling-Serve task {task_id} after {time_slept} seconds."
+                    (
+                        f'Docling-Serve task "{task_id}" for document "{file_name}" '
+                        f"timed out after {time_slept} seconds. ({self.request_id})"
+                    )
                 )
-                raise UnexpectedError(
-                    f"Polling timed out for Docling-Serve task {task_id} after {time_slept} seconds."
-                )
+                raise UnexpectedError(f'Your document "{file_name}" took too long to parse.')
 
             # Step 3: Fetch result
             result_url = f"{self.docling_serve_url}/v1alpha/result/{task_id}"

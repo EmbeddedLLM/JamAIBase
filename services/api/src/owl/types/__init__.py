@@ -11,6 +11,7 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     Field,
+    field_validator,
     model_validator,
 )
 
@@ -422,12 +423,12 @@ class ColumnSchemaCreate(t.ColumnSchemaCreate):
         description=f"Column data type, one of {list(map(str, ColumnDtypeCreate))}.",
     )
 
-    @model_validator(mode="before")
+    @field_validator("dtype", mode="before")
     @classmethod
-    def map_file_dtype_to_image(cls, data: dict[str, Any]) -> dict[str, Any]:
-        if data.get("dtype", "") == "file":
-            data["dtype"] = ColumnDtype.IMAGE
-        return data
+    def map_file_dtype_to_image(cls, v: Any) -> Any:
+        if v == "file":
+            v = ColumnDtype.IMAGE
+        return v
 
 
 class TableSchemaCreate(t.TableSchemaCreate):
