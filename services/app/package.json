@@ -34,7 +34,7 @@
 		"@electron-forge/maker-zip": "^7.4.0",
 		"@faker-js/faker": "^8.4.1",
 		"@inlang/cli": "^3.0.0",
-		"@inlang/paraglide-js": "2.0.13",
+		"@inlang/paraglide-js": "^2.5.0",
 		"@lucide/svelte": "^0.482.0",
 		"@playwright/test": "^1.28.1",
 		"@sveltejs/adapter-node": "^5.0.1",

@@ -13,6 +13,7 @@
 
 	import ActionTable from '$lib/components/tables/ActionTable.svelte';
 	import { ColumnSettings, TablePagination, TableSorter } from '$lib/components/tables/(sub)';
+	import OutputDetailsWrapper from '$lib/components/output-details/OutputDetailsWrapper.svelte';
 	import { ActionsDropdown, GenerateButton } from '../../(components)';
 	import { AddColumnDialog, DeleteDialogs } from '../../(dialogs)';
 	import SearchBar from '$lib/components/preset/SearchBar.svelte';
@@ -43,7 +44,7 @@
 
 				if (tableData) tableState.setTemplateCols(tableData.cols);
 				if (browser && tableData) {
-					const savedColSizes = await db.action_table.get(page.params.table_id);
+					const savedColSizes = await db.action_table.get(page.params.table_id ?? '');
 					if (savedColSizes) {
 						tableState.colSizes = savedColSizes.columns;
 					}
@@ -54,6 +55,24 @@
 				tableRowsState.rows = structuredClone(tableRowsRes.data?.rows); // Client reorder rows
 				tableRowsState.loading = false;
 				tableRowsCount = tableRowsRes.data?.total_rows;
+
+				if (tableState.showOutputDetails.open) {
+					const activeRow = tableRowsState.rows?.find(
+						(row) => row.ID === tableState.showOutputDetails.activeCell?.rowID
+					);
+					const activeCell = activeRow?.[tableState.showOutputDetails.activeCell?.columnID ?? ''];
+					if (activeRow && activeCell) {
+						tableState.showOutputDetails = {
+							...tableState.showOutputDetails,
+							message: {
+								content: activeCell.value,
+								chunks: activeCell.references?.chunks ?? []
+							},
+							reasoningContent: activeCell.reasoning_content ?? null,
+							reasoningTime: activeCell.reasoning_time ?? null
+						};
+					}
+				}
 			})
 		]).then(() => (tableLoaded = true));
 	};
@@ -290,5 +309,6 @@
 	<ColumnSettings {tableData} {refetchTable} tableType="action" />
 </section>
 
+<OutputDetailsWrapper bind:showOutputDetails={tableState.showOutputDetails} />
 <AddColumnDialog bind:isAddingColumn {tableData} {refetchTable} tableType="action" />
 <DeleteDialogs bind:isDeletingRow {refetchTable} tableType="action" />

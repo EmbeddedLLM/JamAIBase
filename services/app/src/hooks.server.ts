@@ -5,7 +5,6 @@ import logger from '$lib/logger';
 import { paraglideMiddleware } from '$lib/paraglide/server';
 import { getPrices } from '$lib/server/nodeCache';
 import type { Auth0User, User } from '$lib/types';
-import type { Session } from '@auth/sveltekit';
 import { error, redirect, type Handle } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import { Agent } from 'undici';
@@ -66,11 +65,9 @@ const handleApiProxy: Handle = async ({ event }) => {
 
 	event.request.headers.delete('connection');
 
-	if (event.locals.user) {
-		if (!ossMode) {
-			event.request.headers.append('Authorization', `Bearer ${OWL_SERVICE_KEY}`);
-		}
-		event.request.headers.append('x-user-id', event.locals.user.id);
+	if (event.locals.user || ossMode) {
+		event.request.headers.append('Authorization', `Bearer ${OWL_SERVICE_KEY}`);
+		event.request.headers.append('x-user-id', event.locals.user?.id ?? '0');
 	}
 
 	if (!event.request.headers.get('x-project-id') && event.cookies.get('activeProjectId')) {
@@ -111,7 +108,6 @@ export const mainHandle: Handle = async ({ event, resolve }) => {
 	locals.auth0Mode = auth0Mode;
 
 	let auth0UserData: Auth0User;
-	let session: Session | null;
 	if (auth0Mode) {
 		//? Workaround for event.platform unavailable in development
 		if (dev) {
@@ -125,14 +121,12 @@ export const mainHandle: Handle = async ({ event, resolve }) => {
 			// @ts-expect-error missing type
 			auth0UserData = event.platform?.req?.res?.locals?.user;
 		}
-	} else {
-		session = await locals.auth();
 	}
 
 	//@ts-expect-error asd
-	if (auth0UserData || session) {
+	if (auth0UserData || ossMode) {
 		//@ts-expect-error asd
-		let userApiData = await getUserApiData(auth0UserData?.sub ?? session?.user?.id);
+		let userApiData = await getUserApiData(auth0UserData?.sub ?? '0');
 		if (!userApiData.data) {
 			if (auth0Mode && userApiData.status === 404) {
 				const userUpsertRes = await fetch(`${OWL_URL}/api/v2/users`, {
@@ -199,6 +193,7 @@ export const mainHandle: Handle = async ({ event, resolve }) => {
 	} */
 
 	if (
+		!ossMode &&
 		!url.pathname.startsWith('/api') &&
 		!url.pathname.startsWith('/login') &&
 		!url.pathname.startsWith('/register')

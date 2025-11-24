@@ -1,13 +1,9 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
+	import { AudioLines } from '@lucide/svelte';
 	import * as PDFObject from 'pdfobject';
 	import csv from 'csvtojson';
-	import showdown from 'showdown';
-	//@ts-expect-error - no types
-	import showdownHtmlEscape from 'showdown-htmlescape';
-	import '../../../showdown-theme.css';
-	import { codeblock, codehighlight, table as tableExtension } from '$lib/showdown';
-	import { AudioLines } from '@lucide/svelte';
+	import converter from '$lib/showdown';
 	import logger from '$lib/logger';
 	import { fileColumnFiletypes } from '$lib/constants';
 
@@ -49,15 +45,6 @@
 			});
 		}
 	}
-
-	const converter = new showdown.Converter({
-		tables: true,
-		tasklists: true,
-		disableForced4SpacesIndentedSublists: true,
-		strikethrough: true,
-		ghCompatibleHeaderId: true,
-		extensions: [showdownHtmlEscape, codeblock, codehighlight, tableExtension]
-	});
 
 	async function loadPreview() {
 		if (!fileUrl) return;

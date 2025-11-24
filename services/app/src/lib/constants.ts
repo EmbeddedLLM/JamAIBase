@@ -146,6 +146,7 @@ const LLM_GEN_CONFIG_DEFAULT = {
 	max_tokens: 1000,
 	top_p: 0.1
 } as const;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const CODE_GEN_CONFIG_DEFAULT = {
 	object: 'gen_config.code',
 	source_column: ''
@@ -266,6 +267,8 @@ export const jamaiApiVersion = '0.5.0';
 export const actionRowsPerPage = 100;
 export const knowledgeRowsPerPage = 20;
 export const chatRowsPerPage = 100;
+
+export const reasoningEffortEnum = ['disabled', 'minimal', 'low', 'medium', 'high'];
 
 //* Non-local
 export const userRoles = ['GUEST', 'MEMBER', 'ADMIN'] as const;

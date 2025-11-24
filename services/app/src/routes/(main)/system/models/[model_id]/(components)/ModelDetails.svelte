@@ -402,14 +402,28 @@
 				<div
 					class="overflow-auto rounded-xl bg-gray-100 [&>div>*]:p-4 [&>div]:grid [&>div]:grid-cols-[minmax(18rem,_2fr)_minmax(20rem,_5fr)]"
 				>
-					<div class="border-b text-sm last:border-b-0">
-						<p class="text-gray-500">Cost in USD per million input tokens</p>
-						<p class="text-gray-700">{model.llm_input_cost_per_mtoken}</p>
-					</div>
-					<div class="border-b text-sm last:border-b-0">
-						<p class="text-gray-500">Cost in USD per million output tokens</p>
-						<p class="text-gray-700">{model.llm_output_cost_per_mtoken}</p>
-					</div>
+					{#if modelType === MODEL_TYPES.llm.toLowerCase()}
+						<div class="border-b text-sm last:border-b-0">
+							<p class="text-gray-500">Cost in USD per million input tokens</p>
+							<p class="text-gray-700">{model.llm_input_cost_per_mtoken}</p>
+						</div>
+						<div class="border-b text-sm last:border-b-0">
+							<p class="text-gray-500">Cost in USD per million output tokens</p>
+							<p class="text-gray-700">{model.llm_output_cost_per_mtoken}</p>
+						</div>
+					{/if}
+					{#if modelType === MODEL_TYPES.embed.toLowerCase()}
+						<div class="border-b text-sm last:border-b-0">
+							<p class="text-gray-500">Cost in USD per million embedding tokens</p>
+							<p class="text-gray-700">{model.embedding_cost_per_mtoken}</p>
+						</div>
+					{/if}
+					{#if modelType === MODEL_TYPES.rerank.toLowerCase()}
+						<div class="border-b text-sm last:border-b-0">
+							<p class="text-gray-500">Cost in USD for a thousand searches</p>
+							<p class="text-gray-700">{model.reranking_cost_per_ksearch}</p>
+						</div>
+					{/if}
 				</div>
 			{/if}
 		</div>

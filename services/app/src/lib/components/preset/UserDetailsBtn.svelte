@@ -109,13 +109,15 @@
 					</a>
 				{/snippet}
 			</DropdownMenu.Item>
-			<DropdownMenu.Item
-				onclick={page.data.auth0Mode ? () => goto('/logout') : () => signOut()}
-				class="!text-[#F04438]"
-			>
-				<LogoutIcon class="h-4 w-4 [&_path]:stroke-[1.2]" />
-				<span>Sign out</span>
-			</DropdownMenu.Item>
+			{#if !page.data.ossMode}
+				<DropdownMenu.Item
+					onclick={page.data.auth0Mode ? () => goto('/logout') : () => signOut()}
+					class="!text-[#F04438]"
+				>
+					<LogoutIcon class="h-4 w-4 [&_path]:stroke-[1.2]" />
+					<span>Sign out</span>
+				</DropdownMenu.Item>
+			{/if}
 		</DropdownMenu.Group>
 	</DropdownMenu.Content>
 </DropdownMenu.Root>

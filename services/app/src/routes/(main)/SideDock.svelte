@@ -342,41 +342,43 @@
 
 			<hr class="my-1 border-[#E5E5E5] transition-[margin] data-dark:border-[#484C55]" />
 
-			<Button
-				variant="ghost"
-				title={m['left_dock.logout']()}
-				onclick={page.data.auth0Mode ? () => goto('/logout') : signOut}
-				class="group/link relative flex w-full flex-[0_0_auto] items-center {$showDock ||
-				!bigScreen.current
-					? 'h-9 rounded-md px-4 py-3'
-					: 'h-11 rounded-none p-3 hover:bg-transparent data-dark:hover:bg-transparent'} whitespace-nowrap text-[#666] transition-all data-dark:text-white"
-			>
-				<div
-					class={cn(
-						'absolute left-[1.5px] h-11 w-11 rounded-full',
-						$showDock
-							? 'opacity-0 [transition:opacity_100ms_ease-in-out,_background-color_150ms]'
-							: 'opacity-100 [transition:opacity_150ms_ease-in-out_160ms,_background-color_150ms]',
-
-						'group-hover/link:bg-[#F2F4F7] data-dark:group-hover/link:bg-white/[0.04]'
-					)}
-				></div>
-
-				<LogoutIcon
-					class="absolute flex-[0_0_auto] {$showDock || !bigScreen.current
-						? 'left-4 h-4 w-4 duration-100'
-						: 'left-1/2 h-[20px] w-[20px] -translate-x-1/2 delay-150 duration-200'} text-[#344054] transition-all data-dark:text-white [&_path]:stroke-[1.2]"
-				/>
-				<span
-					class="absolute left-12 {$showDock
-						? 'opacity-100'
-						: 'pointer-events-none opacity-0'} text-sm font-medium text-[#344054] transition-[opacity,left] duration-200 data-dark:text-white"
+			{#if !page.data.ossMode}
+				<Button
+					variant="ghost"
+					title={m['left_dock.logout']()}
+					onclick={page.data.auth0Mode ? () => goto('/logout') : signOut}
+					class="group/link relative flex w-full flex-[0_0_auto] items-center {$showDock ||
+					!bigScreen.current
+						? 'h-9 rounded-md px-4 py-3'
+						: 'h-11 rounded-none p-3 hover:bg-transparent data-dark:hover:bg-transparent'} whitespace-nowrap text-[#666] transition-all data-dark:text-white"
 				>
-					{m['left_dock.logout']()}
-				</span>
-			</Button>
+					<div
+						class={cn(
+							'absolute left-[1.5px] h-11 w-11 rounded-full',
+							$showDock
+								? 'opacity-0 [transition:opacity_100ms_ease-in-out,_background-color_150ms]'
+								: 'opacity-100 [transition:opacity_150ms_ease-in-out_160ms,_background-color_150ms]',
 
-			<hr class="mt-1 border-[#E5E5E5] data-dark:border-[#484C55]" />
+							'group-hover/link:bg-[#F2F4F7] data-dark:group-hover/link:bg-white/[0.04]'
+						)}
+					></div>
+
+					<LogoutIcon
+						class="absolute flex-[0_0_auto] {$showDock || !bigScreen.current
+							? 'left-4 h-4 w-4 duration-100'
+							: 'left-1/2 h-[20px] w-[20px] -translate-x-1/2 delay-150 duration-200'} text-[#344054] transition-all data-dark:text-white [&_path]:stroke-[1.2]"
+					/>
+					<span
+						class="absolute left-12 {$showDock
+							? 'opacity-100'
+							: 'pointer-events-none opacity-0'} text-sm font-medium text-[#344054] transition-[opacity,left] duration-200 data-dark:text-white"
+					>
+						{m['left_dock.logout']()}
+					</span>
+				</Button>
+
+				<hr class="mt-1 border-[#E5E5E5] data-dark:border-[#484C55]" />
+			{/if}
 
 			<!-- Highlighter -->
 			<!-- <div

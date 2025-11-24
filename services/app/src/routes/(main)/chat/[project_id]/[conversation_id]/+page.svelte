@@ -7,25 +7,23 @@
 		ArrowUp,
 		AudioLines,
 		Check,
+		ChevronRight,
 		Copy,
 		FileText,
 		Trash2
 	} from '@lucide/svelte';
 	import { page } from '$app/state';
 	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
+	import converter from '$lib/showdown';
 	import logger from '$lib/logger';
-	import showdown from 'showdown';
-	//@ts-expect-error - no types
-	import showdownHtmlEscape from 'showdown-htmlescape';
-	import '../../../../../showdown-theme.css';
-	import { codeblock, codehighlight, table as tableExtension } from '$lib/showdown';
-	import { cn } from '$lib/utils';
+	import { citationReplacer, cn } from '$lib/utils';
 	import { chatState } from '../../chat.svelte';
 	import { chatCitationPattern, fileColumnFiletypes } from '$lib/constants';
-	import type { ChatReferences, ChatThread } from '$lib/types';
+	import type { ChatReferences, ChatThread, ReferenceChunk } from '$lib/types';
 
-	import { ChatControls, DeleteConvDialog, ReferencesSection } from './(components)';
+	import { ChatControls, DeleteConvDialog } from './(components)';
 	import { ChatFilePreview, ChatThumbsFetch } from '$lib/components/chat';
+	import OutputDetails from '$lib/components/output-details/OutputDetails.svelte';
 	import RowStreamIndicator from '$lib/components/preset/RowStreamIndicator.svelte';
 	import UserDetailsBtn from '$lib/components/preset/UserDetailsBtn.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
@@ -38,15 +36,6 @@
 	import TuneIcon from '$lib/icons/TuneIcon.svelte';
 
 	const { PUBLIC_JAMAI_URL } = publicEnv;
-
-	const converter = new showdown.Converter({
-		tables: true,
-		tasklists: true,
-		disableForced4SpacesIndentedSublists: true,
-		strikethrough: true,
-		ghCompatibleHeaderId: true,
-		extensions: [showdownHtmlEscape, codeblock, codehighlight, tableExtension]
-	});
 
 	let longestThreadCol = $derived(
 		Object.keys(chatState.messages).reduce(
@@ -105,17 +94,6 @@
 	let showChatControls = $state<{ open: boolean; value: string | null }>({
 		open: false,
 		value: null
-	});
-	let showReferences = $state<{
-		open: boolean;
-		message: { columnID: string; rowID: string } | null;
-		expandChunk: string | null;
-		preview: NonNullable<ChatThread['thread'][number]['references']>['chunks'][number] | null;
-	}>({
-		open: false,
-		message: null,
-		expandChunk: null,
-		preview: null
 	});
 
 	let isResizing = $state(false);
@@ -196,12 +174,26 @@
 			const chunkID = target.getAttribute('data-citation');
 			if (columnID && rowID && chunkID) {
 				showChatControls = { open: false, value: null };
-				showReferences = {
+
+				const threadItem = chatState.messages[columnID]?.thread?.find(
+					(item) => item.references && item.row_id === rowID
+				);
+				chatState.showOutputDetails = {
 					open: true,
+					activeCell: { columnID, rowID },
+					activeTab: 'references',
 					message: {
-						columnID,
-						rowID
+						content:
+							typeof threadItem?.content === 'string'
+								? threadItem.content
+								: threadItem?.content
+										.filter((c) => c.type === 'text')
+										.map((c) => c.text)
+										.join('') ?? '',
+						chunks: threadItem?.references?.chunks ?? []
 					},
+					reasoningContent: threadItem?.reasoning_content ?? null,
+					reasoningTime: threadItem?.reasoning_time ?? null,
 					expandChunk: chunkID,
 					preview: null
 				};
@@ -322,30 +314,10 @@
 		}
 	}
 
-	function citationReplacer(
-		match: string,
-		word: string,
-		columnID: string,
-		rowID: string,
-		references?: ChatReferences | null
-	) {
-		const citationIndices = match.match(/@(\d+)/g)?.map((m) => m.substring(1)) ?? [];
-		return citationIndices
-			.map(
-				(idx) =>
-					`<button 
-						data-column="${columnID}" 
-						data-row="${rowID}" 
-						data-citation="${(references ?? chatState.messages[columnID]?.thread?.find((item) => item.row_id === rowID && item.references)?.references)?.chunks[Number(idx)]?.chunk_id}" 
-						class="citation-btn aspect-square h-5 w-5 rounded-full bg-[#FFD8DF] text-xs text-[#475467]"
-					>${Number(idx) + 1}</button>`
-			)
-			.join(' ');
-	}
-
 	beforeNavigate(() => {
 		chatState.resetChat();
-		showReferences = { ...showReferences, open: false, preview: null };
+		showChatControls = { ...showChatControls, open: false };
+		chatState.showOutputDetails = { ...chatState.showOutputDetails, open: false, preview: null };
 		rowThumbs = {};
 	});
 
@@ -425,15 +397,15 @@
 			handleSelectFiles([...(e.dataTransfer?.files ?? [])]);
 		}
 	}}
-	class="relative grid {showReferences.open || showChatControls.open
-		? showReferences.preview
+	class="relative grid {chatState.showOutputDetails.open || showChatControls.open
+		? chatState.showOutputDetails.preview
 			? 'grid-cols-[unset] grid-rows-[min-content_minmax(0,_auto)_60vh] md:grid-cols-[minmax(0,_auto)_48rem] md:grid-rows-[unset]'
 			: 'grid-cols-[unset] grid-rows-[min-content_minmax(0,_auto)_60vh] md:grid-cols-[minmax(0,_auto)_24rem] md:grid-rows-[unset]'
 		: 'grid-cols-[unset] grid-rows-[min-content_minmax(0,_auto)_0rem] md:grid-cols-[minmax(0,_auto)_0rem] md:grid-rows-[unset]'} h-1 grow bg-[#F2F4F7] transition-[grid-template-columns,grid-template-rows] duration-300 data-dark:bg-[#1E2024]"
 >
 	{#if chatState.conversation}
 		<div
-			class="-top-[3.25rem] left-36 flex w-[calc(100%-1rem)] items-center justify-between gap-2 pb-2 pl-0 md:absolute md:w-[calc(100%-9rem)]"
+			class="-top-[3.25rem] left-36 flex w-[calc(100%-1rem)] items-center justify-between gap-2 pb-2 pl-3 md:absolute md:w-[calc(100%-9rem)]"
 		>
 			<div class="group/title flex items-center gap-1 text-sm sm:text-base">
 				{@render chatHistoryIcon('flex-[0_0_auto] sm:h-5 sm:w-5 h-[18px] w-[18px]')}
@@ -455,8 +427,8 @@
 
 							chatState.editConversationTitle(
 								newTitle,
-								page.params.conversation_id,
-								page.params.project_id,
+								page.params.conversation_id ?? '',
+								page.params.project_id ?? '',
 								() => {
 									if (chatState.conversation) chatState.conversation.title = newTitle ?? '';
 									isEditingConvTitle = false;
@@ -509,7 +481,7 @@
 						<Button
 							variant="ghost"
 							title="Delete conversation"
-							onclick={() => (isDeletingConv = page.params.conversation_id)}
+							onclick={() => (isDeletingConv = page.params.conversation_id ?? '')}
 							class="h-7 w-7 p-0 !text-[#F04438]"
 						>
 							<Trash2 class="h-3.5 w-3.5" />
@@ -532,7 +504,11 @@
 					<Button
 						variant="ghost"
 						onclick={() => {
-							showReferences = { ...showReferences, open: false, preview: null };
+							chatState.showOutputDetails = {
+								...chatState.showOutputDetails,
+								open: false,
+								preview: null
+							};
 							showChatControls = { open: true, value: 'true' };
 						}}
 						class="h-8 w-8 p-0"
@@ -728,7 +704,7 @@
 										{#if !chatState.generationStatus?.includes(threadItem.row_id)}
 											<div class="flex items-end justify-between px-4">
 												<div class="flex items-center gap-2 text-sm">
-													<span class="line-clamp-1 text-[#98A2B3]">
+													<span class="line-clamp-1 font-medium text-[#98A2B3]">
 														{column}
 													</span>
 												</div>
@@ -779,12 +755,23 @@
 															title="Show references"
 															onclick={() => {
 																showChatControls = { open: false, value: null };
-																showReferences = {
+
+																chatState.showOutputDetails = {
 																	open: true,
+																	activeCell: { columnID: column, rowID: threadItem.row_id },
+																	activeTab: 'references',
 																	message: {
-																		columnID: column,
-																		rowID: threadItem.row_id
+																		content:
+																			typeof threadItem?.content === 'string'
+																				? threadItem.content
+																				: threadItem?.content
+																						.filter((c) => c.type === 'text')
+																						.map((c) => c.text)
+																						.join('') ?? '',
+																		chunks: threadItem?.references?.chunks ?? []
 																	},
+																	reasoningContent: threadItem.reasoning_content ?? null,
+																	reasoningTime: threadItem.reasoning_time ?? null,
 																	expandChunk: null,
 																	preview: null
 																};
@@ -796,6 +783,49 @@
 													{/if}
 												</div>
 											</div>
+
+											{#if threadItem.reasoning_content}
+												<button
+													onclick={() => {
+														showChatControls = { open: false, value: null };
+
+														chatState.showOutputDetails = {
+															open: true,
+															activeCell: { columnID: column, rowID: threadItem.row_id },
+															activeTab: 'thinking',
+															message: {
+																content:
+																	typeof threadItem?.content === 'string'
+																		? threadItem.content
+																		: threadItem?.content
+																				.filter((c) => c.type === 'text')
+																				.map((c) => c.text)
+																				.join('') ?? '',
+																chunks: threadItem?.references?.chunks ?? []
+															},
+															reasoningContent: threadItem.reasoning_content ?? null,
+															reasoningTime: threadItem.reasoning_time ?? null,
+															expandChunk: null,
+															preview: null
+														};
+													}}
+													class="flex items-center gap-2 px-4 text-sm text-[#667085] transition-colors hover:text-[#344054]"
+												>
+													<!-- {@render assistantIcon('h-4 w-4')} -->
+
+													{#if threadItem.reasoning_time}
+														Thought for {threadItem.reasoning_time.toFixed()} second{Number(
+															threadItem.reasoning_time.toFixed()
+														) > 1
+															? 's'
+															: ''}
+													{:else}
+														Reasoning
+													{/if}
+
+													<ChevronRight size={16} />
+												</button>
+											{/if}
 
 											<div
 												data-testid="chat-message"
@@ -819,7 +849,13 @@
 																		word,
 																		column,
 																		threadItem.row_id,
-																		threadItem.references
+																		(
+																			threadItem.references ??
+																			chatState.messages[column]?.thread?.find(
+																				(item) =>
+																					item.row_id === threadItem.row_id && item.references
+																			)?.references
+																		)?.chunks ?? []
 																	)
 																)}
 															{@html rawHtml}
@@ -845,7 +881,13 @@
 																		word,
 																		column,
 																		threadItem.row_id,
-																		threadItem.references
+																		(
+																			threadItem.references ??
+																			chatState.messages[column]?.thread?.find(
+																				(item) =>
+																					item.row_id === threadItem.row_id && item.references
+																			)?.references
+																		)?.chunks ?? []
 																	)
 																)}
 															{@html rawHtml}
@@ -1056,7 +1098,7 @@
 			{getRawFile}
 		/>
 	{:else}
-		<ReferencesSection bind:showReferences />
+		<OutputDetails bind:showOutputDetails={chatState.showOutputDetails} />
 	{/if}
 </div>
 
@@ -1066,7 +1108,7 @@
 		goto(
 			chatState.conversation
 				? `/chat?${new URLSearchParams([
-						['project_id', page.params.project_id],
+						['project_id', page.params.project_id ?? ''],
 						['agent', chatState.conversation.parent_id ?? '']
 					])}`
 				: '/chat'
@@ -1234,7 +1276,7 @@
 					class:w-full={displayedLoadedStreams.length > 1}
 					class="group relative max-w-full scroll-my-2 self-start rounded-xl bg-[#F2F4F7] p-4 text-text data-dark:bg-[#5B7EE5]"
 				>
-					<p class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
+					<div class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
 						{@html converter
 							.makeHtml(loadedStream.join(''))
 							.replaceAll(chatCitationPattern, (match, word) =>
@@ -1243,15 +1285,43 @@
 									word,
 									columnID,
 									rowID,
-									chatState.loadedReferences?.[rowID]?.[columnID]
+									chatState.loadedReferences?.[rowID]?.[columnID].chunks ?? []
 								)
 							)}
 						{latestStream}
 
-						{#if loadedStream.length === 0 && latestStream === ''}
-							<RowStreamIndicator />
+						{#if loadedStream.every((val) => val.trim() === '') && latestStream === ''}
+							<div class="flex items-center gap-2">
+								<RowStreamIndicator />
+
+								{#if chatState.reasoningContentStreams[rowID]?.[key]}
+									<button
+										onclick={() => {
+											showChatControls = { open: false, value: null };
+
+											chatState.showOutputDetails = {
+												open: true,
+												activeCell: { columnID: key, rowID },
+												activeTab: 'thinking',
+												message: {
+													content: loadedStream.join('') + latestStream,
+													chunks: chatState.loadedReferences?.[rowID]?.[key]?.chunks ?? []
+												},
+												reasoningContent: chatState.reasoningContentStreams[rowID]?.[key] ?? null,
+												reasoningTime: null,
+												expandChunk: null,
+												preview: null
+											};
+										}}
+										class="flex items-center gap-2 text-[#98A2B3] transition-colors hover:text-[#344054]"
+									>
+										<span class="text-xs font-medium"> Thinking... </span>
+										<ChevronRight size={12} />
+									</button>
+								{/if}
+							</div>
 						{/if}
-					</p>
+					</div>
 				</div>
 			{/if}
 		{/each}
@@ -1285,7 +1355,7 @@
 						class:w-full={displayedLoadedStreams.length > 1}
 						class="group relative max-w-full scroll-my-2 self-start rounded-xl bg-[#F2F4F7] p-4 text-text data-dark:bg-[#5B7EE5]"
 					>
-						<p class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
+						<div class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
 							{@html converter
 								.makeHtml(loadedStream.join(''))
 								.replaceAll(chatCitationPattern, (match, word) =>
@@ -1294,15 +1364,43 @@
 										word,
 										'new',
 										rowID,
-										chatState.loadedReferences?.[rowID]?.new
+										chatState.loadedReferences?.[rowID]?.new?.chunks ?? []
 									)
 								)}
 							{latestStream}
 
-							{#if loadedStream.length === 0 && latestStream === ''}
-								<RowStreamIndicator />
+							{#if loadedStream.every((val) => val.trim() === '') && latestStream === ''}
+								<div class="flex items-center gap-2">
+									<RowStreamIndicator />
+
+									{#if chatState.reasoningContentStreams[rowID]?.[key]}
+										<button
+											onclick={() => {
+												showChatControls = { open: false, value: null };
+
+												chatState.showOutputDetails = {
+													open: true,
+													activeCell: { columnID: key, rowID },
+													activeTab: 'thinking',
+													message: {
+														content: loadedStream.join('') + latestStream,
+														chunks: chatState.loadedReferences?.[rowID]?.[key]?.chunks ?? []
+													},
+													reasoningContent: chatState.reasoningContentStreams[rowID]?.[key] ?? null,
+													reasoningTime: null,
+													expandChunk: null,
+													preview: null
+												};
+											}}
+											class="flex items-center gap-2 text-[#98A2B3] transition-colors hover:text-[#344054]"
+										>
+											<span class="text-xs font-medium"> Thinking... </span>
+											<ChevronRight size={12} />
+										</button>
+									{/if}
+								</div>
 							{/if}
-						</p>
+						</div>
 					</div>
 				</div>
 			{/each}
@@ -1326,6 +1424,29 @@
 			stroke-linecap="round"
 			stroke-linejoin="round"
 		/>
+	</svg>
+{/snippet}
+
+{#snippet assistantIcon(className = '')}
+	<svg viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg" class={className}>
+		<path
+			d="M7.54952 0C10.5597 0 13 2.91015 13 6.5L13 13L5.45048 13C2.44026 13 0 10.0899 0 6.5L0 0L7.54952 0Z"
+			fill="url(#paint0_linear_8058_51060)"
+		/>
+		<circle cx="6.4987" cy="6.49967" r="2.16667" fill="#F2F4F7" />
+		<defs>
+			<linearGradient
+				id="paint0_linear_8058_51060"
+				x1="13"
+				y1="-0.166667"
+				x2="4.23752e-08"
+				y2="13"
+				gradientUnits="userSpaceOnUse"
+			>
+				<stop stop-color="#1A2C70" />
+				<stop offset="1" stop-color="#AF405D" />
+			</linearGradient>
+		</defs>
 	</svg>
 {/snippet}
 

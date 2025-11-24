@@ -5,12 +5,8 @@
 	import { ArrowDownToLine, AudioLines } from '@lucide/svelte';
 	import { browser } from '$app/environment';
 	import { page } from '$app/state';
-	import showdown from 'showdown';
-	//@ts-expect-error - no types
-	import showdownHtmlEscape from 'showdown-htmlescape';
-	import '../../../../../../showdown-theme.css';
 	import { getTableState } from '$lib/components/tables/tablesState.svelte';
-	import { codeblock, codehighlight, table as tableExtension } from '$lib/showdown';
+	import converter from '$lib/showdown';
 	import { fileColumnFiletypes } from '$lib/constants';
 	import { cn } from '$lib/utils';
 	import logger from '$lib/logger';
@@ -58,15 +54,6 @@
 		thread = tableRes.thread ?? [];
 		isLoading = false;
 	}; */
-
-	const converter = new showdown.Converter({
-		tables: true,
-		tasklists: true,
-		disableForced4SpacesIndentedSublists: true,
-		strikethrough: true,
-		ghCompatibleHeaderId: true,
-		extensions: [showdownHtmlEscape, codeblock, codehighlight, tableExtension]
-	});
 
 	let loadedStreams: Record<string, string[]> = $state({});
 	let latestStreams: Record<string, string> = $state({});

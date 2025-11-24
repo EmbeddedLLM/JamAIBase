@@ -123,7 +123,7 @@
 			headers: {
 				Accept: 'text/event-stream',
 				'Content-Type': 'application/json',
-				'x-project-id': page.params.project_id
+				'x-project-id': page.params.project_id ?? ''
 			},
 			body: JSON.stringify({
 				table_id: page.params.table_id,
@@ -149,99 +149,13 @@
 			tableRowsState.deleteRow(clientRowID);
 			tableState.delStreamingRows([clientRowID]);
 		} else {
-			const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+			const { row_id } = await tableRowsState.parseStream(
+				tableState,
+				response.body!.pipeThrough(new TextDecoderStream()).getReader(),
+				clientRowID
+			);
 
-			let rowID = '';
-			let addedRow = false;
-			// let references: Record<string, Record<string, ChatReferences>> | null = null;
-			let buffer = '';
-			// eslint-disable-next-line no-constant-condition
-			while (true) {
-				try {
-					const { value, done } = await reader.read();
-					if (done) break;
-
-					buffer += value;
-					const lines = buffer.split('\n'); //? Split by \n to handle collation
-					buffer = lines.pop() || '';
-
-					let parsedEvent: { data: GenTableStreamEvent } | undefined = undefined;
-					for (const line of lines) {
-						if (line === '') {
-							if (parsedEvent) {
-								if (parsedEvent.data.object === 'gen_table.completion.chunk') {
-									if (parsedEvent.data.choices[0].finish_reason) {
-										switch (parsedEvent.data.choices[0].finish_reason) {
-											case 'error': {
-												logger.error(toUpper(`${tableType}_ROW_ADDSTREAM`), parsedEvent.data);
-												console.error('STREAMING_ERROR', parsedEvent.data);
-												alert(
-													`Error while streaming: ${parsedEvent.data.choices[0].message.content}`
-												);
-												break;
-											}
-											default: {
-												const streamingCols =
-													tableState.streamingRows[parsedEvent.data.row_id]?.filter(
-														(col) => col !== parsedEvent?.data.output_column_name
-													) ?? [];
-												if (streamingCols.length === 0) {
-													tableState.delStreamingRows([parsedEvent.data.row_id]);
-												} else {
-													tableState.addStreamingRows({
-														[parsedEvent.data.row_id]: streamingCols
-													});
-												}
-												break;
-											}
-										}
-									} else {
-										rowID = parsedEvent.data.row_id;
-
-										//* Add chunk to active row
-										if (!addedRow) {
-											tableRowsState.updateRow(clientRowID, {
-												ID: parsedEvent.data.row_id,
-												[parsedEvent.data.output_column_name]: {
-													value: parsedEvent.data.choices[0].message.content ?? ''
-												}
-											} as GenTableRow);
-											tableState.delStreamingRows([clientRowID]);
-											tableState.addStreamingRows({
-												[parsedEvent.data.row_id]: tableData.cols
-													.filter((col) => col.gen_config && !Object.keys(data).includes(col.id))
-													.map((col) => col.id)
-											});
-											addedRow = true;
-										} else {
-											tableRowsState.stream(
-												parsedEvent.data.row_id,
-												parsedEvent.data.output_column_name,
-												parsedEvent.data.choices[0].message.content ?? ''
-											);
-										}
-									}
-								} else {
-									console.log('Unknown message:', parsedEvent.data);
-								}
-							} else {
-								console.warn('Unknown event object:', parsedEvent);
-							}
-						} else if (line.startsWith('data: ')) {
-							if (line.slice(6) === '[DONE]') break;
-							parsedEvent = { ...(parsedEvent ?? {}), data: JSON.parse(line.slice(6)) };
-						} /*  else if (line.startsWith('event: ')) {
-						parsedEvent = { ...(parsedEvent ?? {}), event: line.slice(7) };
-					} */
-					}
-				} catch (err) {
-					logger.error(toUpper(`${tableType}TBL_ROW_ADDSTREAM`), err);
-					console.error(err);
-					break;
-				}
-			}
-
-			tableState.delStreamingRows([clientRowID, rowID]);
+			tableState.delStreamingRows([clientRowID, row_id]);
 			refetchTable();
 		}
 	}
@@ -278,7 +192,7 @@
 					method: 'POST',
 					headers: {
 						'Content-Type': 'application/json',
-						'x-project-id': page.params.project_id
+						'x-project-id': page.params.project_id ?? ''
 					},
 					body: JSON.stringify({
 						uris: [uploadRes.data.uri]
@@ -352,6 +266,10 @@
 	bind:this={newRowForm}
 	onclick={() => (isAddingRow = true)}
 	onkeydown={(event) => {
+		if (!isAddingRow && event.key === ' ') {
+			isAddingRow = true;
+		}
+
 		if (event.key === 'Enter' && !event.shiftKey) {
 			event.preventDefault();
 			if (isAddingRow) event.currentTarget.requestSubmit();

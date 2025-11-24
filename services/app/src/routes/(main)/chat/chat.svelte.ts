@@ -8,7 +8,8 @@ import type {
 	ChatThreads,
 	Conversation,
 	GenTable,
-	GenTableStreamEvent
+	GenTableStreamEvent,
+	ReferenceChunk
 } from '$lib/types';
 import { waitForElement } from '$lib/utils';
 import { tick } from 'svelte';
@@ -66,7 +67,32 @@ export class ChatState {
 	uploadColumns: Record<string, { uri: string; url: string }> = $state({});
 	loadedStreams: Record<string, Record<string, string[]>> = $state({});
 	latestStreams: Record<string, Record<string, string>> = $state({});
+	reasoningContentStreams: Record<string, Record<string, string>> = $state({});
 	loadedReferences: Record<string, Record<string, ChatReferences>> | null = null;
+
+	/** Output details dialog */
+	showOutputDetails: {
+		open: boolean;
+		activeCell: { rowID: string; columnID: string } | null;
+		activeTab: string;
+		message: {
+			content: string;
+			chunks: ReferenceChunk[];
+		} | null;
+		reasoningContent: string | null;
+		reasoningTime: number | null;
+		expandChunk: string | null;
+		preview: ReferenceChunk | null;
+	} = $state({
+		open: false,
+		activeCell: null,
+		activeTab: 'answer',
+		message: null,
+		reasoningContent: null,
+		reasoningTime: null,
+		expandChunk: null,
+		preview: null
+	});
 
 	private getConvController: AbortController | null = null;
 	private getMessagesController: AbortController | null = null;
@@ -208,7 +234,7 @@ export class ChatState {
 				])}`,
 				{
 					headers: {
-						'x-project-id': page.params.project_id ?? page.url.searchParams.get('project_id')
+						'x-project-id': page.params.project_id ?? page.url.searchParams.get('project_id') ?? ''
 					}
 				}
 			);
@@ -326,7 +352,7 @@ export class ChatState {
 			headers: {
 				Accept: 'text/event-stream',
 				'Content-Type': 'application/json',
-				'x-project-id': page.params.project_id ?? page.url.searchParams.get('project_id')
+				'x-project-id': page.params.project_id ?? page.url.searchParams.get('project_id') ?? ''
 			},
 			body: JSON.stringify({
 				data: {
@@ -480,7 +506,7 @@ export class ChatState {
 					method: 'POST',
 					headers: {
 						'Content-Type': 'application/json',
-						'x-project-id': page.params.project_id
+						'x-project-id': page.params.project_id ?? ''
 					},
 					body: JSON.stringify({
 						uris: [uploadRes.data.uri]
@@ -596,6 +622,13 @@ export class ChatState {
 			])
 		);
 
+		if (
+			this.showOutputDetails.activeCell?.rowID &&
+			rowsToRegen.includes(this.showOutputDetails.activeCell.rowID)
+		) {
+			this.closeOutputDetails();
+		}
+
 		this.generationStatus = rowsToRegen;
 
 		//? Show user message
@@ -607,7 +640,7 @@ export class ChatState {
 			headers: {
 				Accept: 'text/event-stream',
 				'Content-Type': 'application/json',
-				'x-project-id': page.params.project_id
+				'x-project-id': page.params.project_id ?? ''
 			},
 			body: JSON.stringify({
 				conversation_id: page.params.conversation_id,
@@ -676,12 +709,14 @@ export class ChatState {
 	async saveEditedContent(newContent: Record<string, string>) {
 		if (!this.editingContent || this.generationStatus) return;
 
+		this.closeOutputDetails();
+
 		// const editingMessage = this.messages.find((m) => m.ID === this.editingContent?.rowID)!;
 		const response = await fetch(`${PUBLIC_JAMAI_URL}/api/owl/conversations/messages`, {
 			method: 'PATCH',
 			headers: {
 				'Content-Type': 'application/json',
-				'x-project-id': page.params.project_id
+				'x-project-id': page.params.project_id ?? ''
 			},
 			body: JSON.stringify({
 				conversation_id: page.params.conversation_id,
@@ -808,31 +843,95 @@ export class ChatState {
 									rowID = parsedEvent.data.row_id;
 									const streamDataRowID = newMessage ? 'new' : rowID;
 
-									if (this.loadedStreams[streamDataRowID][parsedEvent.data.output_column_name]) {
-										if (renderCount++ >= 20) {
-											this.loadedStreams[streamDataRowID][parsedEvent.data.output_column_name] = [
-												...this.loadedStreams[streamDataRowID][parsedEvent.data.output_column_name],
-												this.latestStreams[streamDataRowID][parsedEvent.data.output_column_name] +
-													(parsedEvent.data.choices[0]?.message?.content ?? '')
-											];
-											this.latestStreams[streamDataRowID][parsedEvent.data.output_column_name] = '';
-										} else {
-											this.latestStreams[streamDataRowID][parsedEvent.data.output_column_name] +=
-												parsedEvent.data.choices[0]?.message?.content ?? '';
+									/** Used if showing reasoning content in chat window */
+									if (parsedEvent.data.choices[0]?.message?.reasoning_content) {
+										if (!this.reasoningContentStreams[streamDataRowID]) {
+											this.reasoningContentStreams[streamDataRowID] = {};
 										}
+
+										if (
+											!this.reasoningContentStreams[streamDataRowID][
+												parsedEvent.data.output_column_name
+											]
+										) {
+											this.reasoningContentStreams[streamDataRowID][
+												parsedEvent.data.output_column_name
+											] = '';
+										}
+
+										this.reasoningContentStreams[streamDataRowID][
+											parsedEvent.data.output_column_name
+										] += parsedEvent.data.choices[0]?.message?.reasoning_content ?? '';
+									}
+
+									if (parsedEvent.data.choices[0]?.message?.content) {
+										if (this.loadedStreams[streamDataRowID][parsedEvent.data.output_column_name]) {
+											if (renderCount++ >= 20) {
+												this.loadedStreams[streamDataRowID][parsedEvent.data.output_column_name] = [
+													...this.loadedStreams[streamDataRowID][
+														parsedEvent.data.output_column_name
+													],
+													this.latestStreams[streamDataRowID][parsedEvent.data.output_column_name] +
+														(parsedEvent.data.choices[0]?.message?.content ?? '')
+												];
+												this.latestStreams[streamDataRowID][parsedEvent.data.output_column_name] =
+													'';
+											} else {
+												this.latestStreams[streamDataRowID][parsedEvent.data.output_column_name] +=
+													parsedEvent.data.choices[0]?.message?.content ?? '';
+											}
+										}
+									}
+
+									/** Stream output details dialog */
+									if (
+										this.showOutputDetails.activeCell?.rowID === streamDataRowID &&
+										this.showOutputDetails.activeCell?.columnID ===
+											parsedEvent.data.output_column_name
+									) {
+										this.showOutputDetails = {
+											...this.showOutputDetails,
+											message: {
+												chunks: this.showOutputDetails.message?.chunks ?? [],
+												content:
+													(this.showOutputDetails.message?.content ?? '') +
+													(parsedEvent.data.choices[0].message.content ?? '')
+											},
+											reasoningContent:
+												(this.showOutputDetails.reasoningContent ?? '') +
+												(parsedEvent.data.choices[0].message.reasoning_content ?? '')
+										};
 									}
 
 									this.scrollChatToBottom();
 								}
 							} else if (parsedEvent.data.object === 'gen_table.references') {
+								rowID = parsedEvent.data.row_id;
+								const streamDataRowID = newMessage ? 'new' : rowID;
+
 								this.loadedReferences = {
 									...(this.loadedReferences ?? {}),
-									[parsedEvent.data.row_id]: {
-										...((this.loadedReferences ?? {})[parsedEvent.data.row_id] ?? {}),
+									[streamDataRowID]: {
+										...((this.loadedReferences ?? {})[streamDataRowID] ?? {}),
 										[parsedEvent.data.output_column_name]:
 											parsedEvent.data as unknown as ChatReferences
 									}
 								};
+
+								/** Add references to output details if active */
+								if (
+									this.showOutputDetails.activeCell?.rowID === streamDataRowID &&
+									this.showOutputDetails.activeCell?.columnID ===
+										parsedEvent.data.output_column_name
+								) {
+									this.showOutputDetails = {
+										...this.showOutputDetails,
+										message: {
+											chunks: (parsedEvent.data as unknown as ChatReferences).chunks ?? [],
+											content: this.showOutputDetails.message?.content ?? ''
+										}
+									};
+								}
 							} else {
 								console.warn('Unknown event data:', parsedEvent.data);
 							}
@@ -969,6 +1068,10 @@ export class ChatState {
 		await tick();
 		this.getConversations();
 		this.isLoadingSearch = false;
+	}
+
+	closeOutputDetails() {
+		this.showOutputDetails = { ...this.showOutputDetails, open: false };
 	}
 
 	async scrollChatToBottom() {

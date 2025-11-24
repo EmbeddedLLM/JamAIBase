@@ -7,7 +7,11 @@
 	import { page } from '$app/state';
 	import { modelsAvailable } from '$globalStore';
 	import { getTableState } from '$lib/components/tables/tablesState.svelte';
-	import { promptVariablePattern, pythonVariablePattern } from '$lib/constants';
+	import {
+		promptVariablePattern,
+		pythonVariablePattern,
+		reasoningEffortEnum
+	} from '$lib/constants';
 	import logger from '$lib/logger';
 	import type { GenTable, GenTableCol } from '$lib/types';
 
@@ -63,7 +67,7 @@
 	);
 
 	let selectedTab: 'prompt' | 'rag_settings' = $state('prompt');
-	let showModelSettings = $state(false);
+	let showModelSettings = $state(true);
 
 	let isLoading = $state(false);
 
@@ -134,7 +138,7 @@
 			method: 'PATCH',
 			headers: {
 				'Content-Type': 'application/json',
-				'x-project-id': page.params.project_id
+				'x-project-id': page.params.project_id ?? ''
 			},
 			body: JSON.stringify({
 				table_id: page.params.table_id,
@@ -306,7 +310,7 @@
 						</span>
 					</div>
 
-					<div class="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
+					<div class="flex flex-col items-start gap-2 overflow-auto sm:flex-row sm:items-center">
 						{#if (tableType !== 'knowledge' || showPromptTab) && selectedGenConfig.object === 'gen_config.llm'}
 							<div class="flex items-center gap-2 rounded-lg bg-[#F9FAFB] px-2.5 py-2">
 								<Label
@@ -554,7 +558,9 @@
 											class=" h-[25vh] w-full rounded-md border border-transparent bg-[#F2F4F7] p-2 text-[14px] outline-none transition-colors placeholder:italic placeholder:text-muted-foreground focus-visible:border-[#d5607c] focus-visible:shadow-[0_0_0_1px_#FFD8DF] focus-visible:outline-none disabled:cursor-not-allowed disabled:text-black/60 disabled:opacity-50 data-dark:border-[#42464E] data-dark:bg-[#42464e] data-dark:focus-visible:border-[#5b7ee5] data-dark:disabled:text-white/60"
 										></textarea>
 
-										<div class="mt-4 grid grid-cols-1 gap-4 @lg/model-settings:grid-cols-3">
+										<div
+											class="mt-4 grid grid-cols-1 gap-x-4 gap-y-5 @lg/model-settings:grid-cols-3 @lg/model-settings:gap-y-6"
+										>
 											<div class="flex flex-col space-y-1">
 												<Label for="temperature" class="text-xs sm:text-sm">Temperature</Label>
 
@@ -661,6 +667,43 @@
 													max="1"
 													step=".001"
 												/>
+											</div>
+
+											<div class="flex flex-col space-y-1">
+												<Label class="text-xs sm:text-sm">Reasoning effort</Label>
+
+												<Select.Root
+													allowDeselect
+													type="single"
+													bind:value={() => selectedGenConfig.reasoning_effort ?? '',
+													(v) => (selectedGenConfig.reasoning_effort = v || null)}
+												>
+													<Select.Trigger
+														title="Reasoning effort"
+														class="mb-1 flex h-10 min-w-full items-center justify-between gap-8 border-transparent bg-[#F2F4F7] pl-3 pr-2 hover:bg-[#e1e2e6] data-dark:bg-[#42464e]"
+													>
+														{#snippet children()}
+															<span
+																class="line-clamp-1 w-full whitespace-nowrap text-left font-normal capitalize"
+															>
+																{selectedGenConfig.reasoning_effort ?? 'Default'}
+															</span>
+														{/snippet}
+													</Select.Trigger>
+													<Select.Content
+														data-testid="org-plan-select-list"
+														class="max-h-64 overflow-y-auto"
+													>
+														{#each reasoningEffortEnum as reasoningEffort}
+															<Select.Item
+																value={reasoningEffort}
+																class="flex cursor-pointer justify-between gap-10 capitalize"
+															>
+																{reasoningEffort}
+															</Select.Item>
+														{/each}
+													</Select.Content>
+												</Select.Root>
 											</div>
 										</div>
 									</div>

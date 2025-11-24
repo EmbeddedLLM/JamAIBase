@@ -17,6 +17,7 @@
 
 	import ChatTable from '$lib/components/tables/ChatTable.svelte';
 	import { ColumnSettings, TablePagination, TableSorter } from '$lib/components/tables/(sub)';
+	import OutputDetailsWrapper from '$lib/components/output-details/OutputDetailsWrapper.svelte';
 	import { ActionsDropdown, GenerateButton } from '../../(components)';
 	import ModeToggle from './ModeToggle.svelte';
 	import ChatMode from './ChatMode.svelte';
@@ -55,7 +56,7 @@
 
 				if (tableData) tableState.setTemplateCols(tableData.cols);
 				if (browser && tableData) {
-					const savedColSizes = await db.chat_table.get(page.params.table_id);
+					const savedColSizes = await db.chat_table.get(page.params.table_id ?? '');
 					if (savedColSizes) {
 						tableState.colSizes = savedColSizes.columns;
 					}
@@ -66,6 +67,24 @@
 				tableRowsState.rows = structuredClone(tableRowsRes.data?.rows); // Client reorder rows
 				tableRowsState.loading = false;
 				tableRowsCount = tableRowsRes.data?.total_rows;
+
+				if (tableState.showOutputDetails.open) {
+					const activeRow = tableRowsState.rows?.find(
+						(row) => row.ID === tableState.showOutputDetails.activeCell?.rowID
+					);
+					const activeCell = activeRow?.[tableState.showOutputDetails.activeCell?.columnID ?? ''];
+					if (activeRow && activeCell) {
+						tableState.showOutputDetails = {
+							...tableState.showOutputDetails,
+							message: {
+								content: activeCell.value,
+								chunks: activeCell.references?.chunks ?? []
+							},
+							reasoningContent: activeCell.reasoning_content ?? null,
+							reasoningTime: activeCell.reasoning_time ?? null
+						};
+					}
+				}
 			})
 		]).then(() => (tableLoaded = true));
 	}
@@ -73,13 +92,13 @@
 	async function fetchThreads() {
 		if (!tableData) return;
 
-		const searchParams = new URLSearchParams([['table_id', page.params.table_id]]);
+		const searchParams = new URLSearchParams([['table_id', page.params.table_id ?? '']]);
 
 		const response = await fetch(
 			`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/chat/threads?${searchParams}`,
 			{
 				headers: {
-					'x-project-id': page.params.project_id
+					'x-project-id': page.params.project_id ?? ''
 				}
 			}
 		);
@@ -164,7 +183,7 @@
 				{
 					signal: searchController.signal,
 					headers: {
-						'x-project-id': page.params.project_id
+						'x-project-id': page.params.project_id ?? ''
 					}
 				}
 			);
@@ -383,6 +402,7 @@
 	<ColumnSettings {tableData} {refetchTable} tableType="chat" />
 </section>
 
+<OutputDetailsWrapper bind:showOutputDetails={tableState.showOutputDetails} />
 <AddColumnDialog bind:isAddingColumn {tableData} {refetchTable} tableType="chat" />
 <AddConversationDialog
 	bind:isAddingConversation

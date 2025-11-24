@@ -73,7 +73,7 @@
 				{$activeProject?.name ??
 					($loadingProjectData.loading
 						? 'Loading...'
-						: $loadingProjectData.error ?? page.params.project_id)}
+						: ($loadingProjectData.error ?? page.params.project_id))}
 			</h1>
 
 			<DropdownMenu.Root>
@@ -132,7 +132,7 @@
 						</DropdownMenu.Item>
 						<DropdownMenu.Separator />
 						<DropdownMenu.Item
-							onclick={() => (isDeletingProject = page.params.project_id)}
+							onclick={() => (isDeletingProject = page.params.project_id ?? null)}
 							class="text-destructive data-[highlighted]:text-destructive"
 						>
 							<Trash_2 class="mr-2 h-3.5 w-3.5" />

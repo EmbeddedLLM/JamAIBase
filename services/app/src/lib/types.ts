@@ -158,24 +158,26 @@ export type Conversation = {
 	version: string;
 };
 
+export type ReferenceChunk = {
+	text: string;
+	title: string;
+	context: object;
+	page: number | null;
+	file_name: string;
+	file_path: string;
+	document_id: string;
+	chunk_id: string;
+	metadata: {
+		score?: string;
+		table_id?: string;
+		rrf_score?: string;
+		project_id?: string;
+	};
+};
+
 export type ChatReferences = {
 	object: 'chat.references';
-	chunks: {
-		text: string;
-		title: string;
-		context: object;
-		page: number | null;
-		file_name: string;
-		file_path: string;
-		document_id: string;
-		chunk_id: string;
-		metadata: {
-			score?: string;
-			table_id?: string;
-			rrf_score?: string;
-			project_id?: string;
-		};
-	}[];
+	chunks: ReferenceChunk[];
 	search_query: string;
 	/** @deprecated */
 	finish_reason: string | null;
@@ -184,6 +186,8 @@ export type ChatReferences = {
 export type ChatThread = {
 	object: 'chat.thread';
 	thread: {
+		reasoning_content?: string | null;
+		reasoning_time?: number | null;
 		row_id: string;
 		role: string;
 		content:
@@ -250,6 +254,7 @@ export interface LLMGenConfig {
 	presence_penalty?: number;
 	frequency_penalty?: number;
 	logit_bias?: object;
+	reasoning_effort?: string | null;
 }
 
 export interface EmbedGenConfig {
@@ -264,6 +269,9 @@ export type GenTableRow = {
 } & {
 	[key: string]: {
 		value: any;
+		reasoning_content?: string;
+		reasoning_time?: number;
+		references?: ChatReferences;
 	};
 };
 
@@ -277,9 +285,22 @@ export type GenTableStreamEvent = {
 		message: {
 			role: 'assistant';
 			content: string;
-			name: null;
+			reasoning_content: string | null;
+			refusal: null;
+			tool_calls: null;
+			function_call: null;
+			audio: null;
+		};
+		delta: {
+			role: 'assistant';
+			content: null;
+			reasoning_content: string | null;
+			refusal: null;
+			tool_calls: null;
+			function_call: null;
 		};
 		index: number;
+		logprobs: null;
 		finish_reason: 'stop' | string | null;
 	}[];
 	references: null;

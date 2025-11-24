@@ -1,4 +1,5 @@
 import { modelLogos } from '$lib/constants';
+import type { ReferenceChunk } from '$lib/types';
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -164,4 +165,25 @@ export function waitForElement(selector: string) {
 			subtree: true
 		});
 	});
+}
+
+export function citationReplacer(
+	match: string,
+	word: string,
+	columnID: string,
+	rowID: string,
+	chunks: ReferenceChunk[]
+) {
+	const citationIndices = match.match(/@(\d+)/g)?.map((m) => m.substring(1)) ?? [];
+	return citationIndices
+		.map(
+			(idx) =>
+				`<button 
+						data-column="${columnID}" 
+						data-row="${rowID}" 
+						data-citation="${chunks[Number(idx)]?.chunk_id ?? ''}" 
+						class="citation-btn aspect-square h-5 w-5 rounded-full bg-[#FFD8DF] text-xs text-[#475467]"
+					>${Number(idx) + 1}</button>`
+		)
+		.join(' ');
 }

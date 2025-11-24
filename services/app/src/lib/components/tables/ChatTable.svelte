@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
+	import { Maximize2 } from '@lucide/svelte';
 	import { page } from '$app/state';
 	import { getTableState, getTableRowsState } from '$lib/components/tables/tablesState.svelte';
-	import { cn, isValidUri } from '$lib/utils';
+	import { cn, escapeHtmlText, isValidUri } from '$lib/utils';
 	import logger from '$lib/logger';
 	import type { GenTable, GenTableRow, User } from '$lib/types';
 
@@ -18,6 +19,7 @@
 	import FoundProjectOrgSwitcher from '$lib/components/preset/FoundProjectOrgSwitcher.svelte';
 	import RowStreamIndicator from '$lib/components/preset/RowStreamIndicator.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
+	import { Button } from '$lib/components/ui/button';
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
 
 	const tableState = getTableState();
@@ -68,6 +70,13 @@
 	) {
 		if (!tableData || !tableRowsState.rows) return;
 
+		if (
+			tableState.showOutputDetails.activeCell?.rowID === cellToUpdate.rowID &&
+			tableState.showOutputDetails.activeCell?.columnID === cellToUpdate.columnID
+		) {
+			tableState.closeOutputDetails();
+		}
+
 		//? Optimistic update
 		const originalValue = tableRowsState.rows.find((row) => row.ID === cellToUpdate!.rowID)?.[
 			cellToUpdate.columnID
@@ -78,7 +87,7 @@
 			method: 'PATCH',
 			headers: {
 				'Content-Type': 'application/json',
-				'x-project-id': page.params.project_id
+				'x-project-id': page.params.project_id ?? ''
 			},
 			body: JSON.stringify({
 				table_id: tableData.id,
@@ -321,6 +330,8 @@
 							{@const isValidFileUri = isValidUri(row[column.id]?.value)}
 							<!-- svelte-ignore a11y_interactive_supports_focus -->
 							<div
+								data-row-id={escapeHtmlText(row.ID)}
+								data-col-id={escapeHtmlText(column.id)}
 								data-editing={editMode ? true : undefined}
 								role="gridcell"
 								tabindex="0"
@@ -385,17 +396,30 @@
 									? 'background-color: #30A8FF17;'
 									: ''}
 								class={cn(
-									'flex h-full max-h-[99px] w-full flex-col justify-start gap-1 break-words border-[#E4E7EC] data-dark:border-[#333] sm:max-h-[149px] [&:not(:last-child)]:border-r',
-									editMode
-										? 'bg-black/5 p-0 data-dark:bg-white/5'
-										: 'overflow-auto whitespace-pre-line p-2',
+									'group/cell relative flex h-full max-h-[99px] w-full flex-col justify-start gap-1 break-words border-[#E4E7EC] data-dark:border-[#333] sm:max-h-[149px] [&:not(:last-child)]:border-r',
+									editMode ? 'bg-black/5 p-0 data-dark:bg-white/5' : '',
 									tableState.streamingRows[row.ID]
 										? 'bg-[#FDEFF4]'
 										: 'group-hover:bg-[#E7EBF1] data-dark:group-hover:bg-white/5'
 								)}
 							>
 								{#if tableState.streamingRows[row.ID]?.includes(column.id) && !editMode && column.id !== 'ID' && column.id !== 'Updated at' && column.gen_config}
-									<RowStreamIndicator />
+									<div class="flex items-center gap-2 p-2">
+										<RowStreamIndicator />
+
+										{#if row[column.id]?.reasoning_content && !row[column.id]?.value && tableState.streamingRows[row.ID]?.includes(column.id)}
+											<span class="text-xs font-medium text-[#98A2B3]">Thinking...</span>
+										{/if}
+									</div>
+								{/if}
+
+								{#if row[column.id]?.reasoning_content && !row[column.id]?.value && tableState.streamingRows[row.ID]?.includes(column.id)}
+									<p
+										data-reasoning-text
+										class="h-min overflow-auto whitespace-pre-line p-2 text-[#98A2B3]"
+									>
+										{row[column.id]?.reasoning_content}
+									</p>
 								{/if}
 
 								{#if editMode}
@@ -433,19 +457,50 @@
 										bind:isDeletingFile
 									/>
 								{:else}
-									<span
-										class="h-min {column.id === 'ID' || column.id === 'Updated at'
-											? 'line-clamp-1 break-all text-[#667085]'
-											: 'text-text'} whitespace-pre-line"
-									>
-										{#if column.id === 'ID'}
-											{row[column.id]}
-										{:else if column.id === 'Updated at'}
-											{new Date(row[column.id]).toISOString()}
-										{:else}
-											{row[column.id]?.value === undefined ? '' : row[column.id]?.value}
-										{/if}
-									</span>
+									{#if !(!row[column.id]?.value && tableState.streamingRows[row.ID]?.includes(column.id))}
+										<p
+											class="h-min {column.id === 'ID' || column.id === 'Updated at'
+												? 'm-2 line-clamp-1 break-all text-[#667085]'
+												: 'overflow-auto p-2 text-text'} whitespace-pre-line"
+										>
+											{#if column.id === 'ID'}
+												{row[column.id]}
+											{:else if column.id === 'Updated at'}
+												{new Date(row[column.id]).toISOString()}
+											{:else}
+												{row[column.id]?.value === undefined ? '' : row[column.id]?.value}
+											{/if}
+										</p>
+									{/if}
+
+									{#if column.gen_config?.object === 'gen_config.llm' && column.dtype === 'str'}
+										<div
+											class="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-focus-within/cell:opacity-100 group-hover/cell:opacity-100"
+										>
+											<Button
+												variant="ghost"
+												onclick={() => {
+													tableState.showOutputDetails = {
+														open: true,
+														activeCell: { rowID: row.ID, columnID: column.id },
+														activeTab: row[column.id]?.value ? 'answer' : 'thinking',
+														message: {
+															content: row[column.id]?.value,
+															chunks: row[column.id]?.references?.chunks ?? []
+														},
+														reasoningContent: row[column.id]?.reasoning_content ?? null,
+														reasoningTime: row[column.id]?.reasoning_time ?? null,
+														expandChunk: null,
+														preview: null
+													};
+												}}
+												title="Show output details"
+												class="aspect-square h-6 rounded-md bg-white p-0 text-[#667085] hover:text-[#667085]"
+											>
+												<Maximize2 class="h-3.5 w-3.5" />
+											</Button>
+										</div>
+									{/if}
 								{/if}
 							</div>
 						{/each}

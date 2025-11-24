@@ -237,19 +237,21 @@
 		</div>
 	</div>
 
-	<div class="mt-auto flex flex-col gap-2">
-		<h2 class="text-sm font-medium text-[#667085]">ACCOUNT REMOVAL</h2>
+	{#if !page.data.ossMode}
+		<div class="mt-auto flex flex-col gap-2">
+			<h2 class="text-sm font-medium text-[#667085]">ACCOUNT REMOVAL</h2>
 
-		<p class="mb-1 text-[0] text-[#667085] [&>span]:text-[13px]">
-			<span>Delete your account permanently.</span>
-		</p>
+			<p class="mb-1 text-[0] text-[#667085] [&>span]:text-[13px]">
+				<span>Delete your account permanently.</span>
+			</p>
 
-		<div class="flex w-[clamp(0px,100%,600px)] flex-col gap-2 sm:flex-row sm:items-center">
-			<Button variant="outline" onclick={() => (isDeletingAccount = true)} class="px-8">
-				Delete Account
-			</Button>
+			<div class="flex w-[clamp(0px,100%,600px)] flex-col gap-2 sm:flex-row sm:items-center">
+				<Button variant="outline" onclick={() => (isDeletingAccount = true)} class="px-8">
+					Delete Account
+				</Button>
+			</div>
 		</div>
-	</div>
+	{/if}
 
 	<!-- <div class="relative mt-8 w-full">
 		<hr

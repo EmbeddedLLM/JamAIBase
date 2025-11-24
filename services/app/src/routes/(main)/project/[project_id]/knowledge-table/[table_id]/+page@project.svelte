@@ -15,6 +15,7 @@
 
 	import KnowledgeTable from '$lib/components/tables/KnowledgeTable.svelte';
 	import { ColumnSettings, TablePagination, TableSorter } from '$lib/components/tables/(sub)';
+	import OutputDetailsWrapper from '$lib/components/output-details/OutputDetailsWrapper.svelte';
 	import { ActionsDropdown, GenerateButton } from '../../(components)';
 	import { UploadingFileDialog } from '../(dialogs)';
 	import { AddColumnDialog, DeleteDialogs } from '../../(dialogs)';
@@ -46,7 +47,7 @@
 
 				if (tableData) tableState.setTemplateCols(tableData.cols);
 				if (browser && tableData) {
-					const savedColSizes = await db.knowledge_table.get(page.params.table_id);
+					const savedColSizes = await db.knowledge_table.get(page.params.table_id!);
 					if (savedColSizes) {
 						tableState.colSizes = savedColSizes.columns;
 					}
@@ -57,6 +58,24 @@
 				tableRowsState.rows = structuredClone(tableRowsRes.data?.rows); // Client reorder rows
 				tableRowsState.loading = false;
 				tableRowsCount = tableRowsRes.data?.total_rows;
+
+				if (tableState.showOutputDetails.open) {
+					const activeRow = tableRowsState.rows?.find(
+						(row) => row.ID === tableState.showOutputDetails.activeCell?.rowID
+					);
+					const activeCell = activeRow?.[tableState.showOutputDetails.activeCell?.columnID ?? ''];
+					if (activeRow && activeCell) {
+						tableState.showOutputDetails = {
+							...tableState.showOutputDetails,
+							message: {
+								content: activeCell.value,
+								chunks: activeCell.references?.chunks ?? []
+							},
+							reasoningContent: activeCell.reasoning_content ?? null,
+							reasoningTime: activeCell.reasoning_time ?? null
+						};
+					}
+				}
 			})
 		]).then(() => (tableLoaded = true));
 	};
@@ -440,6 +459,7 @@
 	/>
 </section>
 
+<OutputDetailsWrapper bind:showOutputDetails={tableState.showOutputDetails} />
 <AddColumnDialog bind:isAddingColumn {tableData} {refetchTable} tableType="knowledge" />
 <DeleteDialogs bind:isDeletingRow {refetchTable} tableType="knowledge" />
 <UploadingFileDialog {isUploadingFile} />

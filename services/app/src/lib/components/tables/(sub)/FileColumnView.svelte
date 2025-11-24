@@ -74,7 +74,7 @@
 		// fix for inconsistent thumbs gen
 		fileType === 'document'
 			? 'h-full'
-			: ''} group/image w-full"
+			: ''} group/image w-full p-2"
 	>
 		{#if fileUrl && isValidUri(fileUrl)?.protocol.startsWith('http') && fileType !== undefined}
 			{#if fileType === 'image'}
@@ -103,7 +103,7 @@
 		{/if}
 
 		<div
-			class="absolute right-0 top-0 flex gap-1 opacity-0 transition-opacity group-focus-within/image:opacity-100 group-hover/image:opacity-100"
+			class="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-focus-within/image:opacity-100 group-hover/image:opacity-100"
 		>
 			{#if !readonly}
 				<Button

@@ -60,14 +60,18 @@ export const load: (event: LayoutServerLoadEvent) => Promise<Data> = async ({
 	}
 
 	if (!url.pathname.startsWith('/login') && !url.pathname.startsWith('/register')) {
-		if (!locals.user!.email_verified && !url.pathname.startsWith('/verify-email')) {
+		if (
+			!locals.ossMode &&
+			!locals.user!.email_verified &&
+			!url.pathname.startsWith('/verify-email')
+		) {
 			throw redirect(
 				302,
 				`/verify-email${url.searchParams.size > 0 ? `?${url.searchParams}` : ''}`
 			);
 		}
 
-		if (locals.user?.email_verified) {
+		if (locals.ossMode || locals.user?.email_verified) {
 			let activeOrganizationId = cookies.get('activeOrganizationId');
 
 			//? Redirect to create org if no orgs
