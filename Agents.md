@@ -37,6 +37,8 @@ This Agents.md file provides comprehensive guidance for OpenAI Codex and other A
   - Implement `FooUpdate`, `FooCreate`, `Foo_`, `FooRead` Pydantic models for input and output validation
   - `FooUpdate` models should contain only fields that can be updated by the user (usually fields that are not primary key)
   - If an endpoint or function involves long external network calls (long execution time), avoid using FastAPI dependency injection (`session: Annotated[AsyncSession, Depends(yield_async_session)]`) to provide DB `session`, instead manually create a session using either `async with async_session() as session` or `with sync_session() as session`
+- Pydantic tips:
+  - Prefer `field_validator` over `model_validator`, especially when using `mode="before"`.
 - Always prefer single SQL statement over multi-step statements or Python loops whenever possible, for example:
   - Avoid:
     ```python

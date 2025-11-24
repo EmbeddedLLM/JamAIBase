@@ -83,7 +83,7 @@ class BaseLoader:
 
         Raises:
             BadInputError: If the split method is not supported.
-            UnexpectedError: If chunk splitting fails.
+            BadInputError: If chunk splitting fails.
         """
         _id = request.id
         logger.info(f"{_id} - Split documents request: {request.str_trunc()}")
@@ -142,7 +142,7 @@ class BaseLoader:
             return chunks
         except Exception as e:
             logger.exception(f"{_id} - Failed to split chunks.")
-            raise UnexpectedError("Failed to split chunks.") from e
+            raise BadInputError("Failed to split chunks.") from e
 
 
 class GeneralDocLoader(BaseLoader):
@@ -216,7 +216,9 @@ class GeneralDocLoader(BaseLoader):
                 ext = splitext(file_name)[1].lower()
                 if ext in [".pdf", ".docx", ".pptx", ".xlsx", ".html"]:
                     doc_loader = DoclingLoader(self.request_id)
-                    md = await doc_loader.load_document(file_name=file_name, content=content)
+                    md = await doc_loader.convert_document_to_markdown(
+                        file_name=file_name, content=content
+                    )
                 elif ext in [".md", ".txt"]:
                     md = content.decode("utf-8")
                 elif ext in [".json"]:
@@ -318,7 +320,7 @@ class GeneralDocLoader(BaseLoader):
                         )
                     else:
                         doc_loader = DoclingLoader(self.request_id, page_break_placeholder=None)
-                    chunks = await doc_loader.load_document_chunks(
+                    chunks = await doc_loader.convert_document_to_chunks(
                         file_name=file_name,
                         content=content,
                         chunk_size=chunk_size,
@@ -504,7 +506,10 @@ class DoclingLoader(BaseLoader):
                     break  # Exit polling loop
                 elif task_status in ("failure", "revoked"):
                     error_info = status_data.get("task_result", {}).get("error", "Unknown error")
-                    raise UnexpectedError(f"Docling-Serve task failed: {error_info}")
+                    logger.error(
+                        f'Docling-Serve task "{task_id}" for document "{file_name}" failed: {error_info}'
+                    )
+                    raise BadInputError(f'Your document "{file_name}" cannot be parsed.')
                 # If not success, failure, or revoked, it's still processing or in another state
                 await asyncio.sleep(sleep_for)
                 time_slept += sleep_for
@@ -512,10 +517,10 @@ class DoclingLoader(BaseLoader):
                 logger.error(
                     (
                         f'Docling-Serve task "{task_id}" for document "{file_name}" '
-                        f"timed out after {time_slept} seconds. ({self.request_id})"
+                        f"timed out after polling for {time_slept} seconds. ({self.request_id})"
                     )
                 )
-                raise UnexpectedError(f'Your document "{file_name}" took too long to parse.')
+                raise BadInputError(f'Your document "{file_name}" took too long to parse.')
 
             # Step 3: Fetch result
             result_url = f"{self.docling_serve_url}/v1alpha/result/{task_id}"
@@ -525,7 +530,7 @@ class DoclingLoader(BaseLoader):
 
         except httpx.TimeoutException as e:
             logger.error(f"Docling-Serve API timeout error: {e}")
-            raise UnexpectedError(f"Docling-Serve API timeout error: {e}") from e
+            raise BadInputError(f'Your document "{file_name}" took too long to parse.') from e
         except httpx.HTTPError as e:
             logger.error(f"Docling-Serve API error: {e}")
             raise UnexpectedError(f"Docling-Serve API error: {e}") from e
@@ -567,37 +572,3 @@ class DoclingLoader(BaseLoader):
         )
 
         return chunks
-
-    async def load_document(self, file_name: str, content: bytes) -> str:
-        """
-        Loads and processes a document file, converting it to Markdown format using Docling-Serve.
-        """
-        try:
-            md = await self.convert_document_to_markdown(file_name, content)
-            logger.info(f'File "{file_name}" loaded as markdown.')
-            return md
-
-        except Exception as e:
-            logger.error(f"Failed to process file: {e}")
-            raise UnexpectedError(f"Failed to process file: {e}") from e
-
-    async def load_document_chunks(
-        self,
-        file_name: str,
-        content: bytes,
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200,
-    ) -> list[Chunk]:
-        """
-        Loads and processes a document file, splitting it into chunks using Docling-Serve.
-        """
-        try:
-            chunks = await self.convert_document_to_chunks(
-                file_name, content, chunk_size, chunk_overlap
-            )
-            logger.info(f'File "{file_name}" loaded and split into {len(chunks):,d} chunks.')
-            return chunks
-
-        except Exception as e:
-            logger.error(f"Failed to process file: {e}")
-            raise UnexpectedError(f"Failed to process file: {e}") from e

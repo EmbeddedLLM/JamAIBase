@@ -71,8 +71,8 @@ from owl.types import (
 from owl.utils.auth import auth_user_project, has_permissions
 from owl.utils.billing import BillingManager
 from owl.utils.exceptions import (
+    BadInputError,
     ServerBusyError,
-    UnexpectedError,
     UnsupportedMediaTypeError,
     handle_exception,
 )
@@ -982,7 +982,7 @@ async def embed_file(
             text_embeds = [data.embedding for data in text_embeds.data]
 
     if title_embed is None or text_embeds is None or len(text_embeds) == 0:
-        raise UnexpectedError(
+        raise BadInputError(
             "Sorry we encountered an issue during embedding. If this issue persists, please contact support."
         )
     # --- Store into Knowledge Table --- #
