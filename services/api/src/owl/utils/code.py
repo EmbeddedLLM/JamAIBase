@@ -13,6 +13,7 @@ from loguru import logger
 from owl.configs import ENV_CONFIG
 from owl.types import AUDIO_FILE_EXTENSIONS, IMAGE_FILE_EXTENSIONS, ColumnDtype
 from owl.utils.billing import OPENTELEMETRY_CLIENT
+from owl.utils.exceptions import BadInputError
 from owl.utils.io import s3_upload
 
 REQ_COUNTER = OPENTELEMETRY_CLIENT.get_counter("code_executor_requests_total")
@@ -114,15 +115,17 @@ async def code_executor(
                     return str(result)
 
                 if not isinstance(result, bytes):
-                    raise Exception(
-                        f"Expected type bytes for {dtype}, got {type(result)}:\n\n{str(result)[:100]}"
+                    raise BadInputError(
+                        f'Result type must be bytes for column type "{dtype}" but got {type(result)}.'
                     )
 
                 rec.set_result_bytes(len(result))
 
                 content_type = filetype.guess(result)
                 if not content_type:
-                    raise Exception("Result is bytes but could not determine content type")
+                    raise BadInputError(
+                        "Result type is bytes but could not determine content type."
+                    )
 
                 file_extension = f".{content_type.extension}"
 
