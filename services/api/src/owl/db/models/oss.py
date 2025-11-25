@@ -199,7 +199,9 @@ class _TableBase(JamaiSQLModel, str_strip_whitespace=True):
         search_columns: list[str] | None,
     ) -> SelectBase:
         # Apply search filters
-        if search_query and search_columns:
+        if search_query:
+            if not search_columns:
+                search_columns = cls.str_cols()
             search_conditions = []
             for column_name in search_columns:
                 if (column := getattr(cls, column_name, None)) is not None:

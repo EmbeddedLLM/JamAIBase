@@ -1224,16 +1224,28 @@ class GenExecutor(_Executor):
             project_id=project.id, table_id=kt_id, request_id=request_id
         )
         kt_cols = {c.column_id for c in kt.column_metadata if not c.is_state_column}
-        t0 = perf_counter()
-        fts_query, vs_query = await lm.generate_search_query(
-            messages=body.messages,
-            rag_params=body.rag_params,
-            **body.hyperparams,
-        )
-        cls._log(
-            f'Query rewrite using "{body.model}" took t={(perf_counter() - t0) * 1e3:,.2f} ms.',
-            request_id=request_id,
-        )
+        try:
+            t0 = perf_counter()
+            fts_query, vs_query = await lm.generate_search_query(
+                messages=body.messages,
+                rag_params=body.rag_params,
+                **body.hyperparams,
+            )
+            cls._log(
+                f'Query rewrite using "{body.model}" took t={(perf_counter() - t0) * 1e3:,.2f} ms.',
+                request_id=request_id,
+            )
+        except Exception as e:
+            cls._log(
+                f"Query rewrite failed with error: {repr(e)}. Using last user message as query.",
+                request_id=request_id,
+            )
+            # Fallback: use last user message
+            for msg in reversed(body.messages):
+                if msg.role == ChatRole.USER:
+                    fts_query = msg.text_content
+                    vs_query = msg.text_content
+                    break
         rows = await kt.hybrid_search(
             fts_query=fts_query,
             vs_query=vs_query,
@@ -1270,14 +1282,20 @@ class GenExecutor(_Executor):
             chunk.metadata["project_id"] = project.id
             chunk.metadata["table_id"] = body.rag_params.table_id
         if len(rows) > 0 and body.rag_params.reranking_model is not None:
-            order = (
-                await lm.rerank_documents(
-                    model=body.rag_params.reranking_model,
-                    query=vs_query,
-                    documents=kt.rows_to_documents(rows),
+            try:
+                order = (
+                    await lm.rerank_documents(
+                        model=body.rag_params.reranking_model,
+                        query=vs_query,
+                        documents=kt.rows_to_documents(rows),
+                    )
+                ).results
+                chunks = [chunks[i.index] for i in order]
+            except Exception as e:
+                cls._log(
+                    f"Reranking failed with error: {repr(e)}. Proceeding with original order.",
+                    request_id=request_id,
                 )
-            ).results
-            chunks = [chunks[i.index] for i in order]
         chunks = chunks[: body.rag_params.k]
         references = References(chunks=chunks, search_query=vs_query)
         if body.messages[-1].role == ChatRole.USER:
@@ -1286,7 +1304,7 @@ class GenExecutor(_Executor):
             replacement_idx = -2
         else:
             raise BadInputError("The message list should end with user or assistant message.")
-        rag_prompt = await lm.generate_rag_prompt(
+        rag_prompt = await lm.make_rag_prompt(
             messages=body.messages,
             references=references,
             inline_citations=body.rag_params.inline_citations,

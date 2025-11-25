@@ -1585,7 +1585,7 @@ class LMEngine:
                 queries[q_type] = generated_query
         return queries["fts"], queries["vs"]
 
-    async def generate_rag_prompt(
+    async def make_rag_prompt(
         self,
         *,
         messages: list[ChatEntry],
