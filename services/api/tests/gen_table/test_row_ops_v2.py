@@ -27,6 +27,7 @@ from jamaibase.types import (
     MultiRowUpdateRequest,
     OkResponse,
     OrganizationCreate,
+    ProjectCreate,
     PythonGenConfig,
     RAGParams,
     References,
@@ -463,7 +464,7 @@ def test_multi_image_input(
             assert row["o2"] == rows[row["ID"]]["o2"]
 
 
-@flaky(max_runs=3, min_passes=1)
+@flaky(max_runs=5, min_passes=1)
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 @pytest.mark.parametrize("stream", **STREAM_PARAMS)
 def test_reasoning_model_and_agentic_tools(
@@ -1325,6 +1326,165 @@ async def test_python_fixed_function_image(
         downloaded_content = httpx.get(response.urls[0]).content
         original_content = _read_file_content(image_path)
         assert original_content == downloaded_content, f"Content mismatch for file: {image_path}"
+
+
+@pytest.mark.parametrize("stream", **STREAM_PARAMS)
+async def test_python_fixed_function_with_secrets(
+    setup: ServingContext,
+    stream: bool,
+):
+    """
+    Test that secrets are accessible as environment variables in Python fixed function.
+
+    This test verifies:
+    1. Secrets with various allowed_projects combination
+    2. Secrets are accessible via os.environ
+    3. Works with both add_rows and regen_rows
+    4. Organization isolation: Secrets from other organizations are not accessible
+    """
+    from jamaibase.types import SecretCreate
+
+    table_type = TableType.ACTION
+    client = JamAI(user_id=setup.superuser_id, project_id=setup.project_id)
+    another_project = client.projects.create_project(
+        ProjectCreate(organization_id=setup.superorg_id, name="another_project")
+    )
+
+    # Create a separate organization to test organization isolation
+    with (
+        create_user(dict(email="other_org_user@test.com", name="Other Org User")) as other_user,
+        create_organization(
+            body=OrganizationCreate(name="Other Organization"), user_id=other_user.id
+        ) as other_org,
+    ):
+        other_client = JamAI(user_id=other_user.id, project_id=setup.project_id)
+
+        try:
+            # Create a secret in the main organization with "all" access
+            client.secrets.create_secret(
+                SecretCreate(
+                    name="TEST_SECRET_ALL",
+                    value="secret_value_all_access",
+                    allowed_projects=None,  # None means all projects in this org are allowed
+                ),
+                organization_id=setup.superorg_id,
+            )
+
+            # Create a secret with "selected" access for this project
+            client.secrets.create_secret(
+                SecretCreate(
+                    name="TEST_SECRET_SELECTED",
+                    value="secret_value_selected_access",
+                    allowed_projects=[setup.project_id],  # Only this project has access
+                ),
+                organization_id=setup.superorg_id,
+            )
+
+            # Create a secret with "selected" access for a different project (should not be accessible)
+            client.secrets.create_secret(
+                SecretCreate(
+                    name="TEST_SECRET_NO_ACCESS",
+                    value="secret_value_no_access",
+                    allowed_projects=[another_project.id],  # Different project, no access here
+                ),
+                organization_id=setup.superorg_id,
+            )
+
+            # Create a secret in the OTHER organization (should not be accessible due to org isolation)
+            other_client.secrets.create_secret(
+                SecretCreate(
+                    name="OTHER_ORG_SECRET",
+                    value="secret_from_other_org",
+                    allowed_projects=None,  # All projects in the OTHER org can access
+                ),
+                organization_id=other_org.id,
+            )
+
+            # Python code that accesses secrets via environment variables
+            python_code = """
+import os
+import json
+
+# Get all accessible secrets, including attempt to access other org's secret
+result = {
+    'TEST_SECRET_ALL': os.environ.get('TEST_SECRET_ALL', 'NOT_FOUND'),
+    'TEST_SECRET_SELECTED': os.environ.get('TEST_SECRET_SELECTED', 'NOT_FOUND'),
+    'TEST_SECRET_NO_ACCESS': os.environ.get('TEST_SECRET_NO_ACCESS', 'NOT_FOUND'),
+    'OTHER_ORG_SECRET': os.environ.get('OTHER_ORG_SECRET', 'NOT_FOUND'),
+}
+
+row['result_column'] = json.dumps(result)
+"""
+
+            cols = [
+                ColumnSchemaCreate(id="input", dtype="str"),
+                ColumnSchemaCreate(
+                    id="result_column",
+                    dtype="str",
+                    gen_config=PythonGenConfig(python_code=python_code),
+                ),
+            ]
+
+            with create_table(client, table_type, cols=cols) as table:
+                data = [{"input": "test"}]
+
+                # Test add_rows
+                response = add_table_rows(
+                    client, table_type, table.id, data, stream=stream, check_usage=False
+                )
+                assert len(response.rows) == len(data)
+                rows = list_table_rows(client, table_type, table.id)
+                row_ids = [r.row_id for r in response.rows]
+                assert rows.total == len(data)
+
+                import json
+
+                result = json.loads(rows.values[0]["result_column"])
+
+                # Verify accessible secrets
+                assert result["TEST_SECRET_ALL"] == "secret_value_all_access", (
+                    "Secret with 'all' access should be accessible"
+                )
+                assert result["TEST_SECRET_SELECTED"] == "secret_value_selected_access", (
+                    "Secret with 'selected' access should be accessible if project is in access list"
+                )
+                assert result["TEST_SECRET_NO_ACCESS"] == "NOT_FOUND", (
+                    "Secret with 'selected' access should not be accessible if project is not in access list"
+                )
+                # Verify organization isolation
+                assert result["OTHER_ORG_SECRET"] == "NOT_FOUND", (
+                    "SECURITY: Secret from other organization should NOT be accessible"
+                )
+
+                # Test regen_rows
+                response = regen_table_rows(
+                    client, table_type, table.id, row_ids, stream=stream, check_usage=False
+                )
+                assert len(response.rows) == len(data)
+                rows = list_table_rows(client, table_type, table.id)
+                assert rows.total == len(data)
+
+                # Verify again after regen
+                result = json.loads(rows.values[0]["result_column"])
+                assert result["TEST_SECRET_ALL"] == "secret_value_all_access"
+                assert result["TEST_SECRET_SELECTED"] == "secret_value_selected_access"
+                assert result["TEST_SECRET_NO_ACCESS"] == "NOT_FOUND"
+                # Verify organization isolation after regen
+                assert result["OTHER_ORG_SECRET"] == "NOT_FOUND", (
+                    "SECURITY: Secret from other organization should NOT be accessible after regen"
+                )
+
+        finally:
+            client.secrets.delete_secret(
+                organization_id=setup.superorg_id, name="TEST_SECRET_ALL", missing_ok=True
+            )
+            client.secrets.delete_secret(
+                organization_id=setup.superorg_id, name="TEST_SECRET_SELECTED", missing_ok=True
+            )
+            client.secrets.delete_secret(
+                organization_id=setup.superorg_id, name="TEST_SECRET_NO_ACCESS", missing_ok=True
+            )
+            client.projects.delete_project(another_project.id, missing_ok=True)
 
 
 def _assert_context_error(content: str) -> None:

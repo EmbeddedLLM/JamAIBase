@@ -83,6 +83,9 @@ from jamaibase.types import (
     Role,
     RowUpdateRequest,
     SearchRequest,
+    SecretCreate,
+    SecretRead,
+    SecretUpdate,
     StripePaymentInfo,
     TableDataImportRequest,
     TableImportRequest,
@@ -3612,7 +3615,7 @@ class _ConversationClientAsync(_ClientAsync):
         """Fetches metadata for a single conversation."""
         return await self._get(
             "/v2/conversations",
-            params={"conversation_id": conversation_id},
+            params=dict(conversation_id=conversation_id),
             response_model=ConversationMetaResponse,
             **kwargs,
         )
@@ -3621,7 +3624,7 @@ class _ConversationClientAsync(_ClientAsync):
         """Fetches metadata for a single agent."""
         return await self._get(
             "/v2/conversations/agents",
-            params={"agent_id": agent_id},
+            params=dict(agent_id=agent_id),
             response_model=AgentMetaResponse,
             **kwargs,
         )
@@ -3665,7 +3668,7 @@ class _ConversationClientAsync(_ClientAsync):
         """Deletes a conversation permanently."""
         response = await self._delete(
             "/v2/conversations",
-            params={"conversation_id": conversation_id},
+            params=dict(conversation_id=conversation_id),
             response_model=None,
             ignore_code=404 if missing_ok else None,
             **kwargs,
@@ -3783,6 +3786,168 @@ class _ConversationClientAsync(_ClientAsync):
         )
 
 
+class _SecretsAsync(_ClientAsync):
+    """Secrets methods."""
+
+    async def create_secret(
+        self,
+        body: SecretCreate,
+        *,
+        organization_id: str,
+        **kwargs,
+    ) -> SecretRead:
+        """Create a new secret.
+
+        Secrets are scoped to the specified organization.
+        Only organization admins can create secrets.
+
+        Args:
+            body (SecretCreate): Secret creation data.
+            organization_id (str): Organization ID.
+
+        Returns:
+            secret (SecretRead): Created secret details.
+        """
+        return await self._post(
+            "/v2/secrets",
+            params=dict(organization_id=organization_id),
+            body=body,
+            response_model=SecretRead,
+            **kwargs,
+        )
+
+    async def list_secrets(
+        self,
+        organization_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        search_query: str | None = None,
+        search_columns: list[str] | None = None,
+        after: str | None = None,
+        **kwargs,
+    ) -> Page[SecretRead]:
+        """List secrets with pagination and filtering.
+
+        Secrets are filtered based on the specified organization_id.
+        All users (both ADMIN and MEMBER roles) see only secrets scoped to their organization.
+
+        Args:
+            organization_id (str): Organization ID to filter secrets (required).
+            offset (int): Number of items to skip. Defaults to 0.
+            limit (int): Maximum number of items to return. Defaults to 100.
+            order_by (str): Field to sort by. Defaults to "updated_at".
+            order_ascending (bool): Sort direction. Defaults to True.
+            search_query (str | None): Search term. Defaults to None.
+            search_columns (list[str] | None): Columns to search in. Defaults to None.
+
+        Returns:
+            secrets (Page[SecretRead]): Paginated list of secrets accessible to the user.
+        """
+        return await self._get(
+            "/v2/secrets/list",
+            params=dict(
+                organization_id=organization_id,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                search_query=search_query,
+                search_columns=search_columns,
+                after=after,
+            ),
+            response_model=Page[SecretRead],
+            **kwargs,
+        )
+
+    async def get_secret(
+        self,
+        *,
+        organization_id: str,
+        name: str,
+        **kwargs,
+    ) -> SecretRead:
+        """Get a secret by name.
+
+        All organization members (both ADMIN and MEMBER roles) can read secrets.
+        Users can only access secrets scoped to their organization. The secret value
+        is masked (***) when retrieved.
+
+        Args:
+            organization_id (str): Organization ID (required).
+            name (str): Name of the secret (case-insensitive).
+
+        Returns:
+            secret (SecretRead): Secret details (with masked value).
+        """
+        return await self._get(
+            "/v2/secrets",
+            params=dict(organization_id=organization_id, name=name),
+            response_model=SecretRead,
+            **kwargs,
+        )
+
+    async def update_secret(
+        self,
+        *,
+        organization_id: str,
+        name: str,
+        body: SecretUpdate,
+        **kwargs,
+    ) -> SecretRead:
+        """Update a secret's value and access settings.
+
+        Only organization admins can update secrets. Users can only update secrets
+        scoped to their organization(s). The updated value is returned unmasked.
+
+        Args:
+            organization_id (str): Organization ID (required).
+            name (str): Name of the secret (case-insensitive).
+            body (SecretUpdate): Secret update data.
+
+        Returns:
+            secret (SecretRead): Updated secret details (with unmasked value).
+        """
+        return await self._patch(
+            "/v2/secrets",
+            params=dict(organization_id=organization_id, name=name),
+            body=body,
+            response_model=SecretRead,
+            **kwargs,
+        )
+
+    async def delete_secret(
+        self,
+        *,
+        organization_id: str,
+        name: str,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        """Delete a secret.
+
+        Only organization admins can delete secrets. Users can only delete secrets
+        scoped to their organization(s).
+
+        Args:
+            organization_id (str): Organization ID (required).
+            name (str): Name of the secret (case-insensitive).
+            missing_ok (bool): Whether to ignore if secret doesn't exist. Defaults to True.
+
+        Returns:
+            response (OkResponse): Success confirmation.
+        """
+        return await self._delete(
+            "/v2/secrets",
+            params=dict(organization_id=organization_id, name=name),
+            response_model=OkResponse,
+            ignore_code=404 if missing_ok else None,
+            **kwargs,
+        )
+
+
 class JamAIAsync(_ClientAsync):
     def __init__(
         self,
@@ -3860,6 +4025,7 @@ class JamAIAsync(_ClientAsync):
         self.meters = _MeterClientAsync(**kwargs)
         self.tasks = _TaskClientAsync(**kwargs)
         self.conversations = _ConversationClientAsync(**kwargs)
+        self.secrets = _SecretsAsync(**kwargs)
 
     async def health(self) -> dict[str, Any]:
         """
@@ -6243,6 +6409,140 @@ class _ConversationClient(_ConversationClientAsync):
         return LOOP.run(super().get_threads(conversation_id, column_ids, **kwargs))
 
 
+class _Secrets(_SecretsAsync):
+    """Synchronous secrets methods."""
+
+    def create_secret(self, body: SecretCreate, *, organization_id: str, **kwargs) -> SecretRead:
+        """Create a new secret (synchronous).
+
+        Secrets are scoped to the specified organization.
+        Only organization admins can create secrets.
+
+        Args:
+            body (SecretCreate): Secret creation data.
+            organization_id (str): Organization ID.
+
+        Returns:
+            secret (SecretRead): Created secret details.
+        """
+        return LOOP.run(super().create_secret(body, organization_id=organization_id, **kwargs))
+
+    def list_secrets(
+        self,
+        organization_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "updated_at",
+        order_ascending: bool = True,
+        search_query: str | None = None,
+        search_columns: list[str] | None = None,
+        after: str | None = None,
+        **kwargs,
+    ) -> Page[SecretRead]:
+        """List secrets with pagination and filtering (synchronous).
+
+        Secrets are filtered based on the specified organization_id.
+        All users (both ADMIN and MEMBER roles) see only secrets scoped to their organization.
+
+        Args:
+            organization_id (str): Organization ID to filter secrets (required).
+            offset (int): Number of items to skip. Defaults to 0.
+            limit (int): Maximum number of items to return. Defaults to 100.
+            order_by (str): Field to sort by. Defaults to "updated_at".
+            order_ascending (bool): Sort direction. Defaults to True.
+            search_query (str | None): Search term. Defaults to None.
+            search_columns (list[str] | None): Columns to search in. Defaults to None.
+
+        Returns:
+            secrets (Page[SecretRead]): Paginated list of secrets accessible to the user.
+        """
+        return LOOP.run(
+            super().list_secrets(
+                organization_id=organization_id,
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                search_query=search_query,
+                search_columns=search_columns,
+                after=after,
+                **kwargs,
+            )
+        )
+
+    def get_secret(self, *, organization_id: str, name: str, **kwargs) -> SecretRead:
+        """Get a secret by name (synchronous).
+
+        All organization members (both ADMIN and MEMBER roles) can read secrets.
+        Users can only access secrets scoped to their organization. The secret value
+        is masked (***) when retrieved.
+
+        Args:
+            organization_id (str): Organization ID (required).
+            name (str): Name of the secret (case-insensitive).
+
+        Returns:
+            secret (SecretRead): Secret details (with masked value).
+        """
+        return LOOP.run(super().get_secret(organization_id=organization_id, name=name, **kwargs))
+
+    def update_secret(
+        self,
+        *,
+        organization_id: str,
+        name: str,
+        body: SecretUpdate,
+        **kwargs,
+    ) -> SecretRead:
+        """Update a secret's value and access settings (synchronous).
+
+        Only organization admins can update secrets. Users can only update secrets
+        scoped to their organization(s). The updated value is returned unmasked.
+
+        Args:
+            organization_id (str): Organization ID (required).
+            name (str): Name of the secret (case-insensitive).
+            body (SecretUpdate): Secret update data.
+
+        Returns:
+            secret (SecretRead): Updated secret details (with unmasked value).
+        """
+        return LOOP.run(
+            super().update_secret(organization_id=organization_id, name=name, body=body, **kwargs)
+        )
+
+    def delete_secret(
+        self,
+        *,
+        organization_id: str,
+        name: str,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        """Delete a secret (synchronous).
+
+        Only organization admins can delete secrets. Users can only delete secrets
+        scoped to their organization(s).
+
+        Args:
+            organization_id (str): Organization ID (required).
+            name (str): Name of the secret (case-insensitive).
+            missing_ok (bool): Whether to ignore if secret doesn't exist. Defaults to True.
+
+        Returns:
+            response (OkResponse): Success confirmation.
+        """
+        return LOOP.run(
+            super().delete_secret(
+                organization_id=organization_id,
+                name=name,
+                missing_ok=missing_ok,
+                **kwargs,
+            )
+        )
+
+
 class JamAI(JamAIAsync):
     def __init__(
         self,
@@ -6310,6 +6610,7 @@ class JamAI(JamAIAsync):
         self.meters = _MeterClient(**kwargs)
         self.tasks = _TaskClient(**kwargs)
         self.conversations = _ConversationClient(**kwargs)
+        self.secrets = _Secrets(**kwargs)
 
     def health(self) -> dict[str, Any]:
         """

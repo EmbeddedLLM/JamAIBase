@@ -54,9 +54,10 @@ from owl.types import (
     Role,
     SanitisedNonEmptyStr,
     SanitisedStr,
+    SecretRead,
 )
 from owl.utils import uuid7_str
-from owl.utils.crypt import generate_key
+from owl.utils.crypt import decrypt, generate_key
 from owl.utils.dates import now
 from owl.utils.exceptions import (
     BadInputError,
@@ -1274,6 +1275,7 @@ class Organization(_TableBase, table=True):
     users: list[User] = _relationship("organizations", link_model=OrgMember, selectin=False)
     members: list[OrgMember] = _relationship("organization", selectin=False)
     projects: list["Project"] = _relationship("organization", selectin=False)
+    secrets: list["Secret"] = _relationship("organization", selectin=False)
     price_plan: PricePlan | None = _relationship("organizations")
 
     @staticmethod
@@ -1473,3 +1475,94 @@ class Project(_TableBase, table=True):
             total=total,
             end_cursor=end_cursor,
         )
+
+
+class Secret(_TableBase, table=True):
+    """Secret model for storing sensitive information with project access control."""
+
+    organization_id: str = SqlField(
+        foreign_key="Organization.id",
+        primary_key=True,
+        index=True,
+        description="Organization ID.",
+        ondelete="CASCADE",
+    )
+    name: str = SqlField(
+        primary_key=True,
+        max_length=255,
+        description="Secret name (case-insensitive, saved in uppercase).",
+    )
+    value: str = SqlField(
+        min_length=1,
+        description="Secret value (cannot be empty).",
+    )
+    allowed_projects: list[str] | None = SqlField(
+        default=None,
+        sa_type=JSON,
+        index=True,
+        description=(
+            "List of project IDs allowed to access this secret. "
+            "None means all projects are allowed. "
+            "Empty list [] means no projects are allowed."
+        ),
+    )
+    organization: Organization = _relationship("secrets", selectin=False)
+
+    def to_read(self) -> SecretRead:
+        """Convert to SecretRead with decrypted value."""
+        decrypted_value = decrypt(self.value, ENV_CONFIG.encryption_key_plain)
+        kwargs = self.model_dump()
+        kwargs["value"] = decrypted_value
+        return SecretRead(**kwargs)
+
+    def to_read_masked(self) -> SecretRead:
+        """Convert to SecretRead with masked value."""
+        kwargs = self.model_dump()
+        kwargs["value"] = "***"  # Mask the value
+        return SecretRead(**kwargs)
+
+    @classmethod
+    def _search_query_filter(
+        cls,
+        selection: SelectBase,
+        *,
+        search_query: str | None,
+        search_columns: list[str] | None,
+    ) -> SelectBase:
+        """Apply search filters with special handling for allowed_projects."""
+        # Apply search filters
+        if search_query and search_columns:
+            search_conditions = []
+            for column_name in search_columns:
+                if column_name == "allowed_projects":
+                    # Special handling for JSON allowed_projects column
+                    column = getattr(cls, column_name)
+                    if search_query == "[]":
+                        # Search for empty allowed projects array (not NULL)
+                        # Check: NOT NULL AND is array type AND array length is 0
+                        search_conditions.append(
+                            and_(
+                                column.is_not(None),
+                                func.jsonb_typeof(column) == "array",
+                                func.jsonb_array_length(column) == 0,
+                            )
+                        )
+                    else:
+                        # Use the ? operator to check if the JSON array contains the search query
+                        # Only search in non-NULL values that are arrays
+                        search_conditions.append(
+                            and_(
+                                column.is_not(None),
+                                func.jsonb_typeof(column) == "array",
+                                column.op("?")(search_query),
+                            )
+                        )
+                else:
+                    # For other columns, use the case-insensitive regex match
+                    column = getattr(cls, column_name, None)
+                    if column is not None:
+                        search_conditions.append(column.op("~*")(search_query))
+
+            if search_conditions:
+                selection = selection.where(or_(*search_conditions))
+        return selection

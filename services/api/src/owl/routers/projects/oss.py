@@ -312,6 +312,26 @@ async def delete_project(
             delete(VerificationCode).where(VerificationCode.project_id == project_id)
         )
         await session.exec(delete(ProjectKey).where(ProjectKey.project_id == project_id))
+    # Clean up allowed_projects in secrets
+    # Use JSON operations as allowed_projects is stored as JSONB
+    await session.exec(
+        cached_text(
+            """
+            UPDATE jamai."Secret"
+            SET allowed_projects = COALESCE(
+                (
+                    SELECT jsonb_agg(elem)
+                    FROM jsonb_array_elements_text(allowed_projects::jsonb) elem
+                    WHERE elem::text != :project_id
+                ),
+                '[]'::jsonb
+            ),
+            updated_at = :updated_at
+            WHERE allowed_projects::jsonb ? :project_id
+            """
+        ),
+        params={"project_id": project_id, "updated_at": now()},
+    )
     await session.delete(project)
     await session.commit()
     logger.bind(user_id=user.id, org_id=project.id).success(

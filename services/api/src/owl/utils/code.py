@@ -9,10 +9,15 @@ import filetype
 import httpx
 from fastapi import Request
 from loguru import logger
+from sqlalchemy import func
+from sqlmodel import or_, select
 
 from owl.configs import ENV_CONFIG
+from owl.db import async_session
+from owl.db.models import Project, Secret
 from owl.types import AUDIO_FILE_EXTENSIONS, IMAGE_FILE_EXTENSIONS, ColumnDtype
 from owl.utils.billing import OPENTELEMETRY_CLIENT
+from owl.utils.crypt import decrypt
 from owl.utils.exceptions import BadInputError
 from owl.utils.io import s3_upload
 
@@ -76,6 +81,42 @@ async def observe_code_execution(
         RES_BYTES.record(rec["result_bytes"], labels)
 
 
+async def _fetch_accessible_secrets(project_id: str) -> dict[str, str]:
+    """
+    Fetch all secrets accessible to a given project.
+
+    Args:
+        project_id: The project ID to check access for.
+
+    Returns:
+        A dictionary mapping secret names to their decrypted values.
+    """
+    secrets_dict = {}
+
+    async with async_session() as session:
+        try:
+            statement = (
+                select(Secret)
+                .join(Project, Secret.organization_id == Project.organization_id)
+                .where(
+                    Project.id == project_id,
+                    or_(
+                        func.jsonb_typeof(Secret.allowed_projects) == "null",  # Handle JSONB NULL
+                        Secret.allowed_projects.contains([project_id]),
+                    ),
+                )
+            )
+            secrets = (await session.exec(statement)).all()
+            secrets_dict = {
+                secret.name: decrypt(secret.value, ENV_CONFIG.encryption_key_plain)
+                for secret in secrets
+            }
+        except Exception as e:
+            logger.error(f"Failed to fetch secrets for project {project_id}: {e}")
+
+    return secrets_dict
+
+
 async def code_executor(
     *,
     request: Request,
@@ -92,14 +133,21 @@ async def code_executor(
         dtype=dtype,
     ) as rec:
         try:
+            # Fetch accessible secrets for this project
+            secrets = await _fetch_accessible_secrets(project_id)
             async with httpx.AsyncClient(timeout=ENV_CONFIG.code_timeout_sec) as client:
                 row_data = base64.b64encode(pickle.dumps(row_data)).decode("utf-8")
+                secrets = base64.b64encode(pickle.dumps(secrets)).decode("utf-8")
                 response = await client.post(
                     f"{ENV_CONFIG.code_executor_endpoint}/execute",
                     json={
                         "source_code": source_code,
                         "output_column": output_column,
                         "row_data": row_data,
+                        # Pass secrets as environment variables
+                        # The code executor service (v8-kopi) should set these as environment
+                        # variables in the execution context so they can be accessed via os.environ
+                        "env_vars": secrets,
                     },
                 )
                 rec.set_status_code(response.status_code)

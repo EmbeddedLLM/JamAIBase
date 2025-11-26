@@ -271,6 +271,51 @@ def test_update_project_permission():
             )
 
 
+@pytest.mark.cloud
+def test_project_deletion_removes_from_secret_allowed_projects():
+    """Test that when a project is deleted, it's removed from secret allowed_projects lists."""
+    from owl.types import SecretCreate
+
+    with (
+        setup_organizations() as ctx,
+        create_project(
+            dict(name="Secret Test Project 1"), user_id=ctx.user.id, organization_id=ctx.org.id
+        ) as project1,
+        create_project(
+            dict(name="Secret Test Project 2"), user_id=ctx.user.id, organization_id=ctx.org.id
+        ) as project2,
+    ):
+        client = JamAI(user_id=ctx.user.id)
+        secret = client.secrets.create_secret(
+            body=SecretCreate(
+                name="TEST_PROJECT_ACCESS_SECRET",
+                value="test-value",
+                allowed_projects=[project1.id, project2.id],
+            ),
+            organization_id=ctx.org.id,
+        )
+
+        try:
+            fetched = client.secrets.get_secret(organization_id=ctx.org.id, name=secret.name)
+            assert set(fetched.allowed_projects) == set([project1.id, project2.id])
+
+            # Delete project1
+            client.projects.delete_project(project1.id)
+            fetched_after = client.secrets.get_secret(organization_id=ctx.org.id, name=secret.name)
+            assert set(fetched_after.allowed_projects) == set([project2.id])
+            assert project1.id not in fetched_after.allowed_projects
+
+            # Delete project2
+            client.projects.delete_project(project2.id)
+            fetched_final = client.secrets.get_secret(organization_id=ctx.org.id, name=secret.name)
+            assert fetched_final.allowed_projects == []
+
+        finally:
+            client.secrets.delete_secret(
+                organization_id=ctx.org.id, name=secret.name, missing_ok=True
+            )
+
+
 @dataclass(slots=True)
 class ServingContext:
     superuser_id: str

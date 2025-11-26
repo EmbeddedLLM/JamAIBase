@@ -10,6 +10,7 @@ from owl.db.models.oss import (  # noqa: F401
     PricePlan,
     Project,
     ProjectMember,
+    Secret,
     User,
 )
 

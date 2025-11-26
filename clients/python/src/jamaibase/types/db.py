@@ -1275,3 +1275,36 @@ class ProjectKey_(ProjectKeyCreate, _TableBase):
 
 class ProjectKeyRead(ProjectKey_):
     pass
+
+
+class SecretUpdate(BaseModel):
+    """Schema for updating a secret (name cannot be changed)."""
+
+    value: str | None = Field(default=None, description="Secret value")
+    allowed_projects: list[str] | None = Field(
+        default=None,
+        description=(
+            "Updated allowed projects list. None means all projects are allowed. "
+            "Empty list [] means no projects are allowed."
+        ),
+    )
+
+
+class SecretCreate(SecretUpdate):
+    name: str = Field(
+        ...,
+        min_length=1,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+        description=(
+            "Secret name (case-insensitive, saved in uppercase). Must start with a letter or underscore"
+            " and contain only alphanumeric characters and underscores."
+        ),
+    )
+
+
+class Secret_(SecretCreate, _TableBase):
+    organization_id: str = Field(description="Organization ID that owns this secret.")
+
+
+class SecretRead(Secret_):
+    pass
