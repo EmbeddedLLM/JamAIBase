@@ -137,11 +137,11 @@ class BaseLoader:
                     for d in text_splitter.split_documents([Document(page_content=chunk.text)])
                 ]
             logger.info(
-                f"{_id} - {len(request.chunks):,d} chunks split into {len(chunks):,d} chunks.",
+                f"{len(request.chunks):,d} chunks split into {len(chunks):,d} chunks. ({_id})",
             )
             return chunks
         except Exception as e:
-            logger.exception(f"{_id} - Failed to split chunks.")
+            logger.exception(f"Failed to split chunks. ({_id})")
             raise BadInputError("Failed to split chunks.") from e
 
 
@@ -216,7 +216,7 @@ class GeneralDocLoader(BaseLoader):
                 ext = splitext(file_name)[1].lower()
                 if ext in [".pdf", ".docx", ".pptx", ".xlsx", ".html"]:
                     doc_loader = DoclingLoader(self.request_id)
-                    md = await doc_loader.convert_document_to_markdown(
+                    md = await doc_loader.document_to_markdown(
                         file_name=file_name, content=content
                     )
                 elif ext in [".md", ".txt"]:
@@ -320,7 +320,7 @@ class GeneralDocLoader(BaseLoader):
                         )
                     else:
                         doc_loader = DoclingLoader(self.request_id, page_break_placeholder=None)
-                    chunks = await doc_loader.convert_document_to_chunks(
+                    chunks = await doc_loader.document_to_chunks(
                         file_name=file_name,
                         content=content,
                         chunk_size=chunk_size,
@@ -438,13 +438,13 @@ class DoclingLoader(BaseLoader):
         )
         self.page_break_placeholder = page_break_placeholder
 
-    async def retrieve_document_content(
+    async def _parse_document(
         self,
         file_name: str,
         content: bytes,
-    ) -> dict:  # Expecting JSON response from docling-serve
+    ) -> dict:
         """
-        Retrieves the content of a document file using Docling-Serve API (async pattern).
+        Parse the document using Docling-Serve API (async pattern).
 
         Args:
             file_path (str): Path to the document file to be parsed (local temp path).
@@ -458,7 +458,10 @@ class DoclingLoader(BaseLoader):
         Raises:
             HTTPException: If the document conversion fails via docling-serve.
         """
-        logger.info(f'{self.request_id} - Calling Docling-Serve for file "{file_name}".')
+        size_mb = get_bytes_size_mb(content)
+        logger.info(
+            f'Calling Docling-Serve for file "{file_name}" with size {size_mb:.3f} MiB. ({self.request_id})'
+        )
 
         files = {"files": (file_name, content, "application/octet-stream")}
         data = {
@@ -507,7 +510,10 @@ class DoclingLoader(BaseLoader):
                 elif task_status in ("failure", "revoked"):
                     error_info = status_data.get("task_result", {}).get("error", "Unknown error")
                     logger.error(
-                        f'Docling-Serve task "{task_id}" for document "{file_name}" failed: {error_info}'
+                        (
+                            f'Docling-Serve task "{task_id}" for document "{file_name}" '
+                            f"with size {size_mb:.3f} MiB failed: {error_info}. ({self.request_id})"
+                        )
                     )
                     raise BadInputError(f'Your document "{file_name}" cannot be parsed.')
                 # If not success, failure, or revoked, it's still processing or in another state
@@ -516,7 +522,7 @@ class DoclingLoader(BaseLoader):
             else:  # Executed if the while loop completes without a 'break'
                 logger.error(
                     (
-                        f'Docling-Serve task "{task_id}" for document "{file_name}" '
+                        f'Docling-Serve task "{task_id}" for document "{file_name}" with size {size_mb:.3f} MiB '
                         f"timed out after polling for {time_slept} seconds. ({self.request_id})"
                     )
                 )
@@ -537,24 +543,20 @@ class DoclingLoader(BaseLoader):
         except Exception as e:
             raise UnexpectedError(f"Docling-Serve API error: {e}") from e
 
-    async def convert_document_to_markdown(self, file_name: str, content: bytes) -> str:
+    async def document_to_markdown(self, file_name: str, content: bytes) -> str:
         """
         Converts a document to Markdown format using Docling-Serve.
         """
-        docling_response = await self.retrieve_document_content(file_name, content)
-        logger.info(
-            f"Converted `{file_name}` to Markdown in {docling_response.get('processing_time', '0'):.3f} seconds, "
-            f"{get_bytes_size_mb(content):.3f} MB."
-        )
+        docling_response = await self._parse_document(file_name, content)
         return docling_response.get("document", {}).get("md_content", "")
 
-    async def convert_document_to_chunks(
+    async def document_to_chunks(
         self, file_name: str, content: bytes, chunk_size: int, chunk_overlap: int
     ) -> list[Chunk]:
         """
         Converts a document to chunks, respecting page and table boundaries, using Docling-Serve.
         """
-        docling_response = await self.retrieve_document_content(file_name, content)
+        docling_response = await self._parse_document(file_name, content)
         md_content = docling_response.get("document", {}).get("md_content", "")
 
         documents = [Document(page_content=md_content, metadata={"page": 1})]

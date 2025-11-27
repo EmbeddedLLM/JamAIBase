@@ -108,6 +108,7 @@ from owl.utils.io import (
     json_loads,
     open_uri_async,
     s3_upload,
+    validate_url,
 )
 from owl.version import __version__ as owl_version
 
@@ -1417,9 +1418,7 @@ class GenerativeTableCore:
                     @classmethod
                     def vector_validator(cls, v: np.ndarray | None) -> np.ndarray | None:
                         if v is not None and len(v) != col.vlen:
-                            raise ValueError(
-                                f"Array input for column {col.column_id} must have length {col.vlen}"
-                            )
+                            raise ValueError(f"Array input must have length {col.vlen}")
                         return v
 
                     return vector_validator
@@ -1427,17 +1426,17 @@ class GenerativeTableCore:
                 validators[f"validate_{col.column_id}"] = create_vector_validator(col)
                 field_definitions[col.column_id] = (NumpyArray | None, Field(default=None))
             else:
-                # if col.is_file_column:
-                #     # Create URL validator
-                #     def create_url_validator(col: ColumnMetadata):
-                #         @field_validator(col.column_id, mode="after")
-                #         @classmethod
-                #         def url_validator(cls, v: str | None) -> str | None:
-                #             return validate_url(v) if v else None
+                if col.is_file_column:
+                    # Create URL validator
+                    def create_url_validator(col: ColumnMetadata):
+                        @field_validator(col.column_id, mode="after")
+                        @classmethod
+                        def url_validator(cls, v: str | None) -> str | None:
+                            return validate_url(v, error_cls=ValueError) if v else None
 
-                #         return url_validator
+                        return url_validator
 
-                #     validators[f"validate_{col.column_id}"] = create_url_validator(col)
+                    validators[f"validate_{col.column_id}"] = create_url_validator(col)
                 # Get the Python type from ColumnDtype
                 py_type = col.dtype.to_python_type()
                 field_definitions[col.column_id] = (py_type | None, Field(default=None))
@@ -3175,14 +3174,33 @@ class GenerativeTableCore:
     def _jsonify(x: Any) -> Any:
         return x.tolist() if isinstance(x, np.ndarray) else x
 
+    def validate_row_data(self, data: dict[str, Any]):
+        try:
+            self.data_table_model.model_validate(data, strict=False)
+        except ValidationError as e:
+            # Set invalid value to None, and save original value to state
+            msg = ""
+            for error in e.errors():
+                if len(error["loc"]) != 1:
+                    logger.warning(
+                        f"Cannot handle row data validation error with nested loc: {repr(e)}"
+                    )
+                    continue
+                col = error["loc"][0]
+                msg += f'Column "{col}": {error.get("msg", "")}. '
+            raise BadInputError(f"Row data contains errors. {msg}") from e
+
     def _validate_row_data(self, data: dict[str, Any]) -> DataTableRow:
         try:
             row = self.data_table_model.model_validate(data, strict=False)
         except ValidationError as e:
             # Set invalid value to None, and save original value to state
             for error in e.errors():
-                if len(error["loc"]) > 1:
-                    raise BadInputError(f"Input data contains errors: {e}") from e
+                if len(error["loc"]) != 1:
+                    logger.warning(
+                        f"Cannot handle row data validation error with nested loc: {repr(e)}"
+                    )
+                    continue
                 col = error["loc"][0]
                 state = data.get(f"{col}_", {})
                 data[col], data[f"{col}_"] = (
@@ -3193,7 +3211,7 @@ class GenerativeTableCore:
             try:
                 row = self.data_table_model.model_validate(data, strict=False)
             except ValidationError as e:
-                raise BadInputError(f"Input data contains errors: {e}") from e
+                raise BadInputError(f"Row data contains errors: {e}") from e
         return row
 
     # Row Create Ops

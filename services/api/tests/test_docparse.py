@@ -56,9 +56,7 @@ async def test_convert_pdf_document_to_markdown(doc_path: str):
     with open(doc_path, "rb") as f:
         doc_content_bytes = f.read()
 
-    api_response_data = await loader.retrieve_document_content(
-        basename(doc_path), doc_content_bytes
-    )
+    api_response_data = await loader._parse_document(basename(doc_path), doc_content_bytes)
 
     api_document_content = api_response_data.get("document", {})
 

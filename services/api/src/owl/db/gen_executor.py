@@ -520,7 +520,9 @@ class GenExecutor(_Executor):
         # Process inputs and dependencies
         if self._regen_strategy is None:
             _body: RowAdd = self.body
-            self._column_dict = {k: v for k, v in _body.data.items() if k in self._col_map}
+            self._column_dict = {
+                k: v for k, v in _body.data.items() if k in self._col_map and not k.endswith("_")
+            }
         else:
             _body: RowRegen = self.body
             _row = await self.table.get_row(self._row_id)
@@ -1387,7 +1389,8 @@ async def _load_uri_as_base64(uri: str | None) -> str | AudioContent | ImageCont
                         f"{', '.join(DOCUMENT_FILE_EXTENSIONS + AUDIO_FILE_EXTENSIONS + IMAGE_FILE_EXTENSIONS)}"
                     )
                 )
-    except BadInputError:
+    except BadInputError as e:
+        logger.warning(f'Failed to parse file "{uri}" due to error: {repr(e)}')
         raise
     except Exception as e:
         logger.warning(f'Failed to parse file "{uri}" due to error: {repr(e)}')

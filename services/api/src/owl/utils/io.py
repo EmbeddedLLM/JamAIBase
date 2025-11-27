@@ -106,22 +106,25 @@ def _is_private_or_local_ip(ip: str) -> bool:
     return addr.is_private or addr.is_loopback or addr.is_link_local
 
 
-def validate_url(url: str) -> str:
-    parsed = urlparse(url)
+def validate_url(url: str, *, error_cls: type[Exception] = BadInputError) -> str:
+    try:
+        parsed = urlparse(url)
+    except Exception as e:
+        raise error_cls(f'URL "{url}" is invalid: {e}') from e
     if parsed.scheme == "s3":
         return url
     if parsed.scheme != "https":
-        raise BadInputError(f"Unsupported scheme: {parsed.scheme}")
+        raise error_cls(f'URL "{url}" is invalid: Scheme is not "https".')
     if not parsed.hostname:
-        raise BadInputError("URL must contain hostname.")
+        raise error_cls(f'URL "{url}" is invalid: Missing hostname.')
     try:
         ips = {info[4][0] for info in socket.getaddrinfo(parsed.hostname, None)}
     except socket.gaierror as e:
-        raise BadInputError("Failed to resolve hostname.") from e
+        raise error_cls(f'URL "{url}" is invalid: {e}') from e
     if not ips:
-        raise BadInputError("Failed to resolve hostname.")
+        raise error_cls(f'URL "{url}" is invalid: Failed to resolve hostname.')
     if any(_is_private_or_local_ip(ip) for ip in ips):
-        raise BadInputError(f"Target '{url}' resolves to private or local IP.")
+        raise error_cls(f'URL "{url}" is invalid: Hostname resolves to private or local IP.')
     return url
 
 
@@ -168,14 +171,14 @@ async def open_uri_async(uri: str) -> AsyncGenerator[tuple[AsyncResponse, str], 
 
 def get_bytes_size_mb(bytes_content: bytes, decimal_places: int = 3) -> float:
     """
-    Convert bytes to megabytes (MB).
+    Convert bytes to Mebibyte (MiB).
 
     Args:
         bytes_content (bytes): The content in bytes to be calculated.
         decimal_places (int, optional): Number of decimal places to round to. Defaults to 3.
 
     Returns:
-        float: The converted value in megabytes (MB)
+        float: The converted value in Mebibyte (MiB)
     """
     mb_value = len(bytes_content) / (1024 * 1024)  # 1 MB = 1024 KB = 1024 * 1024 bytes
     return round(mb_value, decimal_places)

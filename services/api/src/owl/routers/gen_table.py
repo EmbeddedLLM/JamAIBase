@@ -552,6 +552,19 @@ async def add_rows(
     billing.has_gen_table_quota(table)
     billing.has_db_storage_quota()
     billing.has_egress_quota()
+    # Validate data
+    try:
+        [table.validate_row_data(d) for d in body.data]
+    except Exception as e:
+        logger.info(
+            (
+                "Row data validation failed. "
+                f'Table={table.schema_id}."{table.table_metadata.short_id}" '
+                f"Org={org.id} "
+                f"User={user.id} "
+                f"Error={repr(e)}"
+            )
+        )
     executor = MultiRowGenExecutor(
         request=request,
         table=table,
@@ -840,6 +853,19 @@ async def update_rows(
     billing.has_gen_table_quota(table)
     billing.has_db_storage_quota()
     billing.has_egress_quota()
+    # Validate data
+    try:
+        {row_id: table.validate_row_data(d) for row_id, d in body.data.items()}
+    except Exception as e:
+        logger.info(
+            (
+                "Row data validation failed. "
+                f'Table={table.schema_id}."{table.table_metadata.short_id}" '
+                f"Org={org.id} "
+                f"User={user.id} "
+                f"Error={repr(e)}"
+            )
+        )
     await table.update_rows(body.data)
     return OkResponse()
 
@@ -935,14 +961,24 @@ async def embed_file(
         content_type=mime,
         filename=file_name,
     )
-    # if overwrite:
-    #     file_table.delete_file(file_name=file_name)
     # --- Add into Knowledge Table --- #
     logger.info(f'{request_id} - Parsing file "{file_name}".')
     doc_parser = GeneralDocLoader(request_id=request_id)
-    chunks = await doc_parser.load_document_chunks(
-        file_name, file_content, data.chunk_size, data.chunk_overlap
-    )
+    try:
+        chunks = await doc_parser.load_document_chunks(
+            file_name, file_content, data.chunk_size, data.chunk_overlap
+        )
+    except BadInputError as e:
+        logger.warning(f'Failed to parse file "{file_uri}" due to error: {repr(e)}')
+        raise
+    except Exception as e:
+        logger.warning(f'Failed to parse file "{file_uri}" due to error: {repr(e)}')
+        raise BadInputError(
+            (
+                f'Sorry we encountered an issue while processing your file "{file_name}". '
+                "Please ensure the file is not corrupted and is in a supported format."
+            )
+        ) from e
     logger.info(f'{request_id} - Embedding file "{file_name}" with {len(chunks):,d} chunks.')
 
     # --- Extract title --- #
