@@ -52,20 +52,26 @@ export async function load({ data, depends, fetch }) {
 	};
 
 	const getModelPresets = async () => {
-		const response = await fetch(
-			'https://raw.githubusercontent.com/EmbeddedLLM/JamAIBase/refs/heads/main/services/api/src/owl/configs/preset_models.json',
-			{
-				method: 'GET'
+		try {
+			const response = await fetch(
+				'https://raw.githubusercontent.com/EmbeddedLLM/JamAIBase/refs/heads/main/services/api/src/owl/configs/preset_models.json',
+				{
+					method: 'GET'
+				}
+			);
+
+			if (!response.ok) {
+				const error = await response.text();
+				throw new Error(
+					`Failed to fetch model presets. Status: ${response.status}. Body: ${error}`
+				);
 			}
-		);
 
-		if (!response.ok) {
-			const error = await response.text();
+			return { data: (await response.json()) as ModelConfig[] };
+		} catch (error) {
 			logger.error('MODELPRESETS_GET_ERROR', error);
-			return { error: response.status, message: 'Failed to fetch model presets' };
+			return { data: [] as ModelConfig[] };
 		}
-
-		return { data: (await response.json()) as ModelConfig[] };
 	};
 
 	return {
