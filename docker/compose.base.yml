@@ -204,7 +204,7 @@ services:
       - ../docker_data/minio:/data
 
   docling:
-    image: ghcr.io/embeddedllm/docling-serve:20250528
+    image: ghcr.io/embeddedllm/docling-serve-cu128:v1.5.0-20251128
     healthcheck:
       test: ["CMD-SHELL", "curl --fail http://localhost:5001/health || exit 1"]
       interval: 10s

@@ -1,0 +1,14 @@
+{
+  "document": {
+    "filename": "(2017.06.30) NMT in Linear Time (ByteNet).pptx",
+    "md_content": "# Neural Machine Translation in Linear Time (ByteNet)\n\nAuthors:\n\n- Nal Kalchbrenner\n- Lasse Espeholt\n- Karen Simonyan\n- Aäron van den Oord\n- Alex Graves\n- Koray Kavukcuoglu\n\nPresented by: Johnny\n\n1\n\nA 2016 paper from DeepMind\n\n=====Page===Break=====\n\n# Weaknesses of RNN-based Enc-Dec\n\nRNNs have an inherently serial structure that prevents them from being run in parallel along the sequence length during training and evaluation.\n\nForward and backward signals in a RNN also need to traverse the full distance of the serial path to reach from one token in the sequence to another.\n\n- The larger the distance, the harder it is to learn the dependencies between the tokens [2].\n\nMany processes the source sequence into a constant size representation, burdening the model with a memorization step.\n\n2\n\n=====Page===Break=====\n\n# ByteNet\n\n3\n\nThe encoder processes the source string into a representation and is formed of one-dimensional dilated convolutional layers.\n\nThe decoder is a language model that is formed of one-dimensional dilated convolutional layers that are masked. \n\n<!-- image -->\n\nEncoder\n\nDecoder",
+    "json_content": null,
+    "html_content": null,
+    "text_content": null,
+    "doctags_content": null
+  },
+  "status": "success",
+  "errors": [],
+  "processing_time": 0.08337057009339333,
+  "timings": {}
+}

@@ -416,6 +416,8 @@ class DoclingLoader(BaseLoader):
     A class for loading and processing documents using Docling-Serve API.
     """
 
+    API_VERSION = "v1"
+
     def __init__(
         self,
         request_id: str = "",
@@ -483,7 +485,9 @@ class DoclingLoader(BaseLoader):
         try:
             # Step 1: Start async conversion
             response = await self.http_aclient.post(
-                f"{self.docling_serve_url}/v1alpha/convert/file/async", files=files, data=data
+                f"{self.docling_serve_url}/{self.API_VERSION}/convert/file/async",
+                files=files,
+                data=data,
             )
             response.raise_for_status()
             task_id_data = response.json()
@@ -492,7 +496,7 @@ class DoclingLoader(BaseLoader):
                 raise UnexpectedError("Docling-Serve did not return a task_id.")
 
             # Step 2: Poll for completion
-            poll_url = f"{self.docling_serve_url}/v1alpha/status/poll/{task_id}"
+            poll_url = f"{self.docling_serve_url}/{self.API_VERSION}/status/poll/{task_id}"
             time_slept = 0
             sleep_for = 1
             task_status = None
@@ -529,7 +533,7 @@ class DoclingLoader(BaseLoader):
                 raise BadInputError(f'Your document "{file_name}" took too long to parse.')
 
             # Step 3: Fetch result
-            result_url = f"{self.docling_serve_url}/v1alpha/result/{task_id}"
+            result_url = f"{self.docling_serve_url}/{self.API_VERSION}/result/{task_id}"
             result_resp = await self.http_aclient.get(result_url, timeout=60)
             result_resp.raise_for_status()
             return result_resp.json()

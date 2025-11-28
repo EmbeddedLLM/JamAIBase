@@ -40,8 +40,9 @@ def get_canonical_json_hash(data: dict) -> str:
 @pytest.mark.parametrize(
     "doc_path",
     [
-        FILES["Swire_AR22_e_230406_sample.pdf"],
         FILES["GitHub 表单架构语法 - GitHub 文档.pdf"],
+        FILES["(2017.06.30) NMT in Linear Time (ByteNet).pptx"],
+        FILES["Claims Form.xlsx"],
     ],
     ids=lambda x: basename(x),
 )
@@ -52,6 +53,7 @@ async def test_convert_pdf_document_to_markdown(doc_path: str):
     loader = DoclingLoader(
         request_id="test_request",
         docling_serve_url="http://localhost:5001",
+        page_break_placeholder="=====Page===Break=====",
     )
     with open(doc_path, "rb") as f:
         doc_content_bytes = f.read()

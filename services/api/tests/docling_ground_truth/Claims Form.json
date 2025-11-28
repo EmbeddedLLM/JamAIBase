@@ -1,0 +1,14 @@
+{
+  "document": {
+    "filename": "Claims Form.xlsx",
+    "md_content": "| Claims Form   |\n|---------------|\n| Eagle Sdn Bhd |\n\n| Employee   | Employee   | Johnny           | Date   | 2023-07-31 00:00:00   |\n|------------|------------|------------------|--------|-----------------------|\n| E-mail     | E-mail     | johnny@eagle.com | None   | None                  |\n\n| Itemized Expenses    |\n|----------------------|\n| No                   |\n| 1                    |\n| 2                    |\n| TOTAL                |\n\n| Date                | Description               | Ref         | Cost    |\n|---------------------|---------------------------|-------------|---------|\n| 2023-07-02 00:00:00 | AirAsia 2023-07-06 U7BSKZ | U7BSKZ      | 1733    |\n| 2023-07-03 00:00:00 | Petrol                    | Credit Card | 37.99   |\n| None                | None                      | None        | None    |\n\n| ……………………………..…………   | ……………………………..…………   |\n|---------------------|---------------------|\n| EMPLOYEE SIGNATURE  | None                |\n\n<!-- image -->\n\n=====Page===Break=====\n\n| Claims Form   |\n|---------------|\n| Eagle Sdn Bhd |\n\n| Employee   | Employee   | Johnny           | Date   | 2023-08-31 00:00:00   |\n|------------|------------|------------------|--------|-----------------------|\n| E-mail     | E-mail     | johnny@eagle.com | None   | None                  |\n\n| Itemized Expenses    |\n|----------------------|\n| No                   |\n| 1                    |\n| 2                    |\n| TOTAL                |\n\n| Date                | Description               | Ref            | Cost    |\n|---------------------|---------------------------|----------------|---------|\n| 2023-08-06 00:00:00 | Grab to airport           | A-552EREQGTFL5 | 25      |\n| 2023-08-31 00:00:00 | AirAsia 2023-08-31 UV5LZR | Credit Card    | 1200    |\n| None                | None                      | None           | None    |\n\n| ……………………………..…………   | ……………………………..…………   |\n|---------------------|---------------------|\n| EMPLOYEE SIGNATURE  | None                |\n\n<!-- image -->",
+    "json_content": null,
+    "html_content": null,
+    "text_content": null,
+    "doctags_content": null
+  },
+  "status": "success",
+  "errors": [],
+  "processing_time": 0.6776634976267815,
+  "timings": {}
+}
