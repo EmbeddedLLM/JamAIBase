@@ -669,7 +669,7 @@ class DeploymentRouter:
                         yield self._stream_delta(
                             Delta(
                                 role="assistant",
-                                reasoning_content=f'Searched the web for "{chunk.item.action.query}".',
+                                reasoning_content=f'\n\nSearched the web for "{chunk.item.action.query}".',
                             )
                         )
                         yield self._stream_delta(Delta(role="assistant", reasoning_content="\n\n"))
@@ -679,7 +679,7 @@ class DeploymentRouter:
                     yield self._stream_delta(
                         Delta(
                             role="assistant",
-                            reasoning_content=f"Ran Python code:\n\n```python\n{code_snippet}\n```",
+                            reasoning_content=f"\n\nRan Python code:\n\n```python\n{code_snippet}\n```",
                         )
                     )
                     yield self._stream_delta(Delta(role="assistant", reasoning_content="\n\n"))

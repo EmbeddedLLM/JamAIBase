@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { ChevronRight } from '@lucide/svelte';
+	import { Sparkle } from '@lucide/svelte';
 	import converter from '$lib/showdown';
 	import { chatCitationPattern } from '$lib/constants';
 	import { citationReplacer } from '$lib/utils';
@@ -144,7 +144,7 @@
 			<div class="flex h-1 grow flex-col items-center gap-2 overflow-auto px-8 py-4">
 				{#if showOutputDetails.reasoningTime}
 					<div class="mb-2 flex select-none items-center gap-2 self-start text-sm text-[#667085]">
-						<ChevronRight size={16} />
+						<Sparkle size={16} />
 						Thought for {showOutputDetails.reasoningTime.toFixed()} second{Number(
 							showOutputDetails.reasoningTime.toFixed()
 						) > 1
