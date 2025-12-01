@@ -489,6 +489,8 @@ class DeploymentRouter:
                 hyperparams.pop("stop", None)
             else:
                 hyperparams["max_completion_tokens"] = hyperparams.pop("max_tokens", None)
+        elif ctx.inference_provider == CloudProvider.ELLM:
+            pass
         else:
             tools = [t for t in tools if t.get("type", "") not in OPENAI_HOSTED_TOOLS]
 
