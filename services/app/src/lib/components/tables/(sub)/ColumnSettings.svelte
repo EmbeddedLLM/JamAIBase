@@ -19,6 +19,7 @@
 	import ModelSelect from '$lib/components/preset/ModelSelect.svelte';
 	import PromptEditor from '$lib/components/preset/PromptEditor.svelte';
 	import Range from '$lib/components/Range.svelte';
+	import Checkbox from '$lib/components/Checkbox.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import { Label } from '$lib/components/ui/label';
 	import { Button } from '$lib/components/ui/button';
@@ -342,6 +343,14 @@
 											(selectedGenConfig.max_tokens ?? 0) > modelDetails.context_length
 										) {
 											selectedGenConfig.max_tokens = modelDetails.context_length;
+										}
+
+										// Removes openai only tools for non-openai models
+										if (!modelDetails?.id.startsWith('openai/')) {
+											const filterTools = selectedGenConfig.tools?.filter(
+												(tool) => !['web_search', 'code_interpreter'].includes(tool.type)
+											);
+											selectedGenConfig.tools = filterTools?.length === 0 ? null : filterTools;
 										}
 									}}
 									class="w-64 border-transparent bg-[#F9FAFB] hover:bg-[#e1e2e6] data-dark:bg-[#42464e]"
@@ -669,42 +678,118 @@
 												/>
 											</div>
 
-											<div class="flex flex-col space-y-1">
-												<Label class="text-xs sm:text-sm">Reasoning effort</Label>
+											{#if $modelsAvailable
+												.find((val) => val.id == selectedGenConfig.model)
+												?.capabilities.includes('reasoning')}
+												<div class="flex flex-col space-y-1">
+													<Label class="text-xs sm:text-sm">Reasoning effort</Label>
 
-												<Select.Root
-													allowDeselect
-													type="single"
-													bind:value={() => selectedGenConfig.reasoning_effort ?? '',
-													(v) => (selectedGenConfig.reasoning_effort = v || null)}
-												>
-													<Select.Trigger
-														title="Reasoning effort"
-														class="mb-1 flex h-10 min-w-full items-center justify-between gap-8 border-transparent bg-[#F2F4F7] pl-3 pr-2 hover:bg-[#e1e2e6] data-dark:bg-[#42464e]"
+													<Select.Root
+														allowDeselect
+														type="single"
+														bind:value={() => selectedGenConfig.reasoning_effort ?? '',
+														(v) => (selectedGenConfig.reasoning_effort = v || null)}
 													>
-														{#snippet children()}
-															<span
-																class="line-clamp-1 w-full whitespace-nowrap text-left font-normal capitalize"
-															>
-																{selectedGenConfig.reasoning_effort ?? 'Default'}
-															</span>
-														{/snippet}
-													</Select.Trigger>
-													<Select.Content
-														data-testid="org-plan-select-list"
-														class="max-h-64 overflow-y-auto"
-													>
-														{#each reasoningEffortEnum as reasoningEffort}
-															<Select.Item
-																value={reasoningEffort}
-																class="flex cursor-pointer justify-between gap-10 capitalize"
-															>
-																{reasoningEffort}
-															</Select.Item>
-														{/each}
-													</Select.Content>
-												</Select.Root>
-											</div>
+														<Select.Trigger
+															title="Reasoning effort"
+															class="mb-1 flex h-10 min-w-full items-center justify-between gap-8 border-transparent bg-[#F2F4F7] pl-3 pr-2 hover:bg-[#e1e2e6] data-dark:bg-[#42464e]"
+														>
+															{#snippet children()}
+																<span
+																	class="line-clamp-1 w-full whitespace-nowrap text-left font-normal capitalize"
+																>
+																	{selectedGenConfig.reasoning_effort ?? 'Default'}
+																</span>
+															{/snippet}
+														</Select.Trigger>
+														<Select.Content
+															data-testid="org-plan-select-list"
+															class="max-h-64 overflow-y-auto"
+														>
+															{#each reasoningEffortEnum as reasoningEffort}
+																<Select.Item
+																	value={reasoningEffort}
+																	class="flex cursor-pointer justify-between gap-10 capitalize"
+																>
+																	{reasoningEffort}
+																</Select.Item>
+															{/each}
+														</Select.Content>
+													</Select.Root>
+												</div>
+											{/if}
+
+											{#if selectedGenConfig.model?.startsWith('openai/')}
+												<div class="flex flex-col gap-2 space-y-1">
+													<Label class="text-xs sm:text-sm">OpenAI Tools</Label>
+
+													<div class="flex items-center gap-2 pl-1">
+														<Checkbox
+															disabled={readonly}
+															id="openai-tool-websearch"
+															name="openai-tool-websearch"
+															class="[&>svg]:h-3 [&>svg]:w-3 [&>svg]:translate-x-[1px]"
+															bind:checked={() =>
+																!!selectedGenConfig.tools?.find(
+																	(tool) => tool.type === 'web_search'
+																),
+															() => {
+																if (
+																	selectedGenConfig.tools?.find(
+																		(tool) => tool.type === 'web_search'
+																	)
+																) {
+																	const filterTools = selectedGenConfig.tools.filter(
+																		(tool) => tool.type !== 'web_search'
+																	);
+																	selectedGenConfig.tools =
+																		filterTools.length === 0 ? null : filterTools;
+																} else {
+																	selectedGenConfig.tools = [
+																		...(selectedGenConfig.tools ?? []),
+																		{ type: 'web_search' }
+																	];
+																}
+															}}
+														/>
+
+														<Label for="openai-tool-websearch">Web Search</Label>
+													</div>
+
+													<div class="flex items-center gap-2 pl-1">
+														<Checkbox
+															disabled={readonly}
+															id="openai-tool-codeinterpreter"
+															name="openai-tool-codeinterpreter"
+															class="[&>svg]:h-3 [&>svg]:w-3 [&>svg]:translate-x-[1px]"
+															bind:checked={() =>
+																!!selectedGenConfig.tools?.find(
+																	(tool) => tool.type === 'code_interpreter'
+																),
+															() => {
+																if (
+																	selectedGenConfig.tools?.find(
+																		(tool) => tool.type === 'code_interpreter'
+																	)
+																) {
+																	const filterTools = selectedGenConfig.tools.filter(
+																		(tool) => tool.type !== 'code_interpreter'
+																	);
+																	selectedGenConfig.tools =
+																		filterTools.length === 0 ? null : filterTools;
+																} else {
+																	selectedGenConfig.tools = [
+																		...(selectedGenConfig.tools ?? []),
+																		{ type: 'code_interpreter' }
+																	];
+																}
+															}}
+														/>
+
+														<Label for="openai-tool-codeinterpreter">Code Interpreter</Label>
+													</div>
+												</div>
+											{/if}
 										</div>
 									</div>
 								</div>

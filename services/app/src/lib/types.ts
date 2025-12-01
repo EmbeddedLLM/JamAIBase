@@ -1,7 +1,7 @@
 import type { AxiosRequestConfig } from 'axios';
 import type { Component } from 'svelte';
 import { z } from 'zod';
-import type { genTableDTypes, userRoles } from './constants';
+import type { genTableDTypes, MODEL_CAPABILITIES, userRoles } from './constants';
 
 export type AvailableModel = {
 	id: string;
@@ -21,7 +21,7 @@ export type ModelConfig = {
 	type: 'completion' | 'llm' | 'embed' | 'rerank';
 	name: string;
 	owned_by: string | null;
-	capabilities: ('completion' | 'chat' | 'tool' | 'image' | 'audio' | 'embed' | 'rerank')[];
+	capabilities: (typeof MODEL_CAPABILITIES)[number][];
 	context_length: number;
 	languages: string[];
 	max_output_tokens: number | null;
@@ -232,6 +232,32 @@ export interface PythonGenConfig {
 	python_code: string;
 }
 
+export interface WebSearchTool {
+	type: 'web_search';
+}
+export interface CodeInterpreterTool {
+	type: 'code_interpreter';
+	container?: {
+		type: 'auto';
+	};
+}
+export interface FunctionTool {
+	type: 'function';
+	function: {
+		name: string;
+		description?: string | null;
+		parameters?: {
+			type: string;
+			properties: {
+				type: string;
+				description: string;
+				enum: string[];
+			};
+		} | null;
+		strict?: boolean;
+	};
+}
+
 export interface LLMGenConfig {
 	object: 'gen_config.llm';
 	model?: string;
@@ -247,6 +273,7 @@ export interface LLMGenConfig {
 		concat_reranker_input?: boolean;
 		inline_citations?: boolean;
 	} | null;
+	tools?: (WebSearchTool | CodeInterpreterTool | FunctionTool)[] | null;
 	temperature?: number;
 	top_p?: number;
 	stop?: string[] | null;
