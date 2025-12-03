@@ -519,7 +519,7 @@ class DeploymentRouter:
             return
         # Disable reasoning if requested
         if (
-            reasoning_effort in ("disable", "minimal")
+            reasoning_effort in ("disable", "minimal", "none")
             or thinking_budget == 0
             or (reasoning_effort is None and thinking_budget is None)
         ):
@@ -540,7 +540,14 @@ class DeploymentRouter:
                 hyperparams["thinking"] = {"type": "disabled"}
                 return
             elif ctx.inference_provider == CloudProvider.OPENAI:
-                if "gpt-5" in ctx.routing_id:
+                if "gpt-5.1" in ctx.routing_id:
+                    # gpt-5.1: Supported values are: 'none', 'low', 'medium', and 'high'.
+                    hyperparams["reasoning"] = {
+                        "effort": "none",
+                        "summary": reasoning_summary,
+                    }
+                    return
+                elif "gpt-5" in ctx.routing_id:
                     hyperparams["reasoning"] = {
                         "effort": "minimal",
                         "summary": reasoning_summary,
@@ -668,20 +675,22 @@ class DeploymentRouter:
                         and hasattr(chunk.item.action, "query")
                         and chunk.item.action.query
                     ):
+                        yield self._stream_delta(Delta(role="assistant", reasoning_content="\n\n"))
                         yield self._stream_delta(
                             Delta(
                                 role="assistant",
-                                reasoning_content=f'\n\nSearched the web for "{chunk.item.action.query}".',
+                                reasoning_content=f'Searched the web for "{chunk.item.action.query}".',
                             )
                         )
                         yield self._stream_delta(Delta(role="assistant", reasoning_content="\n\n"))
                 elif isinstance(chunk.item, ResponseCodeInterpreterToolCall):
                     usage_stats["code_interpreter_calls"] += 1
                     code_snippet = chunk.item.code
+                    yield self._stream_delta(Delta(role="assistant", reasoning_content="\n\n"))
                     yield self._stream_delta(
                         Delta(
                             role="assistant",
-                            reasoning_content=f"\n\nRan Python code:\n\n```python\n{code_snippet}\n```",
+                            reasoning_content=f"Ran Python code:\n\n```python\n{code_snippet}\n```",
                         )
                     )
                     yield self._stream_delta(Delta(role="assistant", reasoning_content="\n\n"))
@@ -744,11 +753,13 @@ class DeploymentRouter:
             elif isinstance(item, ResponseFunctionWebSearch) and item.status == "completed":
                 usage_stats["web_search_calls"] += 1
                 if item.action and hasattr(item.action, "query") and item.action.query:
-                    reasoning_parts.append(f'Searched the web for "{item.action.query}".')
+                    reasoning_parts.append(f'\n\nSearched the web for "{item.action.query}".\n\n')
             elif isinstance(item, ResponseCodeInterpreterToolCall) and item.status == "completed":
                 usage_stats["code_interpreter_calls"] += 1
                 code_snippet = item.code
-                reasoning_parts.append(f"Ran Python code:\n\n```python\n{code_snippet}\n```")
+                reasoning_parts.append(
+                    f"\n\nRan Python code:\n\n```python\n{code_snippet}\n```\n\n"
+                )
             elif isinstance(item, ResponseOutputMessage) and item.status == "completed":
                 text_content = item.content[0].text if item.content else ""
                 result_parts.append(text_content)

@@ -1136,29 +1136,19 @@ class ChatRequestBase(BaseModel):
         ),
         examples=[{}],
     )
-    reasoning_effort: Literal["disable", "minimal", "low", "medium", "high"] | None = Field(
-        "minimal",
-        description=(
-            "Constrains effort on reasoning for reasoning models. "
-            "Currently supported values are `disable`, `minimal`, `low`, `medium`, and `high`. "
-            "Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning in a response. "
-            "For non-OpenAI models, `low` ~ 1024 tokens, `medium` ~ 2048 tokens, `high` ~ 4096 tokens. "
-            "Note that this parameter will be ignored when using models that do not support it, "
-            "such as non-reasoning models."
-        ),
-        examples=["low"],
-    )
-    reasoning_effort: Literal["disable", "minimal", "low", "medium", "high"] | None = Field(
-        None,
-        description=(
-            "Constrains effort on reasoning for reasoning models. "
-            "Currently supported values are `disable`, `minimal`, `low`, `medium`, and `high`. "
-            "Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning in a response. "
-            "For non-OpenAI models, `low` ~ 1024 tokens, `medium` ~ 4096 tokens, `high` ~ 8192 tokens. "
-            "Note that this parameter will be ignored when using models that do not support it, "
-            "such as non-reasoning models."
-        ),
-        examples=["low"],
+    reasoning_effort: Literal["disable", "minimal", "none", "low", "medium", "high"] | None = (
+        Field(
+            None,
+            description=(
+                "Constrains effort on reasoning for reasoning models. "
+                'Currently supported values are `None`, "disable", "none", "minimal", "low", "medium", and "high". '
+                "Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning in a response. "
+                "For non-OpenAI models, `low` ~ 1024 tokens, `medium` ~ 4096 tokens, `high` ~ 8192 tokens. "
+                "Note that this parameter will be ignored when using models that do not support it, "
+                "such as non-reasoning models."
+            ),
+            examples=["low"],
+        )
     )
     thinking_budget: int | None = Field(
         None,
