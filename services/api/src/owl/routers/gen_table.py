@@ -553,18 +553,7 @@ async def add_rows(
     billing.has_db_storage_quota()
     billing.has_egress_quota()
     # Validate data
-    try:
-        [table.validate_row_data(d) for d in body.data]
-    except Exception as e:
-        logger.info(
-            (
-                "Row data validation failed. "
-                f'Table={table.schema_id}."{table.table_metadata.short_id}" '
-                f"Org={org.id} "
-                f"User={user.id} "
-                f"Error={repr(e)}"
-            )
-        )
+    [table.validate_row_data(d) for d in body.data]
     executor = MultiRowGenExecutor(
         request=request,
         table=table,
@@ -854,18 +843,7 @@ async def update_rows(
     billing.has_db_storage_quota()
     billing.has_egress_quota()
     # Validate data
-    try:
-        {row_id: table.validate_row_data(d) for row_id, d in body.data.items()}
-    except Exception as e:
-        logger.info(
-            (
-                "Row data validation failed. "
-                f'Table={table.schema_id}."{table.table_metadata.short_id}" '
-                f"Org={org.id} "
-                f"User={user.id} "
-                f"Error={repr(e)}"
-            )
-        )
+    {row_id: table.validate_row_data(d) for row_id, d in body.data.items()}
     await table.update_rows(body.data)
     return OkResponse()
 

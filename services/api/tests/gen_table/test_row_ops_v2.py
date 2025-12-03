@@ -617,26 +617,15 @@ def test_knowledge_table_embedding(
         row = rows.values[3]
         assert row["Title"] is None, row
         assert row["Text"] is None, row
-        # If embedding with invalid length is added, it will be coerced to None
-        # Original vector will be saved into state
-        response = add_table_rows(
-            client,
-            table_type,
-            table.id,
-            [{"Title": "test", "Title Embed": [1, 2, 3]}],
-            stream=stream,
-        )
-        # We currently dont return anything if LLM is not called
-        assert len(response.rows) == 0 if stream else 1
-        assert all(len(r.columns) == 0 for r in response.rows)
-        # Check the vectors
-        rows = list_table_rows(client, table_type, table.id)
-        assert rows.total == 5
-        row = rows.values[-1]
-        assert row["Title"] == "test", f"{row['Title']=}"
-        assert row["Title Embed"] is None, f"{row['Title Embed']=}"
-        assert row["Text"] is None, f"{row['Title']=}"
-        assert_is_vector_or_none(row["Text Embed"], allow_none=False)
+        # Embedding with invalid length will be rejected
+        with pytest.raises(BadInputError, match="Array input must have length 256"):
+            add_table_rows(
+                client,
+                table_type,
+                table.id,
+                [{"Title": "test", "Title Embed": [1, 2, 3]}],
+                stream=stream,
+            )
 
 
 @flaky(max_runs=3, min_passes=1)
@@ -1697,6 +1686,7 @@ def test_public_web_image(setup: ServingContext):
     - As input to model
     - Has valid raw and thumbnail URLs
     - Reject private URLs
+    - Reject malformed URL
     - Empty input is OK
     """
     table_type = TableType.ACTION
@@ -1729,18 +1719,21 @@ def test_public_web_image(setup: ServingContext):
         response = client.file.get_thumbnail_urls([image_uri])
         assert isinstance(response, GetURLResponse)
         assert response.urls[0] == image_uri
-        # Private URLs should be rejected
-        row = add_table_rows(
-            data=[dict(image="https://host.docker.internal:8080")], **kwargs
-        ).rows[0]
-        assert "cannot be opened" in row.columns["ocr"].content, row
-        row = add_table_rows(data=[dict(image="https://localhost")], **kwargs).rows[0]
-        assert "cannot be opened" in row.columns["ocr"].content, row
-        row = add_table_rows(data=[dict(image="https://192.168.0.1")], **kwargs).rows[0]
-        assert "cannot be opened" in row.columns["ocr"].content, row
         # Empty is OK
         row = add_table_rows(data=[dict()], **kwargs).rows[0]
         assert len(row.columns["ocr"].content) > 0, row
+        # Private URLs should be rejected
+        with pytest.raises(BadInputError, match="URL .+ invalid"):
+            add_table_rows(data=[dict(image="https://host.docker.internal:8080")], **kwargs)
+        with pytest.raises(BadInputError, match="URL .+ invalid"):
+            add_table_rows(data=[dict(image="https://localhost")], **kwargs)
+        with pytest.raises(BadInputError, match="URL .+ invalid"):
+            add_table_rows(data=[dict(image="https://192.168.0.1")], **kwargs)
+        # Malformed URL
+        with pytest.raises(BadInputError, match="URL .+ invalid"):
+            add_table_rows(
+                data=[dict(image='{"url": "https://host.docker.internal:8080"}')], **kwargs
+            )
 
 
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
@@ -2130,20 +2123,15 @@ def test_update_row(
 
         # Test updating data with wrong dtype
         data = dict(ID="2", int="str", float="str", bool="str")
-        response = client.table.update_table_rows(
-            table_type,
-            MultiRowUpdateRequest(table_id=table.id, data={row["ID"]: data}),
-        )
-        assert isinstance(response, OkResponse)
-        _rows = list_table_rows(client, table_type, table.id)
-        assert len(_rows.items) == 1
-        _row = _rows.values[0]
-        t2 = datetime.fromisoformat(_row["Updated at"])
-        assert _row["int"] is None
-        assert _row["float"] is None
-        assert _row["bool"] is None
-        _assert_dict_equal(row, _row, exclude=["Updated at", "int", "float", "bool"])
-        assert t2 > t1
+        with pytest.raises(BadInputError) as e:
+            client.table.update_table_rows(
+                table_type,
+                MultiRowUpdateRequest(table_id=table.id, data={row["ID"]: data}),
+            )
+        assert 'Column "int": Input should be a valid integer' in str(e.value)
+        assert 'Column "float": Input should be a valid number' in str(e.value)
+        assert 'Column "bool": Input should be a valid boolean' in str(e.value)
+        _assert_dict_equal(_row, list_table_rows(client, table_type, table.id).values[0])
 
         if table_type == TableType.KNOWLEDGE:
             # Test updating embedding columns directly
@@ -2163,26 +2151,20 @@ def test_update_row(
             _rows = list_table_rows(client, table_type, table.id)
             assert len(_rows.items) == 1
             _row = _rows.values[0]
-            t3 = datetime.fromisoformat(_row["Updated at"])
+            t2 = datetime.fromisoformat(_row["Updated at"])
             assert sum(_row["Title Embed"]) == 0
             assert sum(_row["Text Embed"]) == len(row["Text Embed"])
-            assert t3 > t2
+            assert t2 > t1
             # Test updating embedding columns with wrong length
-            response = client.table.update_table_rows(
-                table_type,
-                MultiRowUpdateRequest(
-                    table_id=table.id,
-                    data={row["ID"]: {"Title Embed": [0], "Text Embed": [0]}},
-                ),
-            )
-            assert isinstance(response, OkResponse)
-            _rows = list_table_rows(client, table_type, table.id)
-            assert len(_rows.items) == 1
-            _row = _rows.values[0]
-            t4 = datetime.fromisoformat(_row["Updated at"])
-            assert _row["Title Embed"] is None
-            assert _row["Text Embed"] is None
-            assert t4 > t3
+            with pytest.raises(BadInputError, match="Array input must have length 256"):
+                client.table.update_table_rows(
+                    table_type,
+                    MultiRowUpdateRequest(
+                        table_id=table.id,
+                        data={row["ID"]: {"Title Embed": [0], "Text Embed": [0]}},
+                    ),
+                )
+            _assert_dict_equal(_row, list_table_rows(client, table_type, table.id).values[0])
 
 
 @pytest.mark.parametrize("stream", **STREAM_PARAMS)

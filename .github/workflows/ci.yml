@@ -127,7 +127,7 @@ jobs:
             # Replace the org with the key in the .env file
             sed -i "s/$org=.*/$org=$key/g" .env
           done
-          echo "OWL_DB_INIT=False" >> .env
+          echo "OWL_DB_INIT=0" >> .env
           echo "OWL_COMPUTE_STORAGE_PERIOD_SEC=15" >> .env
           echo "OWL_STRIPE_WEBHOOK_SECRET_TEST=${OWL_STRIPE_WEBHOOK_SECRET_TEST}" >> .env
           echo "OWL_STRIPE_PUBLISHABLE_KEY_TEST=${OWL_STRIPE_PUBLISHABLE_KEY_TEST}" >> .env

@@ -247,7 +247,7 @@ async def log_request(request: Request, call_next):
 
     # Call request
     path = request.url.path
-    if "api/health" not in path:
+    if request.method in ("POST", "PATCH", "PUT", "DELETE"):
         logger.info(make_request_log_str(request))
     response = await call_next(request)
     response.headers["x-request-id"] = request_id

@@ -987,22 +987,17 @@ def test_add_row_wrong_dtype(
         assert "concept" in row.columns
 
         # Test adding data with wrong dtype
-        response = add_table_rows(
-            client,
-            table_type,
-            table.id,
-            [dict(good="dummy1", words="dummy2", stars="dummy3", inputs=TEXT)],
-            stream=stream,
-        )
-        rows = list_table_rows(client, table_type, TABLE_ID_A)
-        assert len(rows.items) == 2
-        row = rows.items[-1]
-        assert row["good"]["value"] is None, row["good"]
-        assert row["good"]["original"] == "dummy1", row["good"]
-        assert row["words"]["value"] is None, row["words"]
-        assert row["words"]["original"] == "dummy2", row["words"]
-        assert row["stars"]["value"] is None, row["stars"]
-        assert row["stars"]["original"] == "dummy3", row["stars"]
+        with pytest.raises(BadInputError) as e:
+            add_table_rows(
+                client,
+                table_type,
+                table.id,
+                [dict(good="dummy1", words="dummy2", stars="dummy3", inputs=TEXT)],
+                stream=stream,
+            )
+        assert 'Column "good": Input should be a valid boolean' in str(e.value)
+        assert 'Column "words": Input should be a valid integer' in str(e.value)
+        assert 'Column "stars": Input should be a valid number' in str(e.value)
 
 
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
@@ -1047,7 +1042,7 @@ def test_add_row_missing_columns(
             table_type,
             stream,
             TABLE_ID_A,
-            data=dict(good="dummy1", inputs=TEXT),
+            data=dict(good=True, inputs=TEXT),
         )
         if stream:
             responses = [r for r in response]
@@ -1057,8 +1052,7 @@ def test_add_row_missing_columns(
         rows = list_table_rows(client, table_type, TABLE_ID_A)
         assert len(rows.items) == 2
         row = rows.items[-1]
-        assert row["good"]["value"] is None, row["good"]
-        assert row["good"]["original"] == "dummy1", row["good"]
+        assert row["good"]["value"] is True, row["good"]
         assert row["words"]["value"] is None, row["words"]
         assert "original" not in row["words"], row["words"]
         assert row["stars"]["value"] is None, row["stars"]

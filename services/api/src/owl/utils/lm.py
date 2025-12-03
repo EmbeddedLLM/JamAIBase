@@ -384,7 +384,7 @@ class DeploymentRouter:
             )
         try:
             logger.info(
-                f'{self.id} - Request started for model "{self.config.id}" ({provider=}, {routing_id=}).'
+                f'Request started for model "{self.config.id}" ({provider=}, {routing_id=}, {self.id}).'
             )
             t0 = perf_counter()
             self.request.state.model_start_time = t0
@@ -396,7 +396,9 @@ class DeploymentRouter:
                 is_reasoning_model=is_reasoning_model,
             )
             self.request.state.timing["external_call"] = perf_counter() - t0
-            logger.info(f'{self.id} - Request completed for model "{self.config.id}".')
+            logger.info(
+                f'Request completed for model "{self.config.id}" ({provider=}, {routing_id=}, {self.id}).'
+            )
         except Exception as e:
             mapped_e = self._map_and_log_exception(e, deployment, api_key, **hyperparams)
             if isinstance(mapped_e, (ModelOverloadError, RateLimitExceedError)):
