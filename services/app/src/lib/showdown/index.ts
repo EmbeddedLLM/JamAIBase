@@ -15,5 +15,14 @@ const converter = new showdown.Converter({
 	extensions: [showdownHtmlEscape, codeblock, codehighlight, table]
 });
 
+const guideConverter = new showdown.Converter({
+	tables: true,
+	tasklists: true,
+	disableForced4SpacesIndentedSublists: true,
+	strikethrough: true,
+	ghCompatibleHeaderId: true,
+	extensions: [codeblock, codehighlight, table]
+});
+
 export default converter;
-export { codeblock, codehighlight, table };
+export { codeblock, codehighlight, guideConverter, table };

@@ -151,7 +151,7 @@
 
 .response-message blockquote {
 	@apply px-2;
-	@apply bg-white data-dark:bg-[#484C55];
+	@apply bg-[#FAFAFA] data-dark:bg-[#282C34];
 	@apply border border-[#DDD] data-dark:border-[#42464E];
 	@apply rounded-md;
 }
@@ -199,4 +199,21 @@
 	background-image: url('data:image/svg+xml;base64,PHN2Zw0KCXhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyINCgl2aWV3Qm94PSIwIDAgMjQgMjQiDQoJZmlsbD0ibm9uZSINCglzdHJva2U9IiNGRkYiDQoJc3Ryb2tlLXdpZHRoPSIyIg0KCXN0cm9rZS1saW5lY2FwPSJyb3VuZCINCglzdHJva2UtbGluZWpvaW49InJvdW5kIg0KPg0KCTxwb2x5bGluZSBwb2ludHM9IjIwIDYgOSAxNyA0IDEyIiAvPg0KPC9zdmc+');
 	background-position: center;
 	background-size: 13px;
+}
+
+.response-message .column-variable {
+	padding: 2px 6px;
+	border-radius: 8px;
+	border: 1px solid #e4e7ec;
+	font-size: 12px;
+	display: inline-block;
+	background-color: white;
+}
+
+.response-message .output-col {
+	color: #fd853a;
+}
+
+.response-message .input-col {
+	color: #7995e9;
 }

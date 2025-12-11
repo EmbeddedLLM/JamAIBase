@@ -15,6 +15,7 @@
 	import logger from '$lib/logger';
 	import type { GenTable, GenTableCol } from '$lib/types';
 
+	import HowToUseTab from './HowToUseTab.svelte';
 	import SelectKnowledgeTableDialog from './SelectKnowledgeTableDialog.svelte';
 	import ModelSelect from '$lib/components/preset/ModelSelect.svelte';
 	import PromptEditor from '$lib/components/preset/PromptEditor.svelte';
@@ -67,19 +68,44 @@
 			.filter((col) => col.id !== 'ID' && col.id !== 'Updated at') ?? []
 	);
 
-	let selectedTab: 'prompt' | 'rag_settings' = $state('prompt');
+	let selectedTab: 'prompt' | 'rag_settings' | 'how_to_use' = $state('prompt');
 	let showModelSettings = $state(true);
 
 	let isLoading = $state(false);
 
 	let isSelectingKnowledgeTable = $state(false);
 
+	const tabItems = $derived.by(() => {
+		if (!selectedGenConfig?.object) return [];
+
+		const tabs: { id: typeof selectedTab; title: string }[] = [];
+
+		if (selectedGenConfig.object !== 'gen_config.python') {
+			if (showPromptTab && selectedGenConfig.object !== 'gen_config.code') {
+				tabs.push({ id: 'prompt', title: 'Prompt' });
+			}
+
+			tabs.push({
+				id: 'rag_settings',
+				title: selectedGenConfig.object === 'gen_config.embed' ? 'Model Settings' : 'RAG'
+			});
+		} else {
+			tabs.push({ id: 'prompt', title: 'Code' });
+		}
+
+		if (['gen_config.llm', 'gen_config.python'].includes(selectedGenConfig.object)) {
+			tabs.push({ id: 'how_to_use', title: 'How to use' });
+		}
+
+		return tabs;
+	});
+
 	let promptVarCounter = $derived.by(() => {
 		const matches = [
 			...(selectedGenConfig?.object === 'gen_config.python'
 				? selectedGenConfig.python_code
 				: selectedGenConfig?.object === 'gen_config.llm'
-					? selectedGenConfig?.prompt ?? ''
+					? (selectedGenConfig?.prompt ?? '')
 					: ''
 			).matchAll(
 				selectedGenConfig?.object === 'gen_config.python'
@@ -98,11 +124,16 @@
 	$effect(() => {
 		if (showActual) resetValues();
 	});
+
 	function resetValues() {
-		if (showPromptTab && selectedGenConfig?.object !== 'gen_config.code') {
-			selectedTab = 'prompt';
+		const promptTab = tabItems.find((tab) => tab.id === 'prompt');
+
+		if (promptTab) {
+			selectedTab = promptTab.id;
+		} else if (tabItems[0]) {
+			selectedTab = tabItems[0].id;
 		} else {
-			selectedTab = 'rag_settings';
+			selectedTab = 'prompt';
 		}
 	}
 
@@ -217,39 +248,20 @@
 		<div class="relative flex h-full w-full flex-col data-dark:bg-[#0D0E11]">
 			<div
 				data-testid="column-settings-tabs"
-				style="grid-template-columns: {showPromptTab &&
-				selectedGenConfig?.object !== 'gen_config.code'
-					? '70px'
-					: ''} 140px;"
+				style="grid-template-columns: repeat({tabItems.length}, max-content);"
 				class="grid w-full flex-[0_0_auto] overflow-hidden rounded-t-lg border-t border-[#F2F4F7] bg-white text-sm font-medium data-dark:border-[#333] data-dark:bg-[#0D0E11]"
 			>
-				{#if selectedGenConfig?.object !== 'gen_config.python'}
-					{#if showPromptTab && selectedGenConfig?.object !== 'gen_config.code'}
-						<button
-							onclick={() => (selectedTab = 'prompt')}
-							class="relative flex max-h-10 min-h-10 items-center justify-center px-3 py-3 font-medium transition-colors {tableState
-								.columnSettings.isOpen
-								? selectedTab === 'prompt'
-									? 'text-[#1D2939] data-dark:text-[#98A2B3]'
-									: 'text-[#98A2B3] data-dark:text-[#1D2939]'
-								: 'text-[#667085]'}"
-						>
-							Prompt
-						</button>
-					{/if}
-
+				{#each tabItems as tab}
 					<button
-						onclick={() => (selectedTab = 'rag_settings')}
+						onclick={() => (selectedTab = tab.id)}
 						class="relative flex max-h-10 min-h-10 items-center justify-center gap-1 px-3 py-3 font-medium transition-colors {tableState
 							.columnSettings.isOpen
-							? selectedTab === 'rag_settings'
+							? selectedTab === tab.id
 								? 'text-[#1D2939] data-dark:text-[#98A2B3]'
 								: 'text-[#98A2B3] data-dark:text-[#1D2939]'
 							: 'text-[#667085]'}"
 					>
-						{#if selectedGenConfig?.object === 'gen_config.embed'}
-							Model Settings
-						{:else if selectedGenConfig?.object === 'gen_config.llm'}
+						{#if tab.id === 'rag_settings' && selectedGenConfig?.object === 'gen_config.llm'}
 							RAG
 							<span
 								style="background-color: {selectedGenConfig.rag_params
@@ -259,106 +271,100 @@
 							>
 								{selectedGenConfig.rag_params ? 'Enabled' : 'Disabled'}
 							</span>
+						{:else}
+							{tab.title}
 						{/if}
 					</button>
-				{:else}
-					<button
-						class="relative flex max-h-10 min-h-10 items-center justify-center px-3 py-3 font-medium transition-colors {tableState
-							.columnSettings.isOpen
-							? 'text-[#1D2939] data-dark:text-[#98A2B3]'
-							: 'text-[#667085]'}"
-					>
-						Code
-					</button>
-				{/if}
+				{/each}
 			</div>
 
 			{#if selectedGenConfig?.object}
-				<div
-					class="flex w-full flex-col items-start justify-between gap-2 border-t border-[#F2F4F7] bg-white px-3 pb-1.5 pt-2 data-dark:border-[#333] sm:flex-row sm:items-center"
-				>
-					<div class="flex items-center gap-2 text-sm">
-						<span
-							style="background-color: {!tableState.columnSettings.column?.gen_config
-								? '#7995E9'
-								: '#FD853A'};"
-							class:pr-1={tableState.columnSettings.column?.gen_config?.object !==
-								'gen_config.llm' || !tableState.columnSettings.column?.gen_config.multi_turn}
-							class="flex w-min select-none items-center whitespace-nowrap rounded-lg p-0.5 py-1"
-						>
-							<span class="px-1 text-xs font-medium capitalize text-white">
-								{!tableState.columnSettings.column?.gen_config ? 'input' : 'output'}
-							</span>
+				{#if selectedTab !== 'how_to_use'}
+					<div
+						class="flex w-full flex-col items-start justify-between gap-2 border-t border-[#F2F4F7] bg-white px-3 pb-1.5 pt-2 data-dark:border-[#333] sm:flex-row sm:items-center"
+					>
+						<div class="flex items-center gap-2 text-sm">
 							<span
-								style="color: {!tableState.columnSettings.column?.gen_config
+								style="background-color: {!tableState.columnSettings.column?.gen_config
 									? '#7995E9'
 									: '#FD853A'};"
-								class="w-min select-none whitespace-nowrap rounded-md bg-white px-1 text-xs font-medium"
+								class:pr-1={tableState.columnSettings.column?.gen_config?.object !==
+									'gen_config.llm' || !tableState.columnSettings.column?.gen_config.multi_turn}
+								class="flex w-min select-none items-center whitespace-nowrap rounded-lg p-0.5 py-1"
 							>
-								{tableState.columnSettings.column?.dtype}
+								<span class="px-1 text-xs font-medium capitalize text-white">
+									{!tableState.columnSettings.column?.gen_config ? 'input' : 'output'}
+								</span>
+								<span
+									style="color: {!tableState.columnSettings.column?.gen_config
+										? '#7995E9'
+										: '#FD853A'};"
+									class="w-min select-none whitespace-nowrap rounded-md bg-white px-1 text-xs font-medium"
+								>
+									{tableState.columnSettings.column?.dtype}
+								</span>
+
+								{#if tableState.columnSettings.column?.gen_config?.object === 'gen_config.llm' && tableState.columnSettings.column.gen_config.multi_turn}
+									<hr class="ml-1 h-3 border-l border-white" />
+									<div class="relative h-4 w-[18px]">
+										<MultiturnChatIcon class="absolute h-[18px] -translate-y-px text-white" />
+									</div>
+								{/if}
 							</span>
 
-							{#if tableState.columnSettings.column?.gen_config?.object === 'gen_config.llm' && tableState.columnSettings.column.gen_config.multi_turn}
-								<hr class="ml-1 h-3 border-l border-white" />
-								<div class="relative h-4 w-[18px]">
-									<MultiturnChatIcon class="absolute h-[18px] -translate-y-px text-white" />
+							<span class="line-clamp-2 break-all">
+								{tableState.columnSettings.column?.id}
+							</span>
+						</div>
+
+						<div class="flex flex-col items-start gap-2 overflow-auto sm:flex-row sm:items-center">
+							{#if (tableType !== 'knowledge' || showPromptTab) && selectedGenConfig.object === 'gen_config.llm'}
+								<div class="flex items-center gap-2 rounded-lg bg-[#F9FAFB] px-2.5 py-2">
+									<Label
+										for="multiturn-enabled"
+										class="flex min-w-max items-center gap-1 text-[#475467]"
+									>
+										<MultiturnChatIcon class="h-6" />
+										Multi-turn chat
+									</Label>
+									<Switch
+										disabled={readonly}
+										id="multiturn-enabled"
+										name="multiturn-enabled"
+										class="h-[20px] w-[30px] [&>[data-switch-thumb]]:h-4 [&>[data-switch-thumb]]:data-[state=checked]:translate-x-2.5"
+										bind:checked={selectedGenConfig.multi_turn}
+									/>
+								</div>
+
+								<div class="">
+									<ModelSelect
+										showCapabilities
+										disabled={readonly}
+										capabilityFilter="chat"
+										bind:selectedModel={selectedGenConfig.model!}
+										selectCb={(model) => {
+											const modelDetails = $modelsAvailable.find((val) => val.id == model);
+											if (
+												modelDetails &&
+												(selectedGenConfig.max_tokens ?? 0) > modelDetails.context_length
+											) {
+												selectedGenConfig.max_tokens = modelDetails.context_length;
+											}
+
+											// Removes openai only tools for non-openai models
+											if (!modelDetails?.id.startsWith('openai/')) {
+												const filterTools = selectedGenConfig.tools?.filter(
+													(tool) => !['web_search', 'code_interpreter'].includes(tool.type)
+												);
+												selectedGenConfig.tools = filterTools?.length === 0 ? null : filterTools;
+											}
+										}}
+										class="w-64 border-transparent bg-[#F9FAFB] hover:bg-[#e1e2e6] data-dark:bg-[#42464e]"
+									/>
 								</div>
 							{/if}
-						</span>
 
-						<span class="line-clamp-2 break-all">
-							{tableState.columnSettings.column?.id}
-						</span>
-					</div>
-
-					<div class="flex flex-col items-start gap-2 overflow-auto sm:flex-row sm:items-center">
-						{#if (tableType !== 'knowledge' || showPromptTab) && selectedGenConfig.object === 'gen_config.llm'}
-							<div class="flex items-center gap-2 rounded-lg bg-[#F9FAFB] px-2.5 py-2">
-								<Label
-									for="multiturn-enabled"
-									class="flex min-w-max items-center gap-1 text-[#475467]"
-								>
-									<MultiturnChatIcon class="h-6" />
-									Multi-turn chat
-								</Label>
-								<Switch
-									disabled={readonly}
-									id="multiturn-enabled"
-									name="multiturn-enabled"
-									class="h-[20px] w-[30px] [&>[data-switch-thumb]]:h-4 [&>[data-switch-thumb]]:data-[state=checked]:translate-x-2.5"
-									bind:checked={selectedGenConfig.multi_turn}
-								/>
-							</div>
-
-							<div class="">
-								<ModelSelect
-									showCapabilities
-									disabled={readonly}
-									capabilityFilter="chat"
-									bind:selectedModel={selectedGenConfig.model!}
-									selectCb={(model) => {
-										const modelDetails = $modelsAvailable.find((val) => val.id == model);
-										if (
-											modelDetails &&
-											(selectedGenConfig.max_tokens ?? 0) > modelDetails.context_length
-										) {
-											selectedGenConfig.max_tokens = modelDetails.context_length;
-										}
-
-										// Removes openai only tools for non-openai models
-										if (!modelDetails?.id.startsWith('openai/')) {
-											const filterTools = selectedGenConfig.tools?.filter(
-												(tool) => !['web_search', 'code_interpreter'].includes(tool.type)
-											);
-											selectedGenConfig.tools = filterTools?.length === 0 ? null : filterTools;
-										}
-									}}
-									class="w-64 border-transparent bg-[#F9FAFB] hover:bg-[#e1e2e6] data-dark:bg-[#42464e]"
-								/>
-							</div>
-						{/if}
-
-						<!-- {#if showPromptTab}
+							<!-- {#if showPromptTab}
 							<div class="flex items-center gap-2 px-2.5 py-1.5 bg-[#F2F4F7] rounded-full">
 								<Label
 									for="gen-config-obj"
@@ -387,8 +393,9 @@
 								/>
 							</div>
 						{/if} -->
+						</div>
 					</div>
-				</div>
+				{/if}
 
 				{#if (tableType === 'knowledge' && !showPromptTab) || selectedGenConfig.object === 'gen_config.code'}
 					<div style="grid-template-rows: minmax(0, 1fr) 65px;" class="grid min-h-0 grow bg-white">
@@ -511,17 +518,19 @@
 								{#if selectedGenConfig.object === 'gen_config.llm'}
 									<PromptEditor
 										bind:this={promptEditor}
-										bind:editorContent={() => {
-											if (selectedGenConfig?.object === 'gen_config.llm') {
-												return selectedGenConfig?.prompt ?? '';
-											} else {
-												return '';
+										bind:editorContent={
+											() => {
+												if (selectedGenConfig?.object === 'gen_config.llm') {
+													return selectedGenConfig?.prompt ?? '';
+												} else {
+													return '';
+												}
+											},
+											(v) => {
+												if (selectedGenConfig?.object === 'gen_config.llm')
+													selectedGenConfig.prompt = v;
 											}
-										},
-										(v) => {
-											if (selectedGenConfig?.object === 'gen_config.llm')
-												selectedGenConfig.prompt = v;
-										}}
+										}
 										{usableColumns}
 									/>
 								{:else if selectedGenConfig.object === 'gen_config.python'}
@@ -687,8 +696,10 @@
 													<Select.Root
 														allowDeselect
 														type="single"
-														bind:value={() => selectedGenConfig.reasoning_effort ?? '',
-														(v) => (selectedGenConfig.reasoning_effort = v || null)}
+														bind:value={
+															() => selectedGenConfig.reasoning_effort ?? '',
+															(v) => (selectedGenConfig.reasoning_effort = v || null)
+														}
 													>
 														<Select.Trigger
 															title="Reasoning effort"
@@ -729,28 +740,30 @@
 															id="openai-tool-websearch"
 															name="openai-tool-websearch"
 															class="[&>svg]:h-3 [&>svg]:w-3 [&>svg]:translate-x-[1px]"
-															bind:checked={() =>
-																!!selectedGenConfig.tools?.find(
-																	(tool) => tool.type === 'web_search'
-																),
-															() => {
-																if (
-																	selectedGenConfig.tools?.find(
+															bind:checked={
+																() =>
+																	!!selectedGenConfig.tools?.find(
 																		(tool) => tool.type === 'web_search'
-																	)
-																) {
-																	const filterTools = selectedGenConfig.tools.filter(
-																		(tool) => tool.type !== 'web_search'
-																	);
-																	selectedGenConfig.tools =
-																		filterTools.length === 0 ? null : filterTools;
-																} else {
-																	selectedGenConfig.tools = [
-																		...(selectedGenConfig.tools ?? []),
-																		{ type: 'web_search' }
-																	];
+																	),
+																() => {
+																	if (
+																		selectedGenConfig.tools?.find(
+																			(tool) => tool.type === 'web_search'
+																		)
+																	) {
+																		const filterTools = selectedGenConfig.tools.filter(
+																			(tool) => tool.type !== 'web_search'
+																		);
+																		selectedGenConfig.tools =
+																			filterTools.length === 0 ? null : filterTools;
+																	} else {
+																		selectedGenConfig.tools = [
+																			...(selectedGenConfig.tools ?? []),
+																			{ type: 'web_search' }
+																		];
+																	}
 																}
-															}}
+															}
 														/>
 
 														<Label for="openai-tool-websearch">Web Search</Label>
@@ -762,28 +775,30 @@
 															id="openai-tool-codeinterpreter"
 															name="openai-tool-codeinterpreter"
 															class="[&>svg]:h-3 [&>svg]:w-3 [&>svg]:translate-x-[1px]"
-															bind:checked={() =>
-																!!selectedGenConfig.tools?.find(
-																	(tool) => tool.type === 'code_interpreter'
-																),
-															() => {
-																if (
-																	selectedGenConfig.tools?.find(
+															bind:checked={
+																() =>
+																	!!selectedGenConfig.tools?.find(
 																		(tool) => tool.type === 'code_interpreter'
-																	)
-																) {
-																	const filterTools = selectedGenConfig.tools.filter(
-																		(tool) => tool.type !== 'code_interpreter'
-																	);
-																	selectedGenConfig.tools =
-																		filterTools.length === 0 ? null : filterTools;
-																} else {
-																	selectedGenConfig.tools = [
-																		...(selectedGenConfig.tools ?? []),
-																		{ type: 'code_interpreter' }
-																	];
+																	),
+																() => {
+																	if (
+																		selectedGenConfig.tools?.find(
+																			(tool) => tool.type === 'code_interpreter'
+																		)
+																	) {
+																		const filterTools = selectedGenConfig.tools.filter(
+																			(tool) => tool.type !== 'code_interpreter'
+																		);
+																		selectedGenConfig.tools =
+																			filterTools.length === 0 ? null : filterTools;
+																	} else {
+																		selectedGenConfig.tools = [
+																			...(selectedGenConfig.tools ?? []),
+																			{ type: 'code_interpreter' }
+																		];
+																	}
 																}
-															}}
+															}
 														/>
 
 														<Label for="openai-tool-codeinterpreter">Code Interpreter</Label>
@@ -795,6 +810,21 @@
 								</div>
 							{/if}
 						</div>
+
+						<div
+							class="flex items-center justify-end gap-2 border-t border-[#E5E5E5] px-6 py-3 data-dark:border-[#333]"
+						>
+							<Button variant="link" onclick={closeColumnSettings}>Cancel</Button>
+							{#if !readonly}
+								<Button loading={isLoading} disabled={isLoading} onclick={saveColumnSettings}>
+									Update
+								</Button>
+							{/if}
+						</div>
+					</div>
+				{:else if selectedTab === 'how_to_use'}
+					<div class="grid min-h-0 grow grid-rows-[minmax(0,1fr)_65px] rounded-b-xl bg-white">
+						<HowToUseTab {selectedGenConfig} />
 
 						<div
 							class="flex items-center justify-end gap-2 border-t border-[#E5E5E5] px-6 py-3 data-dark:border-[#333]"
@@ -832,18 +862,20 @@
 										id="rag-enabled"
 										name="rag-enabled"
 										class=""
-										bind:checked={() => !!selectedGenConfig.rag_params,
-										(v) => {
-											if (v) {
-												selectedGenConfig.rag_params = {
-													table_id: '',
-													k: 1,
-													reranking_model: null
-												};
-											} else {
-												selectedGenConfig.rag_params = null;
+										bind:checked={
+											() => !!selectedGenConfig.rag_params,
+											(v) => {
+												if (v) {
+													selectedGenConfig.rag_params = {
+														table_id: '',
+														k: 1,
+														reranking_model: null
+													};
+												} else {
+													selectedGenConfig.rag_params = null;
+												}
 											}
-										}}
+										}
 									/>
 								</div>
 
@@ -862,12 +894,14 @@
 										disabled={readonly || !selectedGenConfig.rag_params}
 										id="rag-inline-citations"
 										name="rag-inline-citations"
-										bind:checked={() => selectedGenConfig.rag_params?.inline_citations ?? false,
-										(v) => {
-											if (selectedGenConfig.rag_params) {
-												selectedGenConfig.rag_params.inline_citations = v;
+										bind:checked={
+											() => selectedGenConfig.rag_params?.inline_citations ?? false,
+											(v) => {
+												if (selectedGenConfig.rag_params) {
+													selectedGenConfig.rag_params.inline_citations = v;
+												}
 											}
-										}}
+										}
 									/>
 								</div>
 
@@ -887,12 +921,14 @@
 											type="number"
 											id="rag-k"
 											name="rag-k"
-											bind:value={() => selectedGenConfig.rag_params?.k ?? 1,
-											(v) => {
-												if (selectedGenConfig.rag_params) {
-													selectedGenConfig.rag_params.k = v;
+											bind:value={
+												() => selectedGenConfig.rag_params?.k ?? 1,
+												(v) => {
+													if (selectedGenConfig.rag_params) {
+														selectedGenConfig.rag_params.k = v;
+													}
 												}
-											}}
+											}
 											onblur={() => {
 												if (selectedGenConfig.rag_params) {
 													selectedGenConfig.rag_params.k =
@@ -909,12 +945,14 @@
 
 									<Range
 										disabled={readonly || !selectedGenConfig.rag_params}
-										bind:value={() => selectedGenConfig.rag_params?.k ?? 0,
-										(v) => {
-											if (selectedGenConfig.rag_params) {
-												selectedGenConfig.rag_params.k = v;
+										bind:value={
+											() => selectedGenConfig.rag_params?.k ?? 0,
+											(v) => {
+												if (selectedGenConfig.rag_params) {
+													selectedGenConfig.rag_params.k = v;
+												}
 											}
-										}}
+										}
 										min="1"
 										max="1024"
 										step="1"
@@ -932,12 +970,14 @@
 										disabled={readonly || !selectedGenConfig.rag_params}
 										capabilityFilter="rerank"
 										allowDeselect
-										bind:selectedModel={() => selectedGenConfig.rag_params?.reranking_model ?? '',
-										(v) => {
-											if (selectedGenConfig.rag_params) {
-												selectedGenConfig.rag_params.reranking_model = v;
+										bind:selectedModel={
+											() => selectedGenConfig.rag_params?.reranking_model ?? '',
+											(v) => {
+												if (selectedGenConfig.rag_params) {
+													selectedGenConfig.rag_params.reranking_model = v;
+												}
 											}
-										}}
+										}
 										class="h-10 border-transparent bg-[#F2F4F7] hover:bg-[#e1e2e6] disabled:hover:bg-[#F2F4F7] data-dark:bg-[#42464e]"
 									/>
 								</div>
@@ -1024,12 +1064,14 @@
 	{#if !readonly && selectedGenConfig?.object === 'gen_config.llm'}
 		<SelectKnowledgeTableDialog
 			bind:isSelectingKnowledgeTable
-			bind:selectedKnowledgeTables={() => selectedGenConfig.rag_params?.table_id ?? '',
-			(v) => {
-				if (selectedGenConfig.rag_params) {
-					selectedGenConfig.rag_params.table_id = v;
+			bind:selectedKnowledgeTables={
+				() => selectedGenConfig.rag_params?.table_id ?? '',
+				(v) => {
+					if (selectedGenConfig.rag_params) {
+						selectedGenConfig.rag_params.table_id = v;
+					}
 				}
-			}}
+			}
 		/>
 	{/if}
 {/if}
