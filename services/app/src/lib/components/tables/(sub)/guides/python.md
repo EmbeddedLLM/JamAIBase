@@ -1,6 +1,6 @@
-### Basic Concept
+##### Basic Concept
 
-The **Python Column** in a **Generative Table** lets you generate or transform cell values using custom Python code, so you can build image, audio, and general-purpose transformations directly in your table.
+The **Python Column** in a Generative Table lets you generate or transform cell values using custom Python code, so you can build image, audio, and general-purpose transformations directly in your table.
 
 All upstream columns (columns to the left) are passed to your code as a dictionary named `row` in the global context.
 
@@ -31,7 +31,7 @@ Consider using `try/except` blocks and writing fallback value when needed.
 
 ---
 
-### Preinstalled Libraries
+##### Preinstalled Libraries
 
 The following libraries are available:
 
@@ -57,7 +57,7 @@ The following libraries are available:
 
 ---
 
-### Working with Images
+##### Working with Images
 
 When an upstream column contains an image, its value in `row` is **raw binary data** (`bytes`).
 
@@ -66,7 +66,7 @@ To output an image, make sure:
 - The Python Column has data type `image`.
 - The output image is one of: `.jpeg`, `.jpg`, `.png`, `.gif`, `.webp`.
 
-#### Usage Pattern
+Usage pattern:
 
 1. Read image bytes from `row`.
 2. Perform your image operations (for example, using a library such as Pillow / `PIL`).
@@ -96,7 +96,7 @@ with Image.open(io.BytesIO(image_bytes)) as img:
 
 ---
 
-### Working with Audios
+##### Working with Audios
 
 When an upstream column contains audio, its value in `row` is also **raw binary data** (`bytes`).
 
@@ -105,7 +105,7 @@ To output an audio, make sure:
 - The Python Column has data type `audio`.
 - The output audio is one of: `.mp3`, `.wav`.
 
-#### Usage Pattern
+Usage pattern:
 
 1. Read audio bytes from `row`.
 2. Perform your audio processing (for example, using a library such as `soundfile`).
@@ -134,7 +134,7 @@ row["Python Column Name"] = output_buffer.getvalue()
 
 ---
 
-### Making Web Requests
+##### Making Web Requests
 
 You can use `httpx` to make web requests. By using the appropriate column data type, you can fetch images and audios and save them in the table.
 

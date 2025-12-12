@@ -1,6 +1,6 @@
-### Basic Concept
+##### Basic Concept
 
-The **LLM Column** in a **Generative Table** lets you synthesize outputs using a Large Language Model (LLM). You define a prompt (and optionally Retrieval Augmented Generation (RAG) settings), and the LLM generates the value for the column / cell.
+The **LLM Column** in a Generative Table lets you synthesize outputs using a Large Language Model (LLM). You define a prompt (and optionally Retrieval Augmented Generation (RAG) settings), and the LLM generates the value for the column / cell.
 
 The LLM Column will:
 
@@ -17,7 +17,7 @@ You control how the LLM behaves through:
 
 ---
 
-### Referencing Upstream Columns in Prompts
+##### Referencing Upstream Columns in Prompts
 
 The **Prompt** can reference values from upstream columns (columns to the left) using the syntax:
 
@@ -33,26 +33,15 @@ For a row where the `Input` column contains value `Good morning`, the actual pro
 
 > Translate "Good morning" into Italian:
 
-Tips
+To insert a reference, click on the corresponding columns above the Prompt input area. Alternatively, you can manually insert `${Column Name}` into the Prompt.
 
-- To insert a reference, click on the corresponding columns above the Prompt input area
-- Alternatively, you can manually insert `${Column Name}` into the Prompt
-- You can reference multiple columns in the same prompt, as long as the names match your column names exactly (case-sensitive).
-- Repeated references will be not be de-duplicated. For example:
+You can reference multiple columns in the same prompt, as long as the names match your column names exactly (case-sensitive).
 
-  > <span class="column-variable input-col">Input</span>
-  >
-  > Translate "<span class="column-variable input-col">Input</span>" into Italian:
-
-  will result in
-
-  > Good morning
-  >
-  > Translate "Good morning" into Italian:
+See more prompting tips below.
 
 ---
 
-### Retrieval Augmented Generation (RAG)
+##### Retrieval Augmented Generation (RAG)
 
 You can optionally use RAG to ground the LLM’s output in external knowledge stored in a Knowledge Table.
 
@@ -78,10 +67,55 @@ When RAG is enabled, the LLM Column will:
    - After reranking, the top‑`k` references are selected and injected into the prompt sent to the LLM.
 
 5. Optionally generate inline citations
-   - You can enable inline citations in **pandoc style**:
-     ```text
-     [@ref0; @ref1; @ref2]
-     ```
+   - You can enable inline citations in **pandoc style**: `[@ref0; @ref1; @ref2]`
    - When enabled, the generated text can include these citation markers to indicate which references support which statements.
 
 The final prompts sent to the LLM is your System Prompt and Prompt, plus any injected references (and, if configured, citation context), all guided by the settings you choose (k, citations, reranking).
+
+---
+
+##### Multi‑turn Chat
+
+When Multi‑turn Chat is enabled, each generation can use data from previous rows as conversation history, rather than only the current row. By default, rows are ordered from latest to oldest, and the LLM sees all rows from the current one downward as its context.
+
+For example:
+
+1. Create a table with an input column `Query` and a multi‑turn LLM column `Output`.
+2. Add a row where `Query` is `What is 2+2?`. The LLM will respond with `4`.
+3. Add another row where `Query` is `Add 3`. Because multi‑turn chat is enabled, the LLM will understand this as continuing the previous exchange and return `7` as the result.
+
+---
+
+##### Prompting Tips
+
+<!-- prettier-ignore-start -->
+
+- When referencing other columns, it is recommended to separate them using XML tags or Markdown headings. For example:
+
+  > &lt;user-query>
+  > <span class="column-variable input-col">Input</span>
+  > &lt;/user-query>
+  >
+  > Translate user query into Italian.
+
+  <br>
+
+  > \# User Query
+  > <span class="column-variable input-col">Input</span>
+  >
+  > \# Instruction
+  > Translate user query into Italian.
+
+- Repeated references will be not be de-duplicated. For example:
+
+  > <span class="column-variable input-col">Input</span>
+  >
+  > Translate "<span class="column-variable input-col">Input</span>" into Italian:
+
+  will result in
+
+  > Good morning
+  >
+  > Translate "Good morning" into Italian:
+
+<!-- prettier-ignore-end -->
