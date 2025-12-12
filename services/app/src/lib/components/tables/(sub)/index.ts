@@ -1,6 +1,7 @@
 import ColumnDropdown from './ColumnDropdown.svelte';
 import ColumnHeader from './ColumnHeader.svelte';
 import ColumnSettings from './ColumnSettings.svelte';
+import ColumnTypeTag from './ColumnTypeTag.svelte';
 import DeleteFileDialog from './DeleteFileDialog.svelte';
 import FileColumnView from './FileColumnView.svelte';
 import FileSelect from './FileSelect.svelte';
@@ -13,6 +14,7 @@ export {
 	ColumnDropdown,
 	ColumnHeader,
 	ColumnSettings,
+	ColumnTypeTag,
 	DeleteFileDialog,
 	FileColumnView,
 	FileSelect,

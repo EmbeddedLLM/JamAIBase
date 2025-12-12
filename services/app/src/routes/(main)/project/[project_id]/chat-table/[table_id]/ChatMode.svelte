@@ -1,17 +1,19 @@
 <script lang="ts">
 	import { PUBLIC_JAMAI_URL } from '$env/static/public';
 	import { onMount, tick } from 'svelte';
+	import axios from 'axios';
 	import { v4 as uuidv4 } from 'uuid';
-	import { ArrowDownToLine, AudioLines } from '@lucide/svelte';
+	import { ArrowDownToLine, ArrowUp, AudioLines, ChevronRight, FileText } from '@lucide/svelte';
 	import { browser } from '$app/environment';
 	import { page } from '$app/state';
 	import { getTableState } from '$lib/components/tables/tablesState.svelte';
 	import converter from '$lib/showdown';
-	import { fileColumnFiletypes } from '$lib/constants';
-	import { cn } from '$lib/utils';
+	import { chatCitationPattern, fileColumnFiletypes } from '$lib/constants';
+	import { citationReplacer, cn } from '$lib/utils';
 	import logger from '$lib/logger';
 	import type {
 		ChatReferences,
+		ChatThread,
 		ChatThreads,
 		Conversation,
 		GenTable,
@@ -28,6 +30,8 @@
 	import RegenerateIcon from '$lib/icons/RegenerateIcon.svelte';
 	import MultiturnChatIcon from '$lib/icons/MultiturnChatIcon.svelte';
 	import TuneIcon from '$lib/icons/TuneIcon.svelte';
+	import EditIcon from '$lib/icons/EditIcon.svelte';
+	import CloseIcon from '$lib/icons/CloseIcon.svelte';
 
 	const tableState = getTableState();
 
@@ -35,7 +39,7 @@
 		tableData: GenTable | undefined;
 		tableThread: ChatThreads['threads'];
 		threadLoaded: boolean;
-		generationStatus: string | null;
+		generationStatus: string[] | null;
 		refetchTable: (hideColumnSettings?: boolean) => Promise<void>;
 	}
 
@@ -55,8 +59,11 @@
 		isLoading = false;
 	}; */
 
-	let loadedStreams: Record<string, string[]> = $state({});
-	let latestStreams: Record<string, string> = $state({});
+	let uploadColumns: Record<string, { uri: string; url: string }> = $state({});
+	let loadedStreams: Record<string, Record<string, string[]>> = $state({});
+	let latestStreams: Record<string, Record<string, string>> = $state({});
+	let reasoningContentStreams: Record<string, Record<string, string>> = $state({});
+	let loadedReferences: Record<string, Record<string, ChatReferences>> | null = null;
 
 	let showRawTexts = $state(false);
 
@@ -71,6 +78,12 @@
 	let isResizing = $state(false);
 	let isResized = $state(false);
 
+	let editingContent: {
+		rowID: string;
+		columnID: string;
+		fileColumns: Record<string, { uri: string; url: string }>;
+	} | null = $state(null);
+
 	let longestThreadCol = $derived(
 		Object.keys(tableThread).reduce(
 			(a, b) =>
@@ -81,14 +94,12 @@
 			''
 		)
 	);
-	let displayedLoadedStreams = $derived(
-		Object.keys(loadedStreams).filter((colID) => {
-			// Filter out columns to display
-			const col = tableData?.cols?.find((col) => col.id === colID);
-			return col?.gen_config?.object === 'gen_config.llm' && col.gen_config.multi_turn;
-		})
-	);
 
+	let fileColumns = $derived(
+		tableData?.cols.filter(
+			(col) => col.dtype === 'image' || col.dtype === 'audio' || col.dtype === 'document'
+		) ?? []
+	);
 	let uris: { [rowID: string]: { [colID: string]: string } } = $derived({
 		...Object.fromEntries(
 			Object.entries(tableThread)
@@ -142,8 +153,11 @@
 		if (!chat || !chatWindow) return;
 		if (!tableData || !threadLoaded) return;
 		if (generationStatus || !chatMessage.trim()) return;
+
 		const cachedPrompt = chatMessage;
+		const cachedFiles = structuredClone($state.snapshot(uploadColumns));
 		chatMessage = '';
+		uploadColumns = {};
 
 		// chatMessage = '';
 		chat.style.height = '3rem';
@@ -163,7 +177,12 @@
 								{
 									type: 'text' as const,
 									text: cachedPrompt
-								}
+								},
+								...Object.entries(cachedFiles).map(([uploadColumn, val]) => ({
+									type: 'input_s3' as const,
+									uri: val.uri,
+									column_name: uploadColumn
+								}))
 							],
 							name: null,
 							user_prompt: cachedPrompt,
@@ -174,25 +193,29 @@
 			])
 		);
 
-		generationStatus = 'new';
-		loadedStreams = Object.fromEntries(
-			tableData.cols
-				.map((col) =>
-					col.gen_config?.object === 'gen_config.llm' && col.gen_config.multi_turn
-						? [[col.id, []]]
-						: []
-				)
-				.flat()
-		);
-		latestStreams = Object.fromEntries(
-			tableData.cols
-				.map((col) =>
-					col.gen_config?.object === 'gen_config.llm' && col.gen_config.multi_turn
-						? [[col.id, '']]
-						: []
-				)
-				.flat()
-		);
+		generationStatus = ['new'];
+		loadedStreams = {
+			new: Object.fromEntries(
+				tableData.cols
+					.map((col) =>
+						col.gen_config?.object === 'gen_config.llm' && col.gen_config.multi_turn
+							? [[col.id, []]]
+							: []
+					)
+					.flat()
+			)
+		};
+		latestStreams = {
+			new: Object.fromEntries(
+				tableData.cols
+					.map((col) =>
+						col.gen_config?.object === 'gen_config.llm' && col.gen_config.multi_turn
+							? [[col.id, '']]
+							: []
+					)
+					.flat()
+			)
+		};
 
 		//? Show user message
 		await tick();
@@ -204,7 +227,7 @@
 			headers: {
 				Accept: 'text/event-stream',
 				'Content-Type': 'application/json',
-				'x-project-id': page.params.project_id
+				'x-project-id': page.params.project_id ?? ''
 			},
 			body: JSON.stringify({
 				table_id: page.params.table_id,
@@ -239,100 +262,27 @@
 			);
 			chatMessage = cachedPrompt;
 		} else {
-			const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
-
-			let row_id = '';
-			let references: Record<string, ChatReferences> | null = null;
-			let buffer = '';
-			// eslint-disable-next-line no-constant-condition
-			while (true) {
-				try {
-					const { value, done } = await reader.read();
-					if (done) break;
-
-					buffer += value;
-					const lines = buffer.split('\n'); //? Split by \n to handle collation
-					buffer = lines.pop() || '';
-
-					let parsedEvent:
-						| { event: 'metadata'; data: Conversation }
-						| { event: undefined; data: GenTableStreamEvent }
-						| undefined = undefined;
-					for (const line of lines) {
-						if (line === '') {
-							if (parsedEvent) {
-								if (parsedEvent.event) {
-									// n/a
-								} else if (parsedEvent.data.object === 'gen_table.completion.chunk') {
-									if (parsedEvent.data.choices[0].finish_reason) {
-										switch (parsedEvent.data.choices[0].finish_reason) {
-											case 'error': {
-												logger.error('CHAT_MESSAGE_ADDSTREAM', parsedEvent.data);
-												console.error('STREAMING_ERROR', parsedEvent.data);
-												alert(
-													`Error while streaming: ${parsedEvent.data.choices[0].message.content}`
-												);
-												break;
-											}
-										}
-									} else {
-										row_id = parsedEvent.data.row_id;
-
-										if (loadedStreams[parsedEvent.data.output_column_name]) {
-											if ((parsedEvent.data.choices[0].message.content ?? '').includes('\n')) {
-												loadedStreams[parsedEvent.data.output_column_name] = [
-													...loadedStreams[parsedEvent.data.output_column_name],
-													latestStreams[parsedEvent.data.output_column_name] +
-														(parsedEvent.data.choices[0]?.message?.content ?? '')
-												];
-												latestStreams[parsedEvent.data.output_column_name] = '';
-											} else {
-												latestStreams[parsedEvent.data.output_column_name] +=
-													parsedEvent.data.choices[0]?.message?.content ?? '';
-											}
-										}
-
-										scrollToBotttom();
-									}
-								} else if (parsedEvent.data.object === 'gen_table.references') {
-									references = {
-										...(references ?? {}),
-										[parsedEvent.data.output_column_name]:
-											parsedEvent.data as unknown as ChatReferences
-									};
-								} else {
-									console.warn('Unknown event data:', parsedEvent.data);
-								}
-							} else {
-								console.warn('Unknown event object:', parsedEvent);
-							}
-						} else if (line.startsWith('data: ')) {
-							if (line.slice(6) === '[DONE]') break;
-							//@ts-expect-error missing type
-							parsedEvent = { ...(parsedEvent ?? {}), data: JSON.parse(line.slice(6)) };
-						} else if (line.startsWith('event: ')) {
-							//@ts-expect-error missing type
-							parsedEvent = { ...(parsedEvent ?? {}), event: line.slice(7) };
-						}
-					}
-				} catch (err) {
-					logger.error('CHAT_MESSAGE_ADDSTREAM', err);
-					console.error(err);
-					break;
-				}
-			}
+			const { row_id } = await parseStream(
+				response.body!.pipeThrough(new TextDecoderStream()).getReader(),
+				true
+			);
 
 			loadedStreams = Object.fromEntries(
-				Object.entries(loadedStreams).map(([col, streams]) => [
-					col,
-					[...streams, latestStreams[col]]
+				Object.entries(loadedStreams).map(([row, colStreams]) => [
+					row,
+					Object.fromEntries(
+						Object.entries(colStreams).map(([col, streams]) => [
+							col,
+							[...streams, latestStreams[row][col]]
+						])
+					)
 				])
 			);
 
 			tableThread = Object.fromEntries(
 				Object.entries(tableThread).map(([outCol, thread]) => {
-					const loadedStreamCol = loadedStreams[outCol];
-					const colReferences = references?.[outCol] ?? null;
+					const loadedStreamCol = loadedStreams.new[outCol];
+					const colReferences = loadedReferences?.new?.[outCol] ?? null;
 					const userPrompt = thread.thread.at(-1)!;
 
 					return [
@@ -363,19 +313,167 @@
 					];
 				})
 			);
-			loadedStreams = {};
-			latestStreams = {};
-			generationStatus = null;
 
 			refetchTable();
 		}
+
+		generationStatus = null;
+		loadedStreams = {};
+		latestStreams = {};
+	}
+
+	async function parseStream(reader: ReadableStreamDefaultReader<string>, newMessage = false) {
+		let rowID = '';
+		let buffer = '';
+		let renderCount = 0;
+		// eslint-disable-next-line no-constant-condition
+		while (true) {
+			try {
+				const { value, done } = await reader.read();
+				if (done) break;
+
+				buffer += value;
+				const lines = buffer.split('\n'); //? Split by \n to handle collation
+				buffer = lines.pop() || '';
+
+				let parsedEvent:
+					| { event: 'metadata'; data: Conversation }
+					| { event: undefined; data: GenTableStreamEvent }
+					| undefined = undefined;
+				for (const line of lines) {
+					if (line === '') {
+						if (parsedEvent) {
+							if (parsedEvent.event) {
+								// n/a
+							} else if (parsedEvent.data.object === 'gen_table.completion.chunk') {
+								if (parsedEvent.data.choices[0].finish_reason) {
+									switch (parsedEvent.data.choices[0].finish_reason) {
+										case 'error': {
+											logger.error('CHAT_MESSAGE_ADDSTREAM', parsedEvent.data);
+											console.error('STREAMING_ERROR', parsedEvent.data);
+											alert(
+												`Error while streaming: ${parsedEvent.data.choices[0].message.content}`
+											);
+											break;
+										}
+									}
+								} else {
+									rowID = parsedEvent.data.row_id;
+									const streamDataRowID = newMessage ? 'new' : rowID;
+
+									/** Used if showing reasoning content in chat window */
+									if (parsedEvent.data.choices[0]?.message?.reasoning_content) {
+										if (!reasoningContentStreams[streamDataRowID]) {
+											reasoningContentStreams[streamDataRowID] = {};
+										}
+
+										if (
+											!reasoningContentStreams[streamDataRowID][parsedEvent.data.output_column_name]
+										) {
+											reasoningContentStreams[streamDataRowID][
+												parsedEvent.data.output_column_name
+											] = '';
+										}
+
+										reasoningContentStreams[streamDataRowID][parsedEvent.data.output_column_name] +=
+											parsedEvent.data.choices[0]?.message?.reasoning_content ?? '';
+									}
+
+									if (parsedEvent.data.choices[0]?.message?.content) {
+										if (loadedStreams[streamDataRowID][parsedEvent.data.output_column_name]) {
+											if (renderCount++ >= 20) {
+												loadedStreams[streamDataRowID][parsedEvent.data.output_column_name] = [
+													...loadedStreams[streamDataRowID][parsedEvent.data.output_column_name],
+													latestStreams[streamDataRowID][parsedEvent.data.output_column_name] +
+														(parsedEvent.data.choices[0]?.message?.content ?? '')
+												];
+												latestStreams[streamDataRowID][parsedEvent.data.output_column_name] = '';
+											} else {
+												latestStreams[streamDataRowID][parsedEvent.data.output_column_name] +=
+													parsedEvent.data.choices[0]?.message?.content ?? '';
+											}
+										}
+									}
+
+									/** Stream output details dialog */
+									if (
+										tableState.showOutputDetails.activeCell?.rowID === streamDataRowID &&
+										tableState.showOutputDetails.activeCell?.columnID ===
+											parsedEvent.data.output_column_name
+									) {
+										tableState.showOutputDetails = {
+											...tableState.showOutputDetails,
+											message: {
+												chunks: tableState.showOutputDetails.message?.chunks ?? [],
+												content:
+													(tableState.showOutputDetails.message?.content ?? '') +
+													(parsedEvent.data.choices[0].message.content ?? '')
+											},
+											reasoningContent:
+												(tableState.showOutputDetails.reasoningContent ?? '') +
+												(parsedEvent.data.choices[0].message.reasoning_content ?? '')
+										};
+									}
+
+									scrollChatToBottom();
+								}
+							} else if (parsedEvent.data.object === 'gen_table.references') {
+								rowID = parsedEvent.data.row_id;
+								const streamDataRowID = newMessage ? 'new' : rowID;
+
+								loadedReferences = {
+									...(loadedReferences ?? {}),
+									[streamDataRowID]: {
+										...((loadedReferences ?? {})[streamDataRowID] ?? {}),
+										[parsedEvent.data.output_column_name]:
+											parsedEvent.data as unknown as ChatReferences
+									}
+								};
+
+								/** Add references to output details if active */
+								if (
+									tableState.showOutputDetails.activeCell?.rowID === streamDataRowID &&
+									tableState.showOutputDetails.activeCell?.columnID ===
+										parsedEvent.data.output_column_name
+								) {
+									tableState.showOutputDetails = {
+										...tableState.showOutputDetails,
+										message: {
+											chunks: (parsedEvent.data as unknown as ChatReferences).chunks ?? [],
+											content: tableState.showOutputDetails.message?.content ?? ''
+										}
+									};
+								}
+							} else {
+								console.warn('Unknown event data:', parsedEvent.data);
+							}
+						} else {
+							console.warn('Unknown event object:', parsedEvent);
+						}
+					} else if (line.startsWith('data: ')) {
+						if (line.slice(6) === '[DONE]') break;
+						//@ts-expect-error missing type
+						parsedEvent = { ...(parsedEvent ?? {}), data: JSON.parse(line.slice(6)) };
+					} else if (line.startsWith('event: ')) {
+						//@ts-expect-error missing type
+						parsedEvent = { ...(parsedEvent ?? {}), event: line.slice(7) };
+					}
+				}
+			} catch (err) {
+				logger.error('CHAT_MESSAGE_ADDSTREAM', err);
+				console.error(err);
+				break;
+			}
+		}
+
+		return { row_id: rowID };
 	}
 
 	onMount(() => {
 		if (chatWindow) chatWindow.scrollTop = chatWindow.scrollHeight;
 	});
 
-	const scrollToBotttom = async () => {
+	const scrollChatToBottom = async () => {
 		if (!browser) return;
 
 		if (
@@ -390,16 +488,16 @@
 	};
 	$effect(() => {
 		loadedStreams;
-		scrollToBotttom();
+		scrollChatToBottom();
 	});
 
 	function handleResize(e: MouseEvent) {
 		if (!chat) return;
 		if (!isResizing) return;
 
-		const chatBottomSpace = 24;
+		const chatBottomSpace = 74;
 		const chatbarMaxHeight = window.innerHeight * 0.65;
-		const chatbarHeight = window.innerHeight - e.clientY - chatBottomSpace - 8;
+		const chatbarHeight = window.innerHeight - e.clientY - chatBottomSpace;
 
 		chat.style.height =
 			(chatbarHeight >= chatbarMaxHeight ? chatbarMaxHeight : chatbarHeight) + 'px';
@@ -425,6 +523,36 @@
 						(checkIcon as HTMLElement).style.opacity = '0';
 					});
 				}
+			}
+		} else if (target.classList.contains('citation-btn')) {
+			const columnID = target.getAttribute('data-column');
+			const rowID = target.getAttribute('data-row');
+			const chunkID = target.getAttribute('data-citation');
+			if (columnID && rowID && chunkID) {
+				// showChatControls = { open: false, value: null };
+
+				const threadItem = tableThread[columnID]?.thread?.find(
+					(item) => item.references && item.row_id === rowID
+				);
+				tableState.showOutputDetails = {
+					open: true,
+					activeCell: { columnID, rowID },
+					activeTab: 'references',
+					message: {
+						content:
+							typeof threadItem?.content === 'string'
+								? threadItem.content
+								: (threadItem?.content
+										.filter((c) => c.type === 'text')
+										.map((c) => c.text)
+										.join('') ?? ''),
+						chunks: threadItem?.references?.chunks ?? []
+					},
+					reasoningContent: threadItem?.reasoning_content ?? null,
+					reasoningTime: threadItem?.reasoning_time ?? null,
+					expandChunk: chunkID,
+					preview: null
+				};
 			}
 		}
 	}
@@ -459,6 +587,230 @@
 			});
 		}
 	}
+
+	function getNewMessageAsThreads(): typeof tableThread {
+		const longestThreadCol = Object.keys(tableThread).reduce(
+			(a, b) =>
+				Array.isArray(tableThread[b].thread) &&
+				(!a || tableThread[b].thread.length > tableThread[a].thread.length)
+					? b
+					: a,
+			''
+		);
+		const longestThreadColLen = tableThread[longestThreadCol]?.thread?.length ?? 0;
+		return generationStatus?.includes('new')
+			? Object.fromEntries(
+					tableData!.cols
+						.map((col) =>
+							col.gen_config?.object === 'gen_config.llm' && col.gen_config.multi_turn
+								? [
+										[
+											col.id,
+											{
+												object: 'chat.thread',
+												thread: [
+													...new Array(longestThreadColLen).fill(null),
+													{
+														reasoning_content: reasoningContentStreams.new?.[col.id] ?? null,
+														reasoning_time: null,
+														row_id: 'new',
+														role: 'assistant',
+														content:
+															(loadedStreams.new?.[col.id]?.join('') ?? '') +
+															(latestStreams.new?.[col.id] ?? ''),
+														name: null,
+														user_prompt: null,
+														references: null
+													}
+												]
+											} as ChatThread
+										]
+									]
+								: []
+						)
+						.flat()
+				)
+			: {};
+	}
+
+	let dragContainer = $state<HTMLElement | null>(null);
+	let filesDragover = $state(false);
+	function handleSelectFiles(files: File[], editing = false) {
+		dragContainer
+			?.querySelectorAll('input[type="file"]')
+			?.forEach((el) => ((el as HTMLInputElement).value = ''));
+
+		if (files.length === 0) return;
+		if (
+			Object.values(editing ? (editingContent?.fileColumns ?? {}) : uploadColumns).filter(
+				(val) => val.uri
+			).length >= fileColumns.length
+		) {
+			alert('No more files can be uploaded: all columns filled.');
+			return;
+		}
+
+		if (files.length === 0) return;
+		if (files.length > 1) {
+			alert('Cannot upload multiple files in one column');
+			return;
+		}
+
+		if (
+			files.some(
+				(file) =>
+					!fileColumnFiletypes
+						.filter(({ type }) =>
+							fileColumns
+								.filter(
+									(c) =>
+										!(editing ? (editingContent?.fileColumns ?? {}) : uploadColumns)[
+											c.id
+										]?.uri?.trim()
+								)
+								.map((c) => c.dtype)
+								.includes(type)
+						)
+						.map(({ ext }) => ext)
+						.includes('.' + (file.name.split('.').pop() ?? '').toLowerCase())
+			)
+		) {
+			alert(
+				`Files must be of type: ${fileColumnFiletypes
+					.filter(({ type }) =>
+						fileColumns
+							.filter(
+								(c) =>
+									!(editing ? (editingContent?.fileColumns ?? {}) : uploadColumns)[
+										c.id
+									]?.uri?.trim()
+							)
+							.map((c) => c.dtype)
+							.includes(type)
+					)
+					.map(({ ext }) => ext)
+					.join(', ')
+					.replaceAll('.', '')}`
+			);
+			return;
+		}
+
+		handleSaveFile(files, editing);
+	}
+	const handleDragLeave = () => (filesDragover = false);
+
+	async function handleSaveFile(files: File[], editing = false) {
+		const formData = new FormData();
+		formData.append('file', files[0]);
+
+		const nextAvailableCol = fileColumns.find(
+			(col) =>
+				!(editing ? (editingContent?.fileColumns ?? {}) : uploadColumns)[col.id]?.uri &&
+				fileColumnFiletypes
+					.filter(({ type }) => col.dtype === type)
+					.map(({ ext }) => ext)
+					.includes('.' + (files[0].name.split('.').pop() ?? '').toLowerCase())
+		);
+		if (!nextAvailableCol)
+			return alert('No more files of this type can be uploaded: all columns filled.');
+
+		if (editing) {
+			if (editingContent) {
+				editingContent.fileColumns[nextAvailableCol.id] = {
+					uri: 'loading',
+					url: ''
+				};
+			}
+		} else {
+			uploadColumns[nextAvailableCol.id] = {
+				uri: 'loading',
+				url: ''
+			};
+		}
+
+		try {
+			const uploadRes = await axios.post(`${PUBLIC_JAMAI_URL}/api/owl/files/upload`, formData, {
+				headers: {
+					'Content-Type': 'multipart/form-data',
+					'x-project-id': page.url.searchParams.get('project_id') ?? page.params.project_id
+				}
+			});
+
+			if (uploadRes.status !== 200) {
+				logger.error('CHAT_FILE_UPLOAD', {
+					file: files[0].name,
+					response: uploadRes.data
+				});
+				alert(
+					'Failed to upload file: ' +
+						(uploadRes.data.message || JSON.stringify(uploadRes.data)) +
+						`\nRequest ID: ${uploadRes.data.request_id}`
+				);
+				return;
+			} else {
+				const urlResponse = await fetch(`/api/owl/files/url/thumb`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'x-project-id': page.params.project_id ?? ''
+					},
+					body: JSON.stringify({
+						uris: [uploadRes.data.uri]
+					})
+				});
+				const urlBody = await urlResponse.json();
+
+				if (urlResponse.ok) {
+					if (editing) {
+						if (editingContent) {
+							editingContent.fileColumns[nextAvailableCol.id] = {
+								uri: uploadRes.data.uri,
+								url: urlBody.urls[0]
+							};
+						}
+					} else {
+						uploadColumns[nextAvailableCol.id] = {
+							uri: uploadRes.data.uri,
+							url: urlBody.urls[0]
+						};
+
+						console.log(uploadColumns);
+					}
+				} else {
+					if (editing) {
+						if (editingContent) {
+							editingContent.fileColumns[nextAvailableCol.id] = {
+								uri: uploadRes.data.uri,
+								url: ''
+							};
+						}
+					} else {
+						uploadColumns[nextAvailableCol.id] = { uri: uploadRes.data.uri, url: '' };
+					}
+					toast.error('Failed to retrieve thumbnail', {
+						id: urlBody.message || JSON.stringify(urlBody),
+						description: CustomToastDesc as any,
+						componentProps: {
+							description: urlBody.message || JSON.stringify(urlBody),
+							requestID: urlBody.request_id
+						}
+					});
+				}
+			}
+		} catch (err) {
+			if (!(err instanceof axios.CanceledError && err.code == 'ERR_CANCELED')) {
+				//@ts-expect-error AxiosError
+				logger.error('CHAT_FILE_UPLOAD', err?.response?.data);
+				alert(
+					'Failed to upload file: ' +
+						//@ts-expect-error AxiosError
+						(err?.response?.data.message || JSON.stringify(err?.response?.data)) +
+						//@ts-expect-error AxiosError
+						`\nRequest ID: ${err?.response?.data?.request_id}`
+				);
+			}
+		}
+	}
 </script>
 
 <svelte:document
@@ -483,149 +835,195 @@
 	bind:this={chatWindow}
 	data-testid="chat-window"
 	id="chat-window"
-	class="relative flex grow flex-col gap-4 overflow-y-auto overflow-x-hidden pt-6 [scrollbar-gutter:stable]"
+	class="relative mx-auto flex w-full max-w-6xl grow snap-x snap-mandatory flex-col gap-4 overflow-auto px-2.5 pt-3"
 >
 	{#if threadLoaded}
 		{@const multiturnCols = Object.keys(tableThread)}
-		{@const longestThreadColLen = tableThread[longestThreadCol]?.thread?.length ?? 0}
+		{@const longestThreadColLen =
+			(tableThread[longestThreadCol]?.thread?.length ?? 0) +
+			(generationStatus?.includes('new') &&
+			(tableThread[longestThreadCol]?.thread?.length ?? 0) !== 0
+				? 1
+				: 0)}
 		{#each Array(longestThreadColLen).fill('') as _, index}
-			<div
-				class="group/message-container message-container flex flex-[0_0_auto] gap-3 px-3 transition-[padding] @2xl/chat:px-6 @4xl/chat:px-20 @6xl/chat:px-36 @7xl/chat:px-72 supports-[not(container-type:inline-size)]:px-6 supports-[not(container-type:inline-size)]:lg:px-20 supports-[not(container-type:inline-size)]:2xl:px-36 supports-[not(container-type:inline-size)]:3xl:px-72"
-			>
-				{#each Object.entries(tableThread) as [column, thread]}
-					{@const threadItem = thread.thread[index]}
-					{#if threadItem && threadItem.role !== 'system'}
-						{#if threadItem.role === 'user'}
-							{@const isEditingCell = false}
-							<div
-								data-role="user"
-								class={cn(
-									'ml-auto flex flex-col gap-1 transition-[padding]',
-									multiturnCols.length > 1
-										? 'min-w-full @5xl/chat:min-w-[50%] supports-[not(container-type:inline-size)]:xl:min-w-[50%]'
-										: '',
-									multiturnCols.length == 1
-										? '@5xl/chat:pl-[20%] supports-[not(container-type:inline-size)]:xl:pl-[20%]'
-										: 'last:pr-3 @2xl/chat:last:pr-6 @4xl/chat:last:pr-20 @5xl/chat:last:pr-0 supports-[not(container-type:inline-size)]:last:pr-6 supports-[not(container-type:inline-size)]:lg:last:pr-20 supports-[not(container-type:inline-size)]:xl:last:pr-0'
-								)}
-							>
-								<div class="flex items-end justify-end">
-									<!-- <div
-												class:invisible={isEditingCell}
-												class="flex items-center opacity-0 transition-opacity group-hover/message-container:opacity-100"
-											>
-												<Button
-													variant="ghost"
-													title="Edit content"
-													onclick={async () => {
-														chatState.editingContent = {
-															rowID: threadItem.row_id,
-															columnID: 'User'
-														};
-														await tick();
-														resizeEditContent();
-													}}
-													class="h-7 w-7 p-0 text-[#98A2B3]"
-												>
-													<EditIcon class="h-3.5 w-3.5" />
-												</Button>
-											</div> -->
-								</div>
-
+			{@const threadsEntries = [
+				...Object.entries(tableThread),
+				...Object.entries(getNewMessageAsThreads())
+			]}
+			<!-- temp -->
+			{@const isEditingCell = false}
+			{#if threadsEntries.some(([, thread]) => thread.thread[index]?.role !== 'system')}
+				<div
+					class="group/message-container message-container flex flex-[0_0_auto] gap-3 transition-[padding]"
+				>
+					{#each threadsEntries as [column, thread]}
+						{@const threadItem = thread.thread[index]}
+						{#if threadItem && threadItem.role !== 'system'}
+							{#if threadItem.role === 'user'}
 								<div
-									data-testid="chat-message"
-									class:w-full={multiturnCols.length > 1}
-									class="group relative flex max-w-full scroll-my-2 flex-col gap-2 self-end rounded-xl bg-white p-4 data-dark:bg-[#444]"
+									data-role="user"
+									class={cn(
+										'ml-auto flex snap-center flex-col gap-1 transition-[padding]',
+										multiturnCols.length > 1
+											? 'min-w-full @3xl/chat:min-w-[50%] supports-[not(container-type:inline-size)]:xl:min-w-[50%]'
+											: 'max-w-full',
+										multiturnCols.length > 2
+											? '@6xl/chat:min-w-[33.333%] supports-[not(container-type:inline-size)]:3xl:min-w-[33.333%]'
+											: '',
+										multiturnCols.length == 1
+											? '@5xl/chat:pl-[20%] supports-[not(container-type:inline-size)]:xl:pl-[20%]'
+											: 'last:pr-2.5'
+									)}
 								>
-									{#if isEditingCell}
-										<!-- {@render cellContentEditor(
-													threadItem.user_prompt ?? ''
-													// typeof threadItem.content === 'string'
-													// 	? threadItem.content
-													// 	: threadItem.content.find((c) => c.type === 'text')?.text ?? ''
-												)} -->
-									{:else if typeof threadItem.content === 'string'}
+									<div class="flex items-end justify-end">
 										<div
-											class="whitespace-pre-wrap text-sm [overflow-wrap:anywhere] focus:outline-none"
+											class:invisible={isEditingCell}
+											class="flex items-center opacity-0 transition-opacity group-hover/message-container:opacity-100"
 										>
-											{threadItem.user_prompt}
+											<!-- <Button
+												variant="ghost"
+												title="Edit content"
+												onclick={async () => {
+													// chatState.editingContent = {
+													// 	rowID: threadItem.row_id,
+													// 	columnID: 'User',
+													// 	fileColumns:
+													// 		typeof threadItem.content !== 'string'
+													// 			? Object.fromEntries(
+													// 					threadItem.content
+													// 						.filter((c) => c.type === 'input_s3')
+													// 						.map((c) => [
+													// 							c.column_name,
+													// 							{ uri: c.uri, url: rowThumbs[c.uri] }
+													// 						])
+													// 				)
+													// 			: {}
+													// };
+													// await tick();
+													// resizeEditContent();
+												}}
+												class="h-7 w-7 p-0 text-[#98A2B3]"
+											>
+												<EditIcon class="h-3.5 w-3.5" />
+											</Button> -->
 										</div>
-									{:else}
-										{#if threadItem.content.some((c) => c.type === 'input_s3')}
-											<div class="flex flex-wrap gap-2">
-												{#each threadItem.content as content}
-													{#if content.type === 'input_s3'}
-														{@const fileType = fileColumnFiletypes.find(({ ext }) =>
-															content.uri.toLowerCase().endsWith(ext)
-														)?.type}
-														{@const fileUrl = rowThumbs[content.uri]}
-														<div class="group/image relative">
-															<button
-																title={content.uri.split('/').pop()}
-																onclick={() => (showFilePreview = content.uri)}
-																class="flex h-36 w-36 items-center justify-center overflow-hidden rounded-xl bg-[#BF416E]"
-															>
-																{#if fileType === 'image'}
-																	<img
-																		src={fileUrl}
-																		alt=""
-																		class="z-0 h-full w-full object-cover"
-																	/>
-																{:else if fileType === 'audio'}
-																	<AudioLines class="h-16 w-16 text-white" />
-																{:else if fileType === 'document'}
-																	<img src={fileUrl} alt="" class="z-0 max-w-full object-contain" />
-																{/if}
-															</button>
+									</div>
 
-															<div
-																class="absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity group-focus-within/image:opacity-100 group-hover/image:opacity-100"
-															>
-																<Button
-																	variant="ghost"
-																	title="Download file"
-																	onclick={() => getRawFile(content.uri)}
-																	class="aspect-square h-6 rounded-md border border-[#F2F4F7] bg-white p-0 text-[#667085] shadow-[0px_1px_3px_0px_rgba(16,24,40,0.1)] hover:text-[#667085]"
-																>
-																	<ArrowDownToLine class="h-3.5 w-3.5" />
-																</Button>
-															</div>
-														</div>
-													{/if}
-												{/each}
+									<div
+										data-testid="chat-message"
+										class:w-full={multiturnCols.length > 1}
+										class="group relative flex max-w-full scroll-my-2 flex-col gap-2 self-end rounded-xl bg-white p-4 data-dark:bg-[#444]"
+									>
+										{#if isEditingCell}
+											<!-- {@render cellContentEditor(threadItem)} -->
+										{:else if typeof threadItem.content === 'string'}
+											<div
+												class="whitespace-pre-wrap text-sm [overflow-wrap:anywhere] focus:outline-none"
+											>
+												{#if showRawTexts}
+													{threadItem.content}
+												{:else}
+													{threadItem.user_prompt}
+												{/if}
 											</div>
-										{/if}
+										{:else}
+											{#if threadItem.content.some((c) => c.type === 'input_s3' && c.uri)}
+												<div class="flex flex-wrap gap-2">
+													{#each threadItem.content as content}
+														{#if content.type === 'input_s3'}
+															{#if content.uri}
+																{@const fileType = fileColumnFiletypes.find(({ ext }) =>
+																	content.uri.toLowerCase().endsWith(ext)
+																)?.type}
+																{@const fileUrl = rowThumbs[content.uri]}
+																<div class="group/image relative">
+																	<button
+																		title={content.uri.split('/').pop()}
+																		onclick={() => (showFilePreview = content.uri)}
+																		class="flex h-36 w-36 items-center justify-center overflow-hidden rounded-xl bg-[#BF416E]"
+																	>
+																		{#if fileUrl}
+																			{#if fileType === 'image'}
+																				<img
+																					src={fileUrl}
+																					alt=""
+																					class="z-0 h-full w-full object-cover"
+																				/>
+																			{:else if fileType === 'audio'}
+																				<AudioLines class="h-16 w-16 text-white" />
+																			{:else if fileType === 'document'}
+																				<img
+																					src={fileUrl}
+																					alt=""
+																					class="z-0 max-w-full object-contain"
+																				/>
+																			{/if}
+																		{/if}
+																	</button>
 
-										<p
-											class="whitespace-pre-wrap text-sm [overflow-wrap:anywhere] focus:outline-none"
-										>
-											{threadItem.user_prompt}
-										</p>
+																	<div
+																		class="absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity group-focus-within/image:opacity-100 group-hover/image:opacity-100"
+																	>
+																		<Button
+																			variant="ghost"
+																			title="Download file"
+																			onclick={() => getRawFile(content.uri)}
+																			class="aspect-square h-6 rounded-md border border-[#F2F4F7] bg-white p-0 text-[#667085] shadow-[0px_1px_3px_0px_rgba(16,24,40,0.1)] hover:text-[#667085]"
+																		>
+																			<ArrowDownToLine class="h-3.5 w-3.5" />
+																		</Button>
+																	</div>
+																</div>
+															{/if}
+														{/if}
+													{/each}
+												</div>
+											{/if}
+
+											<p
+												class="whitespace-pre-wrap text-sm [overflow-wrap:anywhere] focus:outline-none"
+											>
+												{#if showRawTexts}
+													{@const textContent = threadItem.content
+														.filter((c) => c.type === 'text')
+														.map((c) => c.text)
+														.join('')}
+													{typeof threadItem.content === 'string'
+														? threadItem.content
+														: textContent}
+												{:else}
+													{threadItem.user_prompt}
+												{/if}
+											</p>
+										{/if}
+									</div>
+
+									{#if isEditingCell}
+										<!-- {@render cellContentEditorControls()} -->
 									{/if}
 								</div>
-
-								<!-- {#if isEditingCell}
-											{@render cellContentEditorControls()}
-										{/if} -->
-							</div>
-						{:else if threadItem.role === 'assistant'}
-							{@const isEditingCell = false}
-							<div
-								data-role="assistant"
-								class={cn(
-									'group/message-container flex flex-col gap-1 transition-[padding]',
-									multiturnCols.length > 1
-										? 'min-w-full @5xl/chat:min-w-[50%] supports-[not(container-type:inline-size)]:xl:min-w-[50%]'
-										: '',
-									multiturnCols.length == 1
-										? '@5xl/chat:pr-[20%] supports-[not(container-type:inline-size)]:xl:pr-[20%]'
-										: 'last:pr-3 @2xl/chat:last:pr-6 @4xl/chat:last:pr-20 @5xl/chat:last:pr-0 supports-[not(container-type:inline-size)]:last:pr-6 supports-[not(container-type:inline-size)]:lg:last:pr-20 supports-[not(container-type:inline-size)]:xl:last:pr-0'
-								)}
-							>
-								{#if threadItem.row_id !== generationStatus}
-									<div class="flex items-end justify-between">
+							{:else if threadItem.role === 'assistant'}
+								<!-- {@const isEditingCell =
+											chatState.editingContent?.rowID === threadItem.row_id &&
+											chatState.editingContent?.columnID === column} -->
+								<div
+									data-role="assistant"
+									class={cn(
+										'group/message-container flex flex-col gap-1 transition-[padding]',
+										multiturnCols.length > 1
+											? 'min-w-full @3xl/chat:min-w-[50%] supports-[not(container-type:inline-size)]:xl:min-w-[50%]'
+											: 'max-w-full',
+										multiturnCols.length > 2
+											? '@6xl/chat:min-w-[33.333%] supports-[not(container-type:inline-size)]:3xl:min-w-[33.333%]'
+											: '',
+										multiturnCols.length == 1
+											? '@5xl/chat:pr-[20%] supports-[not(container-type:inline-size)]:xl:pr-[20%]'
+											: 'last:pr-2.5'
+									)}
+								>
+									<div class="flex items-end justify-between px-4">
 										<div class="flex items-center gap-2 text-sm">
-											<span class="line-clamp-1 text-[#98A2B3]">
+											<span class="line-clamp-1 font-medium text-[#98A2B3]">
 												{column}
 											</span>
 										</div>
@@ -638,12 +1036,23 @@
 												variant="ghost"
 												title="Edit content"
 												onclick={async () => {
-													chatState.editingContent = {
-														rowID: threadItem.row_id,
-														columnID: column
-													};
-													await tick();
-													resizeEditContent();
+													// chatState.editingContent = {
+													// 	rowID: threadItem.row_id,
+													// 	columnID: column,
+													// 	fileColumns:
+													// 		typeof threadItem.content !== 'string'
+													// 			? Object.fromEntries(
+													// 					threadItem.content
+													// 						.filter((c) => c.type === 'input_s3')
+													// 						.map((c) => [
+													// 							c.column_name,
+													// 							{ uri: c.uri, url: rowThumbs[c.uri] }
+													// 						])
+													// 				)
+													// 			: {}
+													// };
+													// await tick();
+													// resizeEditContent();
 												}}
 												class="h-7 w-7 p-0 text-[#98A2B3]"
 											>
@@ -653,32 +1062,122 @@
 											<Button
 												variant="ghost"
 												title="Regenerate message"
-												onclick={() => chatState.regenMessage(threadItem.row_id)}
+												onclick={() => /* chatState.regenMessage(threadItem.row_id) */ {}}
 												class="h-7 w-7 p-0 text-[#98A2B3]"
 											>
 												<RegenerateIcon class="h-6 w-6" />
-											</Button>
+											</Button> -->
 
 											{#if threadItem.references}
 												<Button
 													variant="ghost"
 													title="Show references"
-													onclick={() =>
-														(showReferences = {
+													onclick={() => {
+														// showChatControls = { open: false, value: null };
+														tableState.showOutputDetails = {
 															open: true,
+															activeCell: { columnID: column, rowID: threadItem.row_id },
+															activeTab: 'references',
 															message: {
-																columnID: column,
-																threadItem
+																content:
+																	typeof threadItem?.content === 'string'
+																		? threadItem.content
+																		: (threadItem?.content
+																				.filter((c) => c.type === 'text')
+																				.map((c) => c.text)
+																				.join('') ?? ''),
+																chunks: threadItem?.references?.chunks ?? []
 															},
+															reasoningContent: threadItem.reasoning_content ?? null,
+															reasoningTime: threadItem.reasoning_time ?? null,
+															expandChunk: null,
 															preview: null
-														})}
+														};
+													}}
 													class="h-7 w-7 p-0 text-[#98A2B3]"
 												>
 													<FileText class="h-4 w-4" />
 												</Button>
-											{/if} -->
+											{/if}
 										</div>
 									</div>
+
+									{#if generationStatus?.includes(threadItem.row_id)}
+										<div class="mt-1 flex items-center gap-2 px-4">
+											<RowStreamIndicator />
+
+											{#if reasoningContentStreams[threadItem.row_id]?.[column] && !(loadedStreams[threadItem.row_id]?.[column]?.join('') ?? '') && !(latestStreams[threadItem.row_id]?.[column] ?? '')}
+												<button
+													onclick={() => {
+														// showChatControls = { open: false, value: null };
+														tableState.showOutputDetails = {
+															open: true,
+															activeCell: { columnID: column, rowID: threadItem.row_id },
+															activeTab: 'thinking',
+															message: {
+																content:
+																	typeof threadItem.content === 'string'
+																		? threadItem.content
+																		: (threadItem.content.find((c) => c.type === 'text')?.text ??
+																			''),
+																chunks:
+																	loadedReferences?.[threadItem.row_id]?.[column]?.chunks ?? []
+															},
+															reasoningContent:
+																reasoningContentStreams[threadItem.row_id]?.[column] ?? null,
+															reasoningTime: null,
+															expandChunk: null,
+															preview: null
+														};
+													}}
+													class="flex items-center gap-2 text-[#98A2B3] transition-colors hover:text-[#344054]"
+												>
+													<span class="text-xs font-medium"> Thinking... </span>
+													<ChevronRight size={12} />
+												</button>
+											{/if}
+										</div>
+									{:else if threadItem.reasoning_content}
+										<button
+											onclick={() => {
+												// showChatControls = { open: false, value: null };
+												tableState.showOutputDetails = {
+													open: true,
+													activeCell: { columnID: column, rowID: threadItem.row_id },
+													activeTab: 'thinking',
+													message: {
+														content:
+															typeof threadItem?.content === 'string'
+																? threadItem.content
+																: (threadItem?.content
+																		.filter((c) => c.type === 'text')
+																		.map((c) => c.text)
+																		.join('') ?? ''),
+														chunks: threadItem?.references?.chunks ?? []
+													},
+													reasoningContent: threadItem.reasoning_content ?? null,
+													reasoningTime: threadItem.reasoning_time ?? null,
+													expandChunk: null,
+													preview: null
+												};
+											}}
+											class="flex items-center gap-2 px-4 text-sm text-[#667085] transition-colors hover:text-[#344054]"
+										>
+											<!-- {@render assistantIcon('h-4 w-4')} -->
+
+											{#if threadItem.reasoning_time}
+												Thought for {threadItem.reasoning_time.toFixed()} second{Number(
+													threadItem.reasoning_time.toFixed()
+												) > 1
+													? 's'
+													: ''}
+											{:else}
+												Reasoning
+											{/if}
+
+											<ChevronRight size={16} />
+										</button>
+									{/if}
 
 									<div
 										data-testid="chat-message"
@@ -686,18 +1185,42 @@
 										class="group relative max-w-full scroll-my-2 self-start rounded-xl bg-[#F2F4F7] p-4 text-text data-dark:bg-[#5B7EE5]"
 									>
 										{#if isEditingCell}
-											<!-- {@render cellContentEditor(
-												typeof threadItem.content === 'string'
-													? threadItem.content
-													: threadItem.content.find((c) => c.type === 'text')?.text ?? ''
-											)} -->
+											<!-- {@render cellContentEditor(threadItem)} -->
 										{:else if typeof threadItem.content === 'string'}
 											<p class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
-												{#if showRawTexts}
-													{threadItem.content}
+												{#if !generationStatus?.includes(threadItem.row_id)}
+													{#if showRawTexts}
+														{threadItem.content}
+													{:else}
+														{@html converter
+															.makeHtml(threadItem.content)
+															.replaceAll(chatCitationPattern, (match, word) =>
+																citationReplacer(
+																	match,
+																	word,
+																	column,
+																	threadItem.row_id,
+																	(
+																		threadItem.references ??
+																		tableThread[column]?.thread?.find(
+																			(item) => item.row_id === threadItem.row_id && item.references
+																		)?.references
+																	)?.chunks ?? []
+																)
+															)}
+													{/if}
 												{:else}
-													{@const rawHtml = converter.makeHtml(threadItem.content)}
-													{@html rawHtml}
+													{@html converter
+														.makeHtml(loadedStreams[threadItem.row_id]?.[column]?.join('') ?? '')
+														.replaceAll(chatCitationPattern, (match, word) =>
+															citationReplacer(
+																match,
+																word,
+																column,
+																threadItem.row_id,
+																loadedReferences?.[threadItem.row_id]?.[column].chunks ?? []
+															)
+														)}
 												{/if}
 											</p>
 										{:else}
@@ -707,32 +1230,50 @@
 												.join('')}
 											<!-- TODO: Insert images/file -->
 											<p class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
-												{#if showRawTexts}
-													{textContent}
+												{#if !generationStatus?.includes(threadItem.row_id)}
+													{#if showRawTexts}
+														{textContent}
+													{:else}
+														{@html converter
+															.makeHtml(textContent)
+															.replaceAll(chatCitationPattern, (match, word) =>
+																citationReplacer(
+																	match,
+																	word,
+																	column,
+																	threadItem.row_id,
+																	(
+																		threadItem.references ??
+																		tableThread[column]?.thread?.find(
+																			(item) => item.row_id === threadItem.row_id && item.references
+																		)?.references
+																	)?.chunks ?? []
+																)
+															)}
+													{/if}
 												{:else}
-													{@const rawHtml = converter.makeHtml(textContent)}
-													{@html rawHtml}
+													{@html converter
+														.makeHtml(loadedStreams[threadItem.row_id]?.[column]?.join('') ?? '')
+														.replaceAll(chatCitationPattern, (match, word) =>
+															citationReplacer(
+																match,
+																word,
+																column,
+																threadItem.row_id,
+																loadedReferences?.[threadItem.row_id]?.[column].chunks ?? []
+															)
+														)}
 												{/if}
 											</p>
 										{/if}
 									</div>
-
-									{#if isEditingCell}
-										<!-- {@render cellContentEditorControls()} -->
-									{/if}
-								{:else}
-									{@render generatingMessages(column)}
-								{/if}
-							</div>
+								</div>
+							{/if}
 						{/if}
-					{/if}
-				{/each}
-			</div>
+					{/each}
+				</div>
+			{/if}
 		{/each}
-
-		{#if generationStatus === 'new'}
-			{@render generatingMessages()}
-		{/if}
 	{:else}
 		<div class="absolute bottom-0 left-0 right-0 top-0 flex items-center justify-center">
 			<LoadingSpinner class="h-6 text-secondary" />
@@ -742,13 +1283,156 @@
 
 <div
 	style="grid-template-rows: minmax(0, auto);"
-	class="grid px-3 transition-[grid-template-rows,padding] duration-300 @2xl/chat:px-6 @4xl/chat:px-20 @6xl/chat:px-36 @7xl/chat:px-72 supports-[not(container-type:inline-size)]:px-6 supports-[not(container-type:inline-size)]:lg:px-20 supports-[not(container-type:inline-size)]:2xl:px-36 supports-[not(container-type:inline-size)]:3xl:px-72"
+	class="mx-auto grid w-full max-w-6xl px-2.5 transition-[grid-template-rows,padding] duration-300"
 >
 	<div
 		style="grid-template-columns: auto;"
-		class="grid w-full items-end gap-2 pb-3 transition-[background-color,grid-template-columns] duration-300 @container @2xl/chat:pb-6"
+		class="grid w-full items-end gap-2 pb-3 transition-[background-color,grid-template-columns] duration-300 @container @2xl/chat:pb-4"
 	>
 		<div
+			style="box-shadow: 0px 4px 12px 0px rgba(0, 0, 0, 0.06);"
+			class="relative mt-2 flex w-full flex-col items-start gap-2 rounded-xl border border-[#E4E7EC] bg-white px-4 py-3 text-text transition-colors data-dark:border-[#666] data-dark:bg-[#303338]"
+		>
+			<button
+				tabindex="-1"
+				title="Drag to resize chat area"
+				aria-label="Drag to resize chat area"
+				onmousedown={() => (isResizing = true)}
+				class="group absolute -top-[4px] left-0 right-0 mx-6 h-[10px] cursor-ns-resize focus:outline-none"
+			>
+				<div
+					class="absolute top-[4px] h-[1px] w-full rounded-md bg-black opacity-0 group-hover:opacity-100 data-dark:bg-white {isResizing &&
+						'opacity-100'} transition-opacity"
+				></div>
+			</button>
+
+			{#if Object.keys(uploadColumns).length > 0}
+				<div class="flex flex-wrap gap-2">
+					{#each Object.entries(uploadColumns) as [uploadColumn, { uri }]}
+						{@const fileType = fileColumnFiletypes.find(({ ext }) =>
+							uri.toLowerCase().endsWith(ext)
+						)?.type}
+						{@const fileUrl = rowThumbs[uri]}
+						<div class="group/image relative">
+							<button
+								title={uri.split('/').pop()}
+								onclick={() => (showFilePreview = uri)}
+								class:pointer-events-none={uri === 'loading'}
+								class="flex h-16 w-16 items-center justify-center overflow-hidden rounded-xl bg-[#BF416E]"
+							>
+								{#if uri === 'loading'}
+									<LoadingSpinner class="m-0 h-5 w-5 text-white" />
+								{:else if fileUrl}
+									{#if fileType === 'image'}
+										<img src={fileUrl} alt="" class="z-0 h-full w-full object-cover" />
+									{:else if fileType === 'audio'}
+										<AudioLines class="h-16 w-16 text-white" />
+									{:else if fileType === 'document'}
+										<img src={fileUrl} alt="" class="z-0 h-full w-full object-cover" />
+									{/if}
+								{/if}
+							</button>
+
+							<button
+								title="Delete file"
+								onclick={() => delete uploadColumns[uploadColumn]}
+								class="absolute right-0 top-0 z-10 -translate-y-[30%] translate-x-[30%] rounded-full bg-black p-0.5 opacity-0 transition-[opacity,background-color] hover:bg-neutral-600 group-hover/image:opacity-100"
+							>
+								<CloseIcon class="h-4 w-4 text-white" />
+							</button>
+						</div>
+					{/each}
+				</div>
+			{/if}
+
+			<form bind:this={chatForm} onsubmit={handleChatSubmit} class="flex w-full gap-1">
+				<!-- svelte-ignore a11y_autofocus -->
+				<textarea
+					autofocus
+					name="chatbar"
+					placeholder="Enter message"
+					bind:this={chat}
+					bind:value={chatMessage}
+					oninput={resizeChat}
+					onkeydown={interceptSubmit}
+					onpaste={(e) => {
+						if (e.clipboardData?.items) {
+							handleSelectFiles(
+								[...e.clipboardData.items]
+									.map((item) => {
+										if (item.kind === 'file') {
+											const itemFile = item.getAsFile();
+											if (itemFile) {
+												return itemFile;
+											} else {
+												return [];
+											}
+										} else {
+											return [];
+										}
+									})
+									.flat()
+							);
+						} else {
+							handleSelectFiles([...(e.clipboardData?.files ?? [])]);
+						}
+					}}
+					class="h-12 min-h-[48px] w-full resize-none bg-transparent outline-none placeholder:text-[#98A2B3]"
+				></textarea>
+
+				<Button
+					title="Send message"
+					onclick={() => {
+						isResized = false;
+						chatForm?.requestSubmit();
+					}}
+					disabled={(!chatMessage && Object.values(uploadColumns).every((col) => !col.uri)) ||
+						!!generationStatus}
+					class="h-9 w-9 flex-[0_0_auto] rounded-full p-0"
+				>
+					<ArrowUp class="h-7" />
+				</Button>
+			</form>
+
+			<div class="flex justify-between">
+				{#if fileColumns.length > 0 && Object.keys(uploadColumns).length < fileColumns.length}
+					<Button
+						variant="action"
+						size="sm"
+						onclick={(e) => {
+							e.currentTarget.querySelector('input')?.click();
+						}}
+						class="gap-2 px-2 font-normal text-[#344054]"
+					>
+						<ArrowDownToLine class="h-4 w-4 rotate-180 stroke-[1.5]" />
+						Upload file or image
+
+						<input
+							type="file"
+							accept={fileColumnFiletypes
+								.filter(({ type }) =>
+									fileColumns
+										.filter((c) => !uploadColumns[c.id]?.uri?.trim())
+										.map((c) => c.dtype)
+										.includes(type)
+								)
+								.map(({ ext }) => ext)
+								.join(',')}
+							onchange={(e) => {
+								e.preventDefault();
+								handleSelectFiles([...(e.currentTarget.files ?? [])]);
+							}}
+							multiple={false}
+							class="fixed max-h-[0] max-w-0 overflow-hidden !border-none !p-0"
+						/>
+					</Button>
+				{/if}
+
+				<p></p>
+			</div>
+		</div>
+
+		<!-- <div
 			class="relative mt-2 flex w-full items-center rounded-[1.8rem] border border-[#E4E7EC] bg-white p-1 text-text transition-colors has-[textarea:focus]:border-[#d5607c] has-[textarea:focus]:shadow-[0_0_0_1px_#FFD8DF] data-dark:border-[#666] data-dark:bg-[#303338]"
 		>
 			<button
@@ -765,7 +1449,7 @@
 			</button>
 
 			<form bind:this={chatForm} onsubmit={handleChatSubmit} class="flex w-full">
-				<!-- svelte-ignore a11y_autofocus -->
+				<!-- svelte-ignore a11y_autofocus ->
 				<textarea
 					autofocus
 					name="chatbar"
@@ -791,7 +1475,7 @@
 			>
 				<SendIcon class="h-7" />
 			</Button>
-		</div>
+		</div> -->
 	</div>
 </div>
 
@@ -808,80 +1492,6 @@
 
 <ChatFilePreview bind:showFilePreview />
 <ChatThumbsFetch {uris} bind:rowThumbs />
-
-{#snippet generatingMessages(columnID?: string)}
-	{#if columnID}
-		{#each displayedLoadedStreams as key}
-			{#if key === columnID}
-				{@const loadedStream = loadedStreams[key]}
-				{@const latestStream = latestStreams[key] ?? ''}
-				<div class="flex items-center gap-2 text-sm">
-					<span class="line-clamp-1 text-[#98A2B3]">
-						{key}
-					</span>
-				</div>
-
-				<div
-					data-testid="chat-message"
-					data-streaming="true"
-					class:w-full={displayedLoadedStreams.length > 1}
-					class="group relative max-w-full scroll-my-2 self-start rounded-xl bg-[#F2F4F7] p-4 text-text data-dark:bg-[#5B7EE5]"
-				>
-					<p class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
-						{@html converter.makeHtml(loadedStream.join(''))}
-						{latestStream}
-
-						{#if loadedStream.length === 0 && latestStream === ''}
-							<RowStreamIndicator />
-						{/if}
-					</p>
-				</div>
-			{/if}
-		{/each}
-	{:else}
-		<div
-			class="message-container flex flex-[0_0_auto] gap-3 overflow-x-auto overflow-y-hidden px-3 transition-[padding] @2xl/chat:px-6 @4xl/chat:px-20 @6xl/chat:px-36 @7xl/chat:px-72 supports-[not(container-type:inline-size)]:px-6 supports-[not(container-type:inline-size)]:lg:px-20 supports-[not(container-type:inline-size)]:2xl:px-36 supports-[not(container-type:inline-size)]:3xl:px-72"
-		>
-			{#each displayedLoadedStreams as key}
-				{@const loadedStream = loadedStreams[key]}
-				{@const latestStream = latestStreams[key] ?? ''}
-				<div
-					class={cn(
-						'group/message-container flex flex-col gap-1',
-						displayedLoadedStreams.length > 1
-							? 'min-w-full @5xl/chat:min-w-[50%] supports-[not(container-type:inline-size)]:xl:min-w-[50%]'
-							: '',
-						displayedLoadedStreams.length == 1
-							? '@5xl/chat:pr-[20%] supports-[not(container-type:inline-size)]:xl:pr-[20%]'
-							: ''
-					)}
-				>
-					<div class="flex items-center gap-2 text-sm">
-						<span class="line-clamp-1 text-[#98A2B3]">
-							{key}
-						</span>
-					</div>
-
-					<div
-						data-testid="chat-message"
-						data-streaming="true"
-						class:w-full={displayedLoadedStreams.length > 1}
-						class="group relative max-w-full scroll-my-2 self-start rounded-xl bg-[#F2F4F7] p-4 text-text data-dark:bg-[#5B7EE5]"
-					>
-						<p class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
-							{@html converter.makeHtml(loadedStream.join(''))}
-							{latestStream}
-
-							{#if loadedStream.length === 0 && latestStream === ''}
-								<RowStreamIndicator />
-							{/if}
-						</p>
-					</div>
-				</div>
-			{/each}
-		</div>
-	{/if}
-{/snippet}
 
 <style>
 	.message-container::-webkit-scrollbar {

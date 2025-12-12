@@ -14,7 +14,7 @@
 	import PlaceholderNewCol from './PlaceholderNewCol.svelte';
 	import { CustomToastDesc, toast } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
-	import { ColumnDropdown } from '$lib/components/tables/(sub)';
+	import { ColumnDropdown, ColumnTypeTag } from '$lib/components/tables/(sub)';
 	import Portal from '$lib/components/Portal.svelte';
 	import MultiturnChatIcon from '$lib/icons/MultiturnChatIcon.svelte';
 	import MoreVertIcon from '$lib/icons/MoreVertIcon.svelte';
@@ -74,7 +74,7 @@
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
-					'x-project-id': page.params.project_id
+					'x-project-id': page.params.project_id ?? ''
 				},
 				body: JSON.stringify({
 					table_id: page.params.table_id,
@@ -198,7 +198,7 @@
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
-					'x-project-id': page.params.project_id
+					'x-project-id': page.params.project_id ?? ''
 				},
 				body: JSON.stringify({
 					table_id: tableData.id,
@@ -326,31 +326,12 @@
 
 		{#if column.id !== 'ID' && column.id !== 'Updated at'}
 			{#if !tableState.colSizes[column.id] || tableState.colSizes[column.id] >= 150}
-				<span
-					style="background-color: {colType === 'input' ? '#7995E9' : '#FD853A'};"
-					class:pr-1={column.gen_config?.object !== 'gen_config.llm' ||
-						!column.gen_config.multi_turn}
-					class="mr-1 flex w-min select-none items-center whitespace-nowrap rounded-lg px-0.5 py-1 text-xxs text-white sm:text-xs"
-				>
-					<span class="px-1 font-medium capitalize">
-						{colType}
-					</span>
-					{#if !tableState.colSizes[column.id] || tableState.colSizes[column.id] >= 220}
-						<span
-							style="color: {colType === 'input' ? '#7995E9' : '#FD853A'};"
-							class="w-min select-none whitespace-nowrap rounded-md bg-white px-1 font-medium"
-						>
-							{column.dtype}
-						</span>
-					{/if}
-
-					{#if column.gen_config?.object === 'gen_config.llm' && column.gen_config.multi_turn}
-						<hr class="ml-1 h-3 border-l border-white" />
-						<div class="relative h-4 w-[18px]">
-							<MultiturnChatIcon class="absolute h-[18px] -translate-y-px text-white" />
-						</div>
-					{/if}
-				</span>
+				<ColumnTypeTag
+					{colType}
+					columnID={column.id}
+					dtype={column.dtype}
+					genConfig={column.gen_config}
+				/>
 			{/if}
 		{/if}
 
@@ -411,30 +392,12 @@
 			</button>
 
 			{#if !tableState.colSizes[draggingColumn.id] || tableState.colSizes[draggingColumn.id] >= 150}
-				<span
-					style="background-color: {colType === 'input'
-						? '#E9EDFA'
-						: '#FFEAD5'}; color: {colType === 'input' ? '#6686E7' : '#FD853A'};"
-					class="mr-1 flex w-min select-none items-center whitespace-nowrap rounded-[0.1875rem] px-0.5 py-1 text-xxs sm:text-xs"
-				>
-					<span class="px-1 font-medium capitalize">
-						{colType}
-					</span>
-					{#if !tableState.colSizes[draggingColumn.id] || tableState.colSizes[draggingColumn.id] >= 220}
-						<span
-							class="w-min select-none whitespace-nowrap rounded-[0.1875rem] bg-white px-1 font-medium"
-						>
-							{draggingColumn.dtype}
-						</span>
-					{/if}
-
-					{#if draggingColumn.gen_config?.object === 'gen_config.llm' && draggingColumn.gen_config.multi_turn}
-						<hr class="ml-1 h-3 border-l border-[#FD853A]" />
-						<div class="relative h-4 w-[18px]">
-							<MultiturnChatIcon class="absolute h-[18px] -translate-y-px" />
-						</div>
-					{/if}
-				</span>
+				<ColumnTypeTag
+					{colType}
+					dtype={draggingColumn.dtype}
+					columnID={draggingColumn.id}
+					genConfig={draggingColumn.gen_config}
+				/>
 			{/if}
 
 			<span class="line-clamp-1 text-xs font-medium text-[#666] data-dark:text-white sm:text-sm">

@@ -50,7 +50,7 @@
 	let fuse = $derived.by(
 		() =>
 			new Fuse(models, {
-				keys: ['name', 'id', 'capabilities'],
+				keys: ['name', 'capabilities', 'id'],
 				threshold: 0.4, // 0.0 = exact match, 1.0 = match all
 				includeScore: true
 			})
@@ -73,7 +73,7 @@
 			{
 				credentials: 'same-origin',
 				headers: {
-					'x-project-id': page.params.project_id
+					'x-project-id': page.params.project_id ?? ''
 				}
 			}
 		);
@@ -176,11 +176,17 @@
 				<Command.Group value="models">
 					{#each (searchQuery.trim() !== '' ? fuse
 								.search(searchQuery)
-								.map((result) => result.item) : models).filter((model) => {
-						if (!capabilityFilter || model.capabilities.includes(capabilityFilter)) {
-							return true;
-						}
-					}) as { id, name, languages, capabilities, owned_by }}
+								.map((result) => result.item) : models)
+						.filter((model) => {
+							if (!capabilityFilter || model.capabilities.includes(capabilityFilter)) {
+								return true;
+							}
+						})
+						.sort((a, b) => {
+							if (a.id === selectedModel) return -1;
+							if (b.id === selectedModel) return 1;
+							return 0;
+						}) as { id, name, languages, capabilities, owned_by }}
 						<!-- TODO: simplify this -->
 						{@const isDisabled =
 							(owned_by !== 'ellm' &&

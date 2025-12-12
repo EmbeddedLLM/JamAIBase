@@ -7,6 +7,7 @@
 	import type { GenTable } from '$lib/types';
 	import ArrowDownIcon from '$lib/icons/ArrowDownIcon.svelte';
 	import { ChevronDown } from '@lucide/svelte';
+	import ColumnTypeTag from './ColumnTypeTag.svelte';
 
 	interface Props {
 		tableType: 'action' | 'knowledge' | 'chat';
@@ -90,29 +91,12 @@
 									class="flex cursor-pointer gap-1 break-all"
 								>
 									{#if !['ID', 'Updated at'].includes(column.id)}
-										<span
-											style="background-color: {colType === 'input' ? '#7995E9' : '#FD853A'};"
-											class:pr-1={column.gen_config?.object !== 'gen_config.llm' ||
-												!column.gen_config.multi_turn}
-											class="mr-1 flex w-min select-none items-center whitespace-nowrap rounded-lg px-0.5 py-1 text-xxs text-white sm:text-xs"
-										>
-											<span class="px-1 font-medium capitalize">
-												{colType}
-											</span>
-											<span
-												style="color: {colType === 'input' ? '#7995E9' : '#FD853A'};"
-												class="w-min select-none whitespace-nowrap rounded-md bg-white px-1 font-medium"
-											>
-												{column.dtype}
-											</span>
-
-											<!-- {#if column.gen_config?.object === 'gen_config.llm' && column.gen_config.multi_turn}
-											<hr class="ml-1 h-3 border-l border-white" />
-											<div class="relative h-4 w-[18px]">
-												<MultiturnChatIcon class="absolute h-[18px] -translate-y-px text-white" />
-											</div>
-										{/if} -->
-										</span>
+										<ColumnTypeTag
+											colType={!column.gen_config ? 'input' : 'output'}
+											dtype={column.dtype}
+											columnID={column.id}
+											genConfig={column.gen_config}
+										/>
 									{/if}
 
 									{column.id}

@@ -21,6 +21,8 @@ export const chatTableMode = persisted<'chat' | 'table'>('table_mode', 'table', 
 });
 
 interface ITableState {
+	tableData: GenTable | undefined;
+	rowThumbs: { [rowID: string]: { [colID: string]: { value: string; url: string } } };
 	templateCols: string;
 	colSizes: Record<string, number>;
 	resizingCol: { columnID: string; diffX: number } | null;
@@ -33,6 +35,7 @@ interface ITableState {
 	};
 	renamingCol: string | null;
 	deletingCol: string | null;
+	deletingFile: { rowID: string; columnID: string; fileUri?: string } | null;
 	showOutputDetails: {
 		open: boolean;
 		activeTab: string;
@@ -61,6 +64,9 @@ interface ITableState {
 }
 
 export class TableState implements ITableState {
+	tableData = $state<GenTable | undefined>();
+	rowThumbs = $state<{ [rowID: string]: { [colID: string]: { value: string; url: string } } }>({});
+
 	templateCols = $state<string>('');
 	colSizes = $state<Record<string, number>>({});
 	resizingCol = $state<{ columnID: string; diffX: number } | null>(null);
@@ -77,6 +83,7 @@ export class TableState implements ITableState {
 	addingCol = $state(false);
 	renamingCol = $state<string | null>(null);
 	deletingCol = $state<string | null>(null);
+	deletingFile = $state<{ rowID: string; columnID: string; fileUri?: string } | null>(null);
 
 	/** Output details */
 	showOutputDetails = $state<{
@@ -86,6 +93,7 @@ export class TableState implements ITableState {
 		message: {
 			content: string;
 			chunks: ReferenceChunk[];
+			fileUrl?: string;
 		} | null;
 		reasoningContent: string | null;
 		reasoningTime: number | null;

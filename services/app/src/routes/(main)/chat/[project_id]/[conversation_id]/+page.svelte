@@ -82,14 +82,6 @@
 	let rowThumbs: { [uri: string]: string } = $state({});
 	let showFilePreview = $state<string | null>(null);
 
-	let displayedLoadedStreams = $derived(
-		Object.keys(chatState.messages).filter((colID) => {
-			// Filter out columns to display
-			const col = chatState.conversation?.cols?.find((col) => col.id === colID);
-			return col?.gen_config?.object === 'gen_config.llm' && col.gen_config.multi_turn;
-		})
-	);
-
 	let showRawTexts = $state(false);
 	let showChatControls = $state<{ open: boolean; value: string | null }>({
 		open: false,
@@ -186,10 +178,10 @@
 						content:
 							typeof threadItem?.content === 'string'
 								? threadItem.content
-								: threadItem?.content
+								: (threadItem?.content
 										.filter((c) => c.type === 'text')
 										.map((c) => c.text)
-										.join('') ?? '',
+										.join('') ?? ''),
 						chunks: threadItem?.references?.chunks ?? []
 					},
 					reasoningContent: threadItem?.reasoning_content ?? null,
@@ -211,7 +203,7 @@
 		if (files.length === 0) return;
 		if (
 			Object.values(
-				editing ? chatState.editingContent?.fileColumns ?? {} : chatState.uploadColumns
+				editing ? (chatState.editingContent?.fileColumns ?? {}) : chatState.uploadColumns
 			).filter((val) => val.uri).length >= chatState.fileColumns.length
 		) {
 			alert('No more files can be uploaded: all columns filled.');
@@ -234,7 +226,7 @@
 									(c) =>
 										!(
 											editing
-												? chatState.editingContent?.fileColumns ?? {}
+												? (chatState.editingContent?.fileColumns ?? {})
 												: chatState.uploadColumns
 										)[c.id]?.uri?.trim()
 								)
@@ -252,7 +244,9 @@
 							.filter(
 								(c) =>
 									!(
-										editing ? chatState.editingContent?.fileColumns ?? {} : chatState.uploadColumns
+										editing
+											? (chatState.editingContent?.fileColumns ?? {})
+											: chatState.uploadColumns
 									)[c.id]?.uri?.trim()
 							)
 							.map((c) => c.dtype)
@@ -530,178 +524,193 @@
 			onscroll={debouncedScrollHandler}
 			data-testid="chat-window"
 			id="chat-window"
-			class="relative flex grow flex-col gap-4 overflow-auto pt-6"
+			class="relative mx-auto flex w-full max-w-6xl grow snap-x snap-mandatory flex-col gap-4 overflow-auto px-2.5 pt-3"
 		>
 			{#if chatState.conversation}
 				{@const multiturnCols = Object.keys(chatState.messages)}
-				{@const longestThreadColLen = chatState.messages[longestThreadCol]?.thread?.length ?? 0}
+				{@const longestThreadColLen =
+					(chatState.messages[longestThreadCol]?.thread?.length ?? 0) +
+					(chatState.generationStatus?.includes('new') &&
+					(chatState.messages[longestThreadCol]?.thread?.length ?? 0) !== 0
+						? 1
+						: 0)}
 				{#each Array(longestThreadColLen).fill('') as _, index}
-					<div
-						class="group/message-container message-container flex flex-[0_0_auto] gap-3 px-3 transition-[padding] @2xl/chat:px-6 @4xl/chat:px-20 @6xl/chat:px-36 @7xl/chat:px-72 supports-[not(container-type:inline-size)]:px-6 supports-[not(container-type:inline-size)]:lg:px-20 supports-[not(container-type:inline-size)]:2xl:px-36 supports-[not(container-type:inline-size)]:3xl:px-72"
-					>
-						{#each Object.entries(chatState.messages) as [column, thread]}
-							{@const threadItem = thread.thread[index]}
-							{#if threadItem && threadItem.role !== 'system'}
-								{#if threadItem.role === 'user'}
-									{@const isEditingCell =
-										chatState.editingContent?.rowID === threadItem.row_id &&
-										chatState.editingContent.columnID === 'User'}
-									<div
-										data-role="user"
-										class={cn(
-											'ml-auto flex flex-col gap-1 transition-[padding]',
-											multiturnCols.length > 1
-												? 'min-w-full @5xl/chat:min-w-[50%] supports-[not(container-type:inline-size)]:xl:min-w-[50%]'
-												: 'max-w-full',
-											multiturnCols.length == 1
-												? '@5xl/chat:pl-[20%] supports-[not(container-type:inline-size)]:xl:pl-[20%]'
-												: 'last:pr-3 @2xl/chat:last:pr-6 @4xl/chat:last:pr-20 @5xl/chat:last:pr-0 supports-[not(container-type:inline-size)]:last:pr-6 supports-[not(container-type:inline-size)]:lg:last:pr-20 supports-[not(container-type:inline-size)]:xl:last:pr-0'
-										)}
-									>
-										<div class="flex items-end justify-end">
-											<div
-												class:invisible={isEditingCell}
-												class="flex items-center opacity-0 transition-opacity group-hover/message-container:opacity-100"
-											>
-												<Button
-													variant="ghost"
-													title="Edit content"
-													onclick={async () => {
-														chatState.editingContent = {
-															rowID: threadItem.row_id,
-															columnID: 'User',
-															fileColumns:
-																typeof threadItem.content !== 'string'
-																	? Object.fromEntries(
-																			threadItem.content
-																				.filter((c) => c.type === 'input_s3')
-																				.map((c) => [
-																					c.column_name,
-																					{ uri: c.uri, url: rowThumbs[c.uri] }
-																				])
-																		)
-																	: {}
-														};
-														await tick();
-														resizeEditContent();
-													}}
-													class="h-7 w-7 p-0 text-[#98A2B3]"
-												>
-													<EditIcon class="h-3.5 w-3.5" />
-												</Button>
-											</div>
-										</div>
-
+					{@const threadsEntries = [
+						...Object.entries(chatState.messages),
+						...Object.entries(chatState.getNewMessageAsThreads())
+					]}
+					{#if threadsEntries.some(([, thread]) => thread.thread[index]?.role !== 'system')}
+						<div
+							class="group/message-container message-container flex flex-[0_0_auto] gap-3 transition-[padding]"
+						>
+							{#each threadsEntries as [column, thread]}
+								{@const threadItem = thread.thread[index]}
+								{#if threadItem && threadItem.role !== 'system'}
+									{#if threadItem.role === 'user'}
+										{@const isEditingCell =
+											chatState.editingContent?.rowID === threadItem.row_id &&
+											chatState.editingContent.columnID === 'User'}
 										<div
-											data-testid="chat-message"
-											class:w-full={multiturnCols.length > 1}
-											class="group relative flex max-w-full scroll-my-2 flex-col gap-2 self-end rounded-xl bg-white p-4 data-dark:bg-[#444]"
+											data-role="user"
+											class={cn(
+												'ml-auto flex snap-center flex-col gap-1 transition-[padding]',
+												multiturnCols.length > 1
+													? 'min-w-full @3xl/chat:min-w-[50%] supports-[not(container-type:inline-size)]:xl:min-w-[50%]'
+													: 'max-w-full',
+												multiturnCols.length > 2
+													? '@6xl/chat:min-w-[33.333%] supports-[not(container-type:inline-size)]:3xl:min-w-[33.333%]'
+													: '',
+												multiturnCols.length == 1
+													? '@5xl/chat:pl-[20%] supports-[not(container-type:inline-size)]:xl:pl-[20%]'
+													: 'last:pr-2.5'
+											)}
 										>
-											{#if isEditingCell}
-												{@render cellContentEditor(threadItem)}
-											{:else if typeof threadItem.content === 'string'}
+											<div class="flex items-end justify-end">
 												<div
-													class="whitespace-pre-wrap text-sm [overflow-wrap:anywhere] focus:outline-none"
+													class:invisible={isEditingCell}
+													class="flex items-center opacity-0 transition-opacity group-hover/message-container:opacity-100"
 												>
-													{#if showRawTexts}
-														{threadItem.content}
-													{:else}
-														{threadItem.user_prompt}
-													{/if}
+													<Button
+														variant="ghost"
+														title="Edit content"
+														onclick={async () => {
+															chatState.editingContent = {
+																rowID: threadItem.row_id,
+																columnID: 'User',
+																fileColumns:
+																	typeof threadItem.content !== 'string'
+																		? Object.fromEntries(
+																				threadItem.content
+																					.filter((c) => c.type === 'input_s3')
+																					.map((c) => [
+																						c.column_name,
+																						{ uri: c.uri, url: rowThumbs[c.uri] }
+																					])
+																			)
+																		: {}
+															};
+															await tick();
+															resizeEditContent();
+														}}
+														class="h-7 w-7 p-0 text-[#98A2B3]"
+													>
+														<EditIcon class="h-3.5 w-3.5" />
+													</Button>
 												</div>
-											{:else}
-												{#if threadItem.content.some((c) => c.type === 'input_s3' && c.uri)}
-													<div class="flex flex-wrap gap-2">
-														{#each threadItem.content as content}
-															{#if content.type === 'input_s3'}
-																{#if content.uri}
-																	{@const fileType = fileColumnFiletypes.find(({ ext }) =>
-																		content.uri.toLowerCase().endsWith(ext)
-																	)?.type}
-																	{@const fileUrl = rowThumbs[content.uri]}
-																	<div class="group/image relative">
-																		<button
-																			title={content.uri.split('/').pop()}
-																			onclick={() => (showFilePreview = content.uri)}
-																			class="flex h-36 w-36 items-center justify-center overflow-hidden rounded-xl bg-[#BF416E]"
-																		>
-																			{#if fileUrl}
-																				{#if fileType === 'image'}
-																					<img
-																						src={fileUrl}
-																						alt=""
-																						class="z-0 h-full w-full object-cover"
-																					/>
-																				{:else if fileType === 'audio'}
-																					<AudioLines class="h-16 w-16 text-white" />
-																				{:else if fileType === 'document'}
-																					<img
-																						src={fileUrl}
-																						alt=""
-																						class="z-0 max-w-full object-contain"
-																					/>
-																				{/if}
-																			{/if}
-																		</button>
+											</div>
 
-																		<div
-																			class="absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity group-focus-within/image:opacity-100 group-hover/image:opacity-100"
-																		>
-																			<Button
-																				variant="ghost"
-																				title="Download file"
-																				onclick={() => getRawFile(content.uri)}
-																				class="aspect-square h-6 rounded-md border border-[#F2F4F7] bg-white p-0 text-[#667085] shadow-[0px_1px_3px_0px_rgba(16,24,40,0.1)] hover:text-[#667085]"
-																			>
-																				<ArrowDownToLine class="h-3.5 w-3.5" />
-																			</Button>
-																		</div>
-																	</div>
-																{/if}
-															{/if}
-														{/each}
+											<div
+												data-testid="chat-message"
+												class:w-full={multiturnCols.length > 1}
+												class="group relative flex max-w-full scroll-my-2 flex-col gap-2 self-end rounded-xl bg-white p-4 data-dark:bg-[#444]"
+											>
+												{#if isEditingCell}
+													{@render cellContentEditor(threadItem)}
+												{:else if typeof threadItem.content === 'string'}
+													<div
+														class="whitespace-pre-wrap text-sm [overflow-wrap:anywhere] focus:outline-none"
+													>
+														{#if showRawTexts}
+															{threadItem.content}
+														{:else}
+															{threadItem.user_prompt}
+														{/if}
 													</div>
-												{/if}
+												{:else}
+													{#if threadItem.content.some((c) => c.type === 'input_s3' && c.uri)}
+														<div class="flex flex-wrap gap-2">
+															{#each threadItem.content as content}
+																{#if content.type === 'input_s3'}
+																	{#if content.uri}
+																		{@const fileType = fileColumnFiletypes.find(({ ext }) =>
+																			content.uri.toLowerCase().endsWith(ext)
+																		)?.type}
+																		{@const fileUrl = rowThumbs[content.uri]}
+																		<div class="group/image relative">
+																			<button
+																				title={content.uri.split('/').pop()}
+																				onclick={() => (showFilePreview = content.uri)}
+																				class="flex h-36 w-36 items-center justify-center overflow-hidden rounded-xl bg-[#BF416E]"
+																			>
+																				{#if fileUrl}
+																					{#if fileType === 'image'}
+																						<img
+																							src={fileUrl}
+																							alt=""
+																							class="z-0 h-full w-full object-cover"
+																						/>
+																					{:else if fileType === 'audio'}
+																						<AudioLines class="h-16 w-16 text-white" />
+																					{:else if fileType === 'document'}
+																						<img
+																							src={fileUrl}
+																							alt=""
+																							class="z-0 max-w-full object-contain"
+																						/>
+																					{/if}
+																				{/if}
+																			</button>
 
-												<p
-													class="whitespace-pre-wrap text-sm [overflow-wrap:anywhere] focus:outline-none"
-												>
-													{#if showRawTexts}
-														{@const textContent = threadItem.content
-															.filter((c) => c.type === 'text')
-															.map((c) => c.text)
-															.join('')}
-														{typeof threadItem.content === 'string'
-															? threadItem.content
-															: textContent}
-													{:else}
-														{threadItem.user_prompt}
+																			<div
+																				class="absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity group-focus-within/image:opacity-100 group-hover/image:opacity-100"
+																			>
+																				<Button
+																					variant="ghost"
+																					title="Download file"
+																					onclick={() => getRawFile(content.uri)}
+																					class="aspect-square h-6 rounded-md border border-[#F2F4F7] bg-white p-0 text-[#667085] shadow-[0px_1px_3px_0px_rgba(16,24,40,0.1)] hover:text-[#667085]"
+																				>
+																					<ArrowDownToLine class="h-3.5 w-3.5" />
+																				</Button>
+																			</div>
+																		</div>
+																	{/if}
+																{/if}
+															{/each}
+														</div>
 													{/if}
-												</p>
+
+													<p
+														class="whitespace-pre-wrap text-sm [overflow-wrap:anywhere] focus:outline-none"
+													>
+														{#if showRawTexts}
+															{@const textContent = threadItem.content
+																.filter((c) => c.type === 'text')
+																.map((c) => c.text)
+																.join('')}
+															{typeof threadItem.content === 'string'
+																? threadItem.content
+																: textContent}
+														{:else}
+															{threadItem.user_prompt}
+														{/if}
+													</p>
+												{/if}
+											</div>
+
+											{#if isEditingCell}
+												{@render cellContentEditorControls()}
 											{/if}
 										</div>
-
-										{#if isEditingCell}
-											{@render cellContentEditorControls()}
-										{/if}
-									</div>
-								{:else if threadItem.role === 'assistant'}
-									{@const isEditingCell =
-										chatState.editingContent?.rowID === threadItem.row_id &&
-										chatState.editingContent?.columnID === column}
-									<div
-										data-role="assistant"
-										class={cn(
-											'group/message-container flex flex-col gap-1 transition-[padding]',
-											multiturnCols.length > 1
-												? 'min-w-full @5xl/chat:min-w-[50%] supports-[not(container-type:inline-size)]:xl:min-w-[50%]'
-												: 'max-w-full',
-											multiturnCols.length == 1
-												? '@5xl/chat:pr-[20%] supports-[not(container-type:inline-size)]:xl:pr-[20%]'
-												: 'last:pr-3 @2xl/chat:last:pr-6 @4xl/chat:last:pr-20 @5xl/chat:last:pr-0 supports-[not(container-type:inline-size)]:last:pr-6 supports-[not(container-type:inline-size)]:lg:last:pr-20 supports-[not(container-type:inline-size)]:xl:last:pr-0'
-										)}
-									>
-										{#if !chatState.generationStatus?.includes(threadItem.row_id)}
+									{:else if threadItem.role === 'assistant'}
+										{@const isEditingCell =
+											chatState.editingContent?.rowID === threadItem.row_id &&
+											chatState.editingContent?.columnID === column}
+										<div
+											data-role="assistant"
+											class={cn(
+												'group/message-container flex flex-col gap-1 transition-[padding]',
+												multiturnCols.length > 1
+													? 'min-w-full @3xl/chat:min-w-[50%] supports-[not(container-type:inline-size)]:xl:min-w-[50%]'
+													: 'max-w-full',
+												multiturnCols.length > 2
+													? '@6xl/chat:min-w-[33.333%] supports-[not(container-type:inline-size)]:3xl:min-w-[33.333%]'
+													: '',
+												multiturnCols.length == 1
+													? '@5xl/chat:pr-[20%] supports-[not(container-type:inline-size)]:xl:pr-[20%]'
+													: 'last:pr-2.5'
+											)}
+										>
 											<div class="flex items-end justify-between px-4">
 												<div class="flex items-center gap-2 text-sm">
 													<span class="line-clamp-1 font-medium text-[#98A2B3]">
@@ -764,10 +773,10 @@
 																		content:
 																			typeof threadItem?.content === 'string'
 																				? threadItem.content
-																				: threadItem?.content
+																				: (threadItem?.content
 																						.filter((c) => c.type === 'text')
 																						.map((c) => c.text)
-																						.join('') ?? '',
+																						.join('') ?? ''),
 																		chunks: threadItem?.references?.chunks ?? []
 																	},
 																	reasoningContent: threadItem.reasoning_content ?? null,
@@ -784,7 +793,46 @@
 												</div>
 											</div>
 
-											{#if threadItem.reasoning_content}
+											{#if chatState.generationStatus?.includes(threadItem.row_id)}
+												<div class="mt-1 flex items-center gap-2 px-4">
+													<RowStreamIndicator />
+
+													{#if chatState.reasoningContentStreams[threadItem.row_id]?.[column] && !(chatState.loadedStreams[threadItem.row_id]?.[column]?.join('') ?? '') && !(chatState.latestStreams[threadItem.row_id]?.[column] ?? '')}
+														<button
+															onclick={() => {
+																showChatControls = { open: false, value: null };
+
+																chatState.showOutputDetails = {
+																	open: true,
+																	activeCell: { columnID: column, rowID: threadItem.row_id },
+																	activeTab: 'thinking',
+																	message: {
+																		content:
+																			typeof threadItem.content === 'string'
+																				? threadItem.content
+																				: (threadItem.content.find((c) => c.type === 'text')
+																						?.text ?? ''),
+																		chunks:
+																			chatState.loadedReferences?.[threadItem.row_id]?.[column]
+																				?.chunks ?? []
+																	},
+																	reasoningContent:
+																		chatState.reasoningContentStreams[threadItem.row_id]?.[
+																			column
+																		] ?? null,
+																	reasoningTime: null,
+																	expandChunk: null,
+																	preview: null
+																};
+															}}
+															class="flex items-center gap-2 text-[#98A2B3] transition-colors hover:text-[#344054]"
+														>
+															<span class="text-xs font-medium"> Thinking... </span>
+															<ChevronRight size={12} />
+														</button>
+													{/if}
+												</div>
+											{:else if threadItem.reasoning_content}
 												<button
 													onclick={() => {
 														showChatControls = { open: false, value: null };
@@ -797,10 +845,10 @@
 																content:
 																	typeof threadItem?.content === 'string'
 																		? threadItem.content
-																		: threadItem?.content
+																		: (threadItem?.content
 																				.filter((c) => c.type === 'text')
 																				.map((c) => c.text)
-																				.join('') ?? '',
+																				.join('') ?? ''),
 																chunks: threadItem?.references?.chunks ?? []
 															},
 															reasoningContent: threadItem.reasoning_content ?? null,
@@ -838,27 +886,44 @@
 													<p
 														class="response-message flex flex-col gap-4 whitespace-pre-line text-sm"
 													>
-														{#if showRawTexts}
-															{threadItem.content}
+														{#if !chatState.generationStatus?.includes(threadItem.row_id)}
+															{#if showRawTexts}
+																{threadItem.content}
+															{:else}
+																{@html converter
+																	.makeHtml(threadItem.content)
+																	.replaceAll(chatCitationPattern, (match, word) =>
+																		citationReplacer(
+																			match,
+																			word,
+																			column,
+																			threadItem.row_id,
+																			(
+																				threadItem.references ??
+																				chatState.messages[column]?.thread?.find(
+																					(item) =>
+																						item.row_id === threadItem.row_id && item.references
+																				)?.references
+																			)?.chunks ?? []
+																		)
+																	)}
+															{/if}
 														{:else}
-															{@const rawHtml = converter
-																.makeHtml(threadItem.content)
+															{@html converter
+																.makeHtml(
+																	chatState.loadedStreams[threadItem.row_id]?.[column]?.join('') ??
+																		''
+																)
 																.replaceAll(chatCitationPattern, (match, word) =>
 																	citationReplacer(
 																		match,
 																		word,
 																		column,
 																		threadItem.row_id,
-																		(
-																			threadItem.references ??
-																			chatState.messages[column]?.thread?.find(
-																				(item) =>
-																					item.row_id === threadItem.row_id && item.references
-																			)?.references
-																		)?.chunks ?? []
+																		chatState.loadedReferences?.[threadItem.row_id]?.[column]
+																			.chunks ?? []
 																	)
 																)}
-															{@html rawHtml}
 														{/if}
 													</p>
 												{:else}
@@ -870,27 +935,44 @@
 													<p
 														class="response-message flex flex-col gap-4 whitespace-pre-line text-sm"
 													>
-														{#if showRawTexts}
-															{textContent}
+														{#if !chatState.generationStatus?.includes(threadItem.row_id)}
+															{#if showRawTexts}
+																{textContent}
+															{:else}
+																{@html converter
+																	.makeHtml(textContent)
+																	.replaceAll(chatCitationPattern, (match, word) =>
+																		citationReplacer(
+																			match,
+																			word,
+																			column,
+																			threadItem.row_id,
+																			(
+																				threadItem.references ??
+																				chatState.messages[column]?.thread?.find(
+																					(item) =>
+																						item.row_id === threadItem.row_id && item.references
+																				)?.references
+																			)?.chunks ?? []
+																		)
+																	)}
+															{/if}
 														{:else}
-															{@const rawHtml = converter
-																.makeHtml(textContent)
+															{@html converter
+																.makeHtml(
+																	chatState.loadedStreams[threadItem.row_id]?.[column]?.join('') ??
+																		''
+																)
 																.replaceAll(chatCitationPattern, (match, word) =>
 																	citationReplacer(
 																		match,
 																		word,
 																		column,
 																		threadItem.row_id,
-																		(
-																			threadItem.references ??
-																			chatState.messages[column]?.thread?.find(
-																				(item) =>
-																					item.row_id === threadItem.row_id && item.references
-																			)?.references
-																		)?.chunks ?? []
+																		chatState.loadedReferences?.[threadItem.row_id]?.[column]
+																			.chunks ?? []
 																	)
 																)}
-															{@html rawHtml}
 														{/if}
 													</p>
 												{/if}
@@ -899,21 +981,15 @@
 											{#if isEditingCell}
 												{@render cellContentEditorControls()}
 											{/if}
-										{:else}
-											{@render generatingMessages(threadItem.row_id, column)}
-										{/if}
-									</div>
+										</div>
+									{/if}
 								{/if}
-							{/if}
-						{/each}
-					</div>
+							{/each}
+						</div>
+					{/if}
 				{/each}
-
-				{#if chatState.generationStatus?.includes('new')}
-					{@render generatingMessages('new')}
-				{/if}
 			{:else}
-				<div class="absolute bottom-0 left-0 right-0 top-0 flex items-center justify-center">
+				<div class="my-auto flex items-center justify-center">
 					<LoadingSpinner class="h-6 text-secondary" />
 				</div>
 			{/if}
@@ -921,11 +997,11 @@
 
 		<div
 			style="grid-template-rows: minmax(0, auto);"
-			class="grid px-3 transition-[grid-template-rows,padding] duration-300 @2xl/chat:px-6 @4xl/chat:px-20 @6xl/chat:px-36 @7xl/chat:px-72 supports-[not(container-type:inline-size)]:px-6 supports-[not(container-type:inline-size)]:lg:px-20 supports-[not(container-type:inline-size)]:2xl:px-36 supports-[not(container-type:inline-size)]:3xl:px-72"
+			class="mx-auto grid w-full max-w-6xl px-2.5 transition-[grid-template-rows,padding] duration-300"
 		>
 			<div
 				style="grid-template-columns: auto;"
-				class="grid w-full items-end gap-2 pb-3 transition-[background-color,grid-template-columns] duration-300 @container @2xl/chat:pb-6"
+				class="grid w-full items-end gap-2 pb-3 transition-[background-color,grid-template-columns] duration-300 @container @2xl/chat:pb-4"
 			>
 				<div
 					style="box-shadow: 0px 4px 12px 0px rgba(0, 0, 0, 0.06);"
@@ -1190,7 +1266,7 @@
 				? threadItem.user_prompt
 				: typeof threadItem.content === 'string'
 					? threadItem.content
-					: threadItem.content.find((c) => c.type === 'text')?.text ?? ''}
+					: (threadItem.content.find((c) => c.type === 'text')?.text ?? '')}
 			oninput={resizeEditContent}
 			onkeydown={(e) => {
 				if (e.key === 'Enter' && !e.shiftKey) {
@@ -1256,156 +1332,6 @@
 		>
 		<Button type="submit" form="editContentForm">Save</Button>
 	</div>
-{/snippet}
-
-{#snippet generatingMessages(rowID: string, columnID?: string)}
-	{#if columnID}
-		{#each displayedLoadedStreams as key}
-			{#if key === columnID}
-				{@const loadedStream = chatState.loadedStreams[rowID][key]}
-				{@const latestStream = chatState.latestStreams[rowID][key] ?? ''}
-				<div class="flex items-center gap-2 text-sm">
-					<span class="line-clamp-1 text-[#98A2B3]">
-						{key}
-					</span>
-				</div>
-
-				<div
-					data-testid="chat-message"
-					data-streaming="true"
-					class:w-full={displayedLoadedStreams.length > 1}
-					class="group relative max-w-full scroll-my-2 self-start rounded-xl bg-[#F2F4F7] p-4 text-text data-dark:bg-[#5B7EE5]"
-				>
-					<div class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
-						{@html converter
-							.makeHtml(loadedStream.join(''))
-							.replaceAll(chatCitationPattern, (match, word) =>
-								citationReplacer(
-									match,
-									word,
-									columnID,
-									rowID,
-									chatState.loadedReferences?.[rowID]?.[columnID].chunks ?? []
-								)
-							)}
-						{latestStream}
-
-						{#if loadedStream.every((val) => val.trim() === '') && latestStream === ''}
-							<div class="flex items-center gap-2">
-								<RowStreamIndicator />
-
-								{#if chatState.reasoningContentStreams[rowID]?.[key]}
-									<button
-										onclick={() => {
-											showChatControls = { open: false, value: null };
-
-											chatState.showOutputDetails = {
-												open: true,
-												activeCell: { columnID: key, rowID },
-												activeTab: 'thinking',
-												message: {
-													content: loadedStream.join('') + latestStream,
-													chunks: chatState.loadedReferences?.[rowID]?.[key]?.chunks ?? []
-												},
-												reasoningContent: chatState.reasoningContentStreams[rowID]?.[key] ?? null,
-												reasoningTime: null,
-												expandChunk: null,
-												preview: null
-											};
-										}}
-										class="flex items-center gap-2 text-[#98A2B3] transition-colors hover:text-[#344054]"
-									>
-										<span class="text-xs font-medium"> Thinking... </span>
-										<ChevronRight size={12} />
-									</button>
-								{/if}
-							</div>
-						{/if}
-					</div>
-				</div>
-			{/if}
-		{/each}
-	{:else}
-		<div
-			class="message-container flex flex-[0_0_auto] gap-3 overflow-x-auto overflow-y-hidden px-3 transition-[padding] @2xl/chat:px-6 @4xl/chat:px-20 @6xl/chat:px-36 @7xl/chat:px-72 supports-[not(container-type:inline-size)]:px-6 supports-[not(container-type:inline-size)]:lg:px-20 supports-[not(container-type:inline-size)]:2xl:px-36 supports-[not(container-type:inline-size)]:3xl:px-72"
-		>
-			{#each displayedLoadedStreams as key}
-				{@const loadedStream = chatState.loadedStreams[rowID][key]}
-				{@const latestStream = chatState.latestStreams[rowID][key] ?? ''}
-				<div
-					class={cn(
-						'group/message-container flex flex-col gap-1',
-						displayedLoadedStreams.length > 1
-							? 'min-w-full @5xl/chat:min-w-[50%] supports-[not(container-type:inline-size)]:xl:min-w-[50%]'
-							: 'max-w-full',
-						displayedLoadedStreams.length == 1
-							? '@5xl/chat:pr-[20%] supports-[not(container-type:inline-size)]:xl:pr-[20%]'
-							: ''
-					)}
-				>
-					<div class="flex items-center gap-2 text-sm">
-						<span class="line-clamp-1 text-[#98A2B3]">
-							{key}
-						</span>
-					</div>
-
-					<div
-						data-testid="chat-message"
-						data-streaming="true"
-						class:w-full={displayedLoadedStreams.length > 1}
-						class="group relative max-w-full scroll-my-2 self-start rounded-xl bg-[#F2F4F7] p-4 text-text data-dark:bg-[#5B7EE5]"
-					>
-						<div class="response-message flex flex-col gap-4 whitespace-pre-line text-sm">
-							{@html converter
-								.makeHtml(loadedStream.join(''))
-								.replaceAll(chatCitationPattern, (match, word) =>
-									citationReplacer(
-										match,
-										word,
-										'new',
-										rowID,
-										chatState.loadedReferences?.[rowID]?.new?.chunks ?? []
-									)
-								)}
-							{latestStream}
-
-							{#if loadedStream.every((val) => val.trim() === '') && latestStream === ''}
-								<div class="flex items-center gap-2">
-									<RowStreamIndicator />
-
-									{#if chatState.reasoningContentStreams[rowID]?.[key]}
-										<button
-											onclick={() => {
-												showChatControls = { open: false, value: null };
-
-												chatState.showOutputDetails = {
-													open: true,
-													activeCell: { columnID: key, rowID },
-													activeTab: 'thinking',
-													message: {
-														content: loadedStream.join('') + latestStream,
-														chunks: chatState.loadedReferences?.[rowID]?.[key]?.chunks ?? []
-													},
-													reasoningContent: chatState.reasoningContentStreams[rowID]?.[key] ?? null,
-													reasoningTime: null,
-													expandChunk: null,
-													preview: null
-												};
-											}}
-											class="flex items-center gap-2 text-[#98A2B3] transition-colors hover:text-[#344054]"
-										>
-											<span class="text-xs font-medium"> Thinking... </span>
-											<ChevronRight size={12} />
-										</button>
-									{/if}
-								</div>
-							{/if}
-						</div>
-					</div>
-				</div>
-			{/each}
-		</div>
-	{/if}
 {/snippet}
 
 {#snippet chatHistoryIcon(className = '')}

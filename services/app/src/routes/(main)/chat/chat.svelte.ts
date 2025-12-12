@@ -5,6 +5,7 @@ import { env as publicEnv } from '$env/dynamic/public';
 import logger from '$lib/logger';
 import type {
 	ChatReferences,
+	ChatThread,
 	ChatThreads,
 	Conversation,
 	GenTable,
@@ -78,6 +79,7 @@ export class ChatState {
 		message: {
 			content: string;
 			chunks: ReferenceChunk[];
+			fileUrl?: string;
 		} | null;
 		reasoningContent: string | null;
 		reasoningTime: number | null;
@@ -96,6 +98,51 @@ export class ChatState {
 
 	private getConvController: AbortController | null = null;
 	private getMessagesController: AbortController | null = null;
+
+	//TODO: Optimize this, load inline without creating thread object
+	// (if new message is generating, load another row of messages, show content from loaded streams)
+	getNewMessageAsThreads(): typeof this.messages {
+		const longestThreadCol = Object.keys(this.messages).reduce(
+			(a, b) =>
+				Array.isArray(this.messages[b].thread) &&
+				(!a || this.messages[b].thread.length > this.messages[a].thread.length)
+					? b
+					: a,
+			''
+		);
+		const longestThreadColLen = this.messages[longestThreadCol]?.thread?.length ?? 0;
+		return this.generationStatus?.includes('new')
+			? Object.fromEntries(
+					this.conversation!.cols.map((col) =>
+						col.gen_config?.object === 'gen_config.llm' && col.gen_config.multi_turn
+							? [
+									[
+										col.id,
+										{
+											object: 'chat.thread',
+											thread: [
+												...new Array(longestThreadColLen).fill(null),
+												{
+													reasoning_content: this.reasoningContentStreams.new?.[col.id] ?? null,
+													reasoning_time: null,
+													row_id: 'new',
+													role: 'assistant',
+													content:
+														(this.loadedStreams.new?.[col.id]?.join('') ?? '') +
+														(this.latestStreams.new?.[col.id] ?? ''),
+													name: null,
+													user_prompt: null,
+													references: null
+												}
+											]
+										} as ChatThread
+									]
+								]
+							: []
+					).flat()
+				)
+			: {};
+	}
 
 	async getConversation() {
 		if (!page.params.project_id || !page.params.conversation_id) return;
@@ -459,7 +506,7 @@ export class ChatState {
 
 		const nextAvailableCol = this.fileColumns.find(
 			(col) =>
-				!(editing ? this.editingContent?.fileColumns ?? {} : this.uploadColumns)[col.id]?.uri &&
+				!(editing ? (this.editingContent?.fileColumns ?? {}) : this.uploadColumns)[col.id]?.uri &&
 				fileColumnFiletypes
 					.filter(({ type }) => col.dtype === type)
 					.map(({ ext }) => ext)
@@ -683,7 +730,7 @@ export class ChatState {
 							...thread,
 							thread: [
 								...thread.thread.map((v) =>
-									v.row_id === rowID && v.role === 'assistant'
+									rowsToRegen.includes(v.row_id) && v.role === 'assistant'
 										? {
 												...v,
 												content: this.loadedStreams[v.row_id]?.[outCol]?.join('') ?? v.content,

@@ -13,6 +13,7 @@
 	import logger from '$lib/logger';
 	import type { GenTable, GenTableCol } from '$lib/types';
 
+	import ColumnTypeTag from './ColumnTypeTag.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
 	import * as Select from '$lib/components/ui/select';
@@ -33,7 +34,7 @@
 	let colIDPaddingWidth = $state(62);
 	let colIDInputWidth = $state(235);
 
-	let columnName = $state('');
+	let columnName = $state('Column Name');
 	let colType = $state<keyof typeof genTableColTypes>('Input');
 	let dType = $state('str');
 
@@ -70,7 +71,7 @@
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
-					'x-project-id': page.params.project_id
+					'x-project-id': page.params.project_id ?? ''
 				},
 				body: JSON.stringify({
 					id: page.params.table_id,
@@ -174,10 +175,11 @@
 			align="start"
 			sideOffset={16}
 			alignOffset={-20}
-			class="flex w-[20rem] flex-col gap-4 p-2"
+			class="flex w-[20rem] flex-col gap-1.5 p-2"
 		>
-			<input
+			<!-- <input
 				type="text"
+				disabled
 				bind:value={columnName}
 				onkeydown={(e) => {
 					if (e.key === 'Enter') {
@@ -186,6 +188,12 @@
 				}}
 				style="left: {colIDPaddingWidth + 32}px; width: {colIDInputWidth}px;"
 				class="pointer-events-auto absolute -top-[26px] h-[20px] rounded-[2px] border-0 bg-transparent text-sm outline outline-1 outline-[#4169e1] data-dark:outline-[#5b7ee5]"
+			/> -->
+
+			<input
+				type="text"
+				bind:value={columnName}
+				class="h-8 rounded-md border border-[#E3E3E3] bg-white px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground focus-visible:border-[#d5607c] focus-visible:shadow-[0_0_0_1px_#FFD8DF] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 data-dark:border-[#42464E] data-dark:bg-[#42464e] data-dark:focus-visible:border-[#5b7ee5]"
 			/>
 
 			<div class="flex gap-1">
@@ -240,7 +248,7 @@
 				</div>
 			</div>
 
-			<div class="flex justify-end gap-2 overflow-x-auto overflow-y-hidden">
+			<div class="mt-2.5 flex justify-end gap-2 overflow-x-auto overflow-y-hidden">
 				<Button
 					variant="ghost"
 					type="button"
@@ -263,62 +271,27 @@
 		</DropdownMenu.Content>
 	</DropdownMenu.Root>
 
-	<span
-		bind:clientWidth={colIDPaddingWidth}
-		style="background-color: {colType === 'Input' ? '#7995E9' : '#FD853A'};"
-		class="mr-1 flex w-min select-none items-center whitespace-nowrap rounded-lg px-0.5 py-1 pr-1 text-xxs text-white sm:text-xs"
-	>
-		<span class="px-1 font-medium capitalize">
-			{colType === 'Input' ? 'Input' : 'Output'}
-		</span>
-		<span
-			style="color: {colType === 'Input' ? '#7995E9' : '#FD853A'};"
-			class="w-min select-none whitespace-nowrap rounded-md bg-white px-1 font-medium"
-		>
-			{dType}
-		</span>
-
-		<!-- {#if column.gen_config?.object === 'gen_config.llm' && column.gen_config.multi_turn}
-						<hr class="ml-1 h-3 border-l border-white" />
-						<div class="relative h-4 w-[18px]">
-							<MultiturnChatIcon class="absolute h-[18px] -translate-y-px text-white" />
-						</div>
-					{/if} -->
-	</span>
+	<ColumnTypeTag
+		dtype={dType}
+		colType={colType === 'Input' ? 'input' : 'output'}
+		columnID={columnName}
+		genConfig={colType !== 'Input'
+			? colType === 'LLM Output'
+				? {
+						object: 'gen_config.llm'
+					}
+				: {
+						object: 'gen_config.python',
+						python_code: ''
+					}
+			: undefined}
+	/>
 
 	<!-- svelte-ignore a11y_autofocus -->
 	<input
 		type="text"
 		bind:value={columnName}
 		bind:clientWidth={colIDInputWidth}
-		class="pointer-events-auto w-full rounded-[2px] border-0 bg-transparent opacity-0 outline outline-1 outline-[#4169e1] data-dark:outline-[#5b7ee5]"
+		class="pointer-events-auto w-full rounded-[2px] border-0 bg-transparent opacity-100 outline outline-1 outline-[#4169e1] data-dark:outline-[#5b7ee5]"
 	/>
-
-	<!-- {#if tableState.renamingCol === column.id}
-			<!-- svelte-ignore a11y_autofocus ->
-			<input
-				type="text"
-				id="column-id-edit"
-				value={column.id}
-				onkeydown={(e) => {
-					if (e.key === 'Enter') {
-						e.preventDefault();
-
-						handleSaveColumnTitle(e);
-					} else if (e.key === 'Escape') {
-						tableState.setRenamingCol(null);
-					}
-				}}
-				onblur={() => setTimeout(() => tableState.setRenamingCol(null), 100)}
-				class="pointer-events-auto w-full rounded-[2px] border-0 bg-transparent outline outline-1 outline-[#4169e1] data-dark:outline-[#5b7ee5]"
-			/>
-		{:else}
-			<span
-				class="w-full font-medium {column.id === 'ID' || column.id === 'Updated at'
-					? 'text-[#98A2B3]'
-					: 'text-[#666] data-dark:text-white'} line-clamp-1 break-all"
-			>
-				{column.id}
-			</span>
-		{/if} -->
 </div>

@@ -38,6 +38,8 @@
 		Promise.all([
 			data.table.then(async (tableRes) => {
 				tableData = structuredClone(tableRes.data); // Client reorder column
+				//TODO: Replace local tableData state with tableState.tableData
+				tableState.tableData = tableData;
 				if (tableRes.error) {
 					tableError = { error: tableRes.error, message: tableRes.message };
 				}
@@ -162,7 +164,7 @@
 	}
 	const debouncedSearchRows = debounce(handleSearchRows, 300);
 	$effect(() => {
-		data.table, resetTable();
+		(data.table, resetTable());
 	});
 </script>
 

@@ -13,18 +13,17 @@
 
 	interface Props {
 		tableData: GenTable | undefined;
-		rowThumbs: { [rowID: string]: { [colID: string]: { value: string; url: string } } };
 	}
 
-	let { tableData, rowThumbs = $bindable() }: Props = $props();
+	let { tableData }: Props = $props();
 
 	const debouncedFetchThumbs = debounce(fetchThumbs, 250);
 	async function fetchThumbs() {
 		if (!tableData || !tableRowsState.rows) return;
 
-		Object.keys(rowThumbs).forEach((key) => {
+		Object.keys(tableState.rowThumbs).forEach((key) => {
 			if (tableRowsState.rows?.find((row) => row.ID === key) === undefined) {
-				delete rowThumbs[key];
+				delete tableState.rowThumbs[key];
 			}
 		});
 
@@ -39,8 +38,8 @@
 			fileColumns.forEach((col) => {
 				if (
 					row[col.id]?.value &&
-					(rowThumbs[row.ID]?.[col.id] === undefined ||
-						row[col.id].value !== rowThumbs[row.ID]?.[col.id]?.value) &&
+					(tableState.rowThumbs[row.ID]?.[col.id] === undefined ||
+						row[col.id].value !== tableState.rowThumbs[row.ID]?.[col.id]?.value) &&
 					!tableState.streamingRows[row.ID]
 				) {
 					if (isValidUri(row[col.id].value)) {
@@ -69,7 +68,7 @@
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
-				'x-project-id': page.params.project_id
+				'x-project-id': page.params.project_id ?? ''
 			},
 			body: JSON.stringify({
 				uris: rowThumbsArr
@@ -84,13 +83,13 @@
 				const relatedFileCols = fileColumns.filter((col) => rowThumbsMap[rowIndex][col.id]);
 				skipNullCells(relatedFileCols);
 
-				if (rowThumbs[rowThumbsMap![rowIndex].ID]) {
-					rowThumbs[rowThumbsMap![rowIndex].ID][relatedFileCols[cursor].id] = {
+				if (tableState.rowThumbs[rowThumbsMap![rowIndex].ID]) {
+					tableState.rowThumbs[rowThumbsMap![rowIndex].ID][relatedFileCols[cursor].id] = {
 						value: rowThumbsMap![rowIndex][relatedFileCols[cursor].id].value,
 						url
 					};
 				} else {
-					rowThumbs[rowThumbsMap![rowIndex].ID] = {
+					tableState.rowThumbs[rowThumbsMap![rowIndex].ID] = {
 						[relatedFileCols[cursor].id]: {
 							value: rowThumbsMap![rowIndex][relatedFileCols[cursor].id].value,
 							url
@@ -125,8 +124,6 @@
 				}
 			});
 		}
-
-		rowThumbs = rowThumbs;
 	}
 	$effect(() => {
 		tableData;

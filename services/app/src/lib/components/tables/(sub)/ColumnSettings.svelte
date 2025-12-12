@@ -15,6 +15,7 @@
 	import logger from '$lib/logger';
 	import type { GenTable, GenTableCol } from '$lib/types';
 
+	import ColumnTypeTag from './ColumnTypeTag.svelte';
 	import HowToUseTab from './HowToUseTab.svelte';
 	import SelectKnowledgeTableDialog from './SelectKnowledgeTableDialog.svelte';
 	import ModelSelect from '$lib/components/preset/ModelSelect.svelte';
@@ -99,6 +100,8 @@
 
 		return tabs;
 	});
+	let tabElements = $state<HTMLButtonElement[]>([]);
+	let tabHighlightIdx = $derived(tabItems.findIndex((t) => selectedTab === t.id));
 
 	let promptVarCounter = $derived.by(() => {
 		const matches = [
@@ -247,35 +250,47 @@
 	>
 		<div class="relative flex h-full w-full flex-col data-dark:bg-[#0D0E11]">
 			<div
-				data-testid="column-settings-tabs"
-				style="grid-template-columns: repeat({tabItems.length}, max-content);"
-				class="grid w-full flex-[0_0_auto] overflow-hidden rounded-t-lg border-t border-[#F2F4F7] bg-white text-sm font-medium data-dark:border-[#333] data-dark:bg-[#0D0E11]"
+				class="rounded-t-lg border-t border-[#F2F4F7] bg-white data-dark:border-[#333] data-dark:bg-[#0D0E11]"
 			>
-				{#each tabItems as tab}
-					<button
-						onclick={() => (selectedTab = tab.id)}
-						class="relative flex max-h-10 min-h-10 items-center justify-center gap-1 px-3 py-3 font-medium transition-colors {tableState
-							.columnSettings.isOpen
-							? selectedTab === tab.id
-								? 'text-[#1D2939] data-dark:text-[#98A2B3]'
-								: 'text-[#98A2B3] data-dark:text-[#1D2939]'
-							: 'text-[#667085]'}"
-					>
-						{#if tab.id === 'rag_settings' && selectedGenConfig?.object === 'gen_config.llm'}
-							RAG
-							<span
-								style="background-color: {selectedGenConfig.rag_params
-									? '#ECFDF3'
-									: '#FEF2F2'}; color: {selectedGenConfig.rag_params ? '#039855' : '#DC2626'};"
-								class="rounded-md px-1 py-0.5 font-normal"
-							>
-								{selectedGenConfig.rag_params ? 'Enabled' : 'Disabled'}
-							</span>
-						{:else}
-							{tab.title}
-						{/if}
-					</button>
-				{/each}
+				<div
+					data-testid="column-settings-tabs"
+					style="grid-template-columns: repeat({tabItems.length}, max-content);"
+					class="relative grid w-fit flex-[0_0_auto] overflow-hidden text-sm font-medium"
+				>
+					{#each tabItems as tab, index}
+						<button
+							bind:this={tabElements[index]}
+							onclick={() => (selectedTab = tab.id)}
+							class="relative flex max-h-10 min-h-10 items-center justify-center gap-1 px-3 py-3 font-medium transition-colors {tableState
+								.columnSettings.isOpen
+								? selectedTab === tab.id
+									? 'text-[#1D2939] data-dark:text-[#98A2B3]'
+									: 'text-[#98A2B3] data-dark:text-[#1D2939]'
+								: 'text-[#667085]'}"
+						>
+							{#if tab.id === 'rag_settings' && selectedGenConfig?.object === 'gen_config.llm'}
+								RAG
+								<span
+									style="background-color: {selectedGenConfig.rag_params
+										? '#ECFDF3'
+										: '#FEF2F2'}; color: {selectedGenConfig.rag_params ? '#039855' : '#DC2626'};"
+									class="rounded-md px-1 py-0.5 font-normal"
+								>
+									{selectedGenConfig.rag_params ? 'Enabled' : 'Disabled'}
+								</span>
+							{:else}
+								{tab.title}
+							{/if}
+						</button>
+					{/each}
+
+					<div
+						style="width: {tabElements[tabHighlightIdx]?.offsetWidth ?? 0}px; left: {tabElements[
+							tabHighlightIdx
+						]?.offsetLeft ?? 0}px;"
+						class="absolute bottom-0 h-[3px] bg-secondary transition-[left]"
+					></div>
+				</div>
 			</div>
 
 			{#if selectedGenConfig?.object}
@@ -284,33 +299,12 @@
 						class="flex w-full flex-col items-start justify-between gap-2 border-t border-[#F2F4F7] bg-white px-3 pb-1.5 pt-2 data-dark:border-[#333] sm:flex-row sm:items-center"
 					>
 						<div class="flex items-center gap-2 text-sm">
-							<span
-								style="background-color: {!tableState.columnSettings.column?.gen_config
-									? '#7995E9'
-									: '#FD853A'};"
-								class:pr-1={tableState.columnSettings.column?.gen_config?.object !==
-									'gen_config.llm' || !tableState.columnSettings.column?.gen_config.multi_turn}
-								class="flex w-min select-none items-center whitespace-nowrap rounded-lg p-0.5 py-1"
-							>
-								<span class="px-1 text-xs font-medium capitalize text-white">
-									{!tableState.columnSettings.column?.gen_config ? 'input' : 'output'}
-								</span>
-								<span
-									style="color: {!tableState.columnSettings.column?.gen_config
-										? '#7995E9'
-										: '#FD853A'};"
-									class="w-min select-none whitespace-nowrap rounded-md bg-white px-1 text-xs font-medium"
-								>
-									{tableState.columnSettings.column?.dtype}
-								</span>
-
-								{#if tableState.columnSettings.column?.gen_config?.object === 'gen_config.llm' && tableState.columnSettings.column.gen_config.multi_turn}
-									<hr class="ml-1 h-3 border-l border-white" />
-									<div class="relative h-4 w-[18px]">
-										<MultiturnChatIcon class="absolute h-[18px] -translate-y-px text-white" />
-									</div>
-								{/if}
-							</span>
+							<ColumnTypeTag
+								colType={!tableState.columnSettings.column?.gen_config ? 'input' : 'output'}
+								dtype={tableState.columnSettings.column?.dtype ?? ''}
+								columnID={tableState.columnSettings.column?.id ?? ''}
+								genConfig={tableState.columnSettings.column?.gen_config}
+							/>
 
 							<span class="line-clamp-2 break-all">
 								{tableState.columnSettings.column?.id}
@@ -432,11 +426,9 @@
 												? ''
 												: 'italic text-muted-foreground hover:text-muted-foreground'}"
 										>
-											{#snippet children()}
-												<span class="line-clamp-1 whitespace-nowrap text-left font-normal">
-													{selectedGenConfig.source_column || 'Select source column'}
-												</span>
-											{/snippet}
+											<span class="line-clamp-1 whitespace-nowrap text-left font-normal">
+												{selectedGenConfig.source_column || 'Select source column'}
+											</span>
 										</Select.Trigger>
 										<Select.Content side="bottom" class="max-h-64 overflow-y-auto">
 											{#each tableData?.cols.filter((col) => !['ID', 'Updated at'].includes(col.id) && col.id !== tableState.columnSettings.column?.id && col.dtype === 'str') ?? [] as column}

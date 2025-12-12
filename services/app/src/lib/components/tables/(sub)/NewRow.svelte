@@ -363,12 +363,7 @@
 			<!-- svelte-ignore a11y_interactive_supports_focus -->
 			<div
 				role="gridcell"
-				class="flex justify-start {(column.dtype === 'image' ||
-					column.dtype === 'audio' ||
-					column.dtype === 'document') &&
-				typeof columnFile === 'string'
-					? 'p-2'
-					: 'p-0'} h-full max-h-[149px] w-full break-words text-black {isAddingRow
+				class="flex h-full max-h-[149px] w-full justify-start break-words text-black {isAddingRow
 					? '[&:not(:last-child)]:border-r'
 					: 'border-0 group-hover:bg-[#E7EBF1] data-dark:group-hover:bg-white/5'} border-[#E4E7EC] data-dark:border-[#333]"
 			>
@@ -387,7 +382,7 @@
 								columnID={column.id}
 								fileUri={inputValues[column.id]}
 								fileUrl={columnFile}
-								bind:isDeletingFile
+								bind:deletingFile={isDeletingFile}
 							/>
 						{/if}
 						<input
@@ -412,7 +407,7 @@
 </form>
 
 <DeleteFileDialog
-	bind:isDeletingFile
+	bind:deletingFile={isDeletingFile}
 	deleteCb={() => {
 		if (isDeletingFile) {
 			delete uploadColumns[isDeletingFile.columnID];

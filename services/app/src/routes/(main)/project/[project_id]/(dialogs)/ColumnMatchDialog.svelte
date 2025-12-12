@@ -5,6 +5,7 @@
 	import type { GenTable } from '$lib/types';
 
 	import { toast } from 'svelte-sonner';
+	import { ColumnTypeTag } from '$lib/components/tables/(sub)';
 	import Portal from '$lib/components/Portal.svelte';
 	import Checkbox from '$lib/components/Checkbox.svelte';
 	import DraggableList from '$lib/components/DraggableList.svelte';
@@ -211,22 +212,12 @@
 							title={col.id}
 							class="flex h-[40px] items-center gap-2 rounded-sm border border-[#E4E7EC] bg-white px-2 data-dark:border-[#333] data-dark:bg-[#42464E]"
 						>
-							<span
-								style="background-color: {colType === 'input' ? '#7995E9' : '#FD853A'};"
-								class:pr-1={col.gen_config?.object !== 'gen_config.llm' ||
-									!col.gen_config.multi_turn}
-								class="mr-1 flex w-min select-none items-center whitespace-nowrap rounded-lg px-0.5 py-1 text-xxs text-white sm:text-xs"
-							>
-								<span class="px-1 font-medium capitalize">
-									{colType}
-								</span>
-								<span
-									style="color: {colType === 'input' ? '#7995E9' : '#FD853A'};"
-									class="w-min select-none whitespace-nowrap rounded-md bg-white px-1 font-medium"
-								>
-									{col.dtype}
-								</span>
-							</span>
+							<ColumnTypeTag
+								colType={!col.gen_config ? 'input' : 'output'}
+								dtype={col.dtype}
+								columnID={col.id}
+								genConfig={col.gen_config}
+							/>
 
 							<span
 								class="line-clamp-1 break-all text-xs font-medium text-[#666] data-dark:text-white sm:text-sm"

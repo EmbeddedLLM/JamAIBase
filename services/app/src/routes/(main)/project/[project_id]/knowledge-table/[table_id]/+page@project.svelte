@@ -41,6 +41,8 @@
 		Promise.all([
 			data.table.then(async (tableRes) => {
 				tableData = structuredClone(tableRes.data); // Client reorder column
+				//TODO: Replace local tableData state with tableState.tableData
+				tableState.tableData = tableData;
 				if (tableRes.error) {
 					tableError = { error: tableRes.error, message: tableRes.message };
 				}
@@ -221,7 +223,7 @@
 		(document.querySelector('input[type="file"]') as HTMLElement).click();
 	const handleDragLeave = () => (filesDragover = false);
 	$effect(() => {
-		data.table, resetTable();
+		(data.table, resetTable());
 	});
 </script>
 

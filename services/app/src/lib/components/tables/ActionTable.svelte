@@ -42,10 +42,6 @@
 		refetchTable
 	}: Props = $props();
 
-	let rowThumbs: { [rowID: string]: { [colID: string]: { value: string; url: string } } } = $state(
-		{}
-	);
-	let isDeletingFile: { rowID: string; columnID: string; fileUri?: string } | null = $state(null);
 	let uploadController: AbortController | undefined = undefined;
 
 	//? Expanding ID and Updated at columns
@@ -455,8 +451,7 @@
 										rowID={row.ID}
 										columnID={column.id}
 										fileUri={row[column.id]?.value}
-										fileUrl={rowThumbs[row.ID]?.[column.id]?.url}
-										bind:isDeletingFile
+										fileUrl={tableState.rowThumbs[row.ID]?.[column.id]?.url}
 									/>
 								{:else}
 									{#if !(!row[column.id]?.value && tableState.streamingRows[row.ID]?.includes(column.id))}
@@ -485,7 +480,11 @@
 													tableState.showOutputDetails = {
 														open: true,
 														activeCell: { rowID: row.ID, columnID: column.id },
-														activeTab: row[column.id]?.value ? 'answer' : 'thinking',
+														activeTab:
+															tableState.streamingRows[row.ID]?.includes(column.id) &&
+															!row[column.id]?.value
+																? 'thinking'
+																: 'answer',
 														message: {
 															content: row[column.id]?.value,
 															chunks: row[column.id]?.references?.chunks ?? []
@@ -537,14 +536,15 @@
 	</div>
 {/if}
 
-<FileThumbsFetch {tableData} bind:rowThumbs />
+<FileThumbsFetch {tableData} />
 <DeleteFileDialog
-	bind:isDeletingFile
 	deleteCb={() => {
-		if (isDeletingFile) {
-			saveEditCell(isDeletingFile, '');
-			delete rowThumbs[isDeletingFile?.rowID][isDeletingFile?.columnID];
-			isDeletingFile = null;
+		if (tableState.deletingFile) {
+			saveEditCell(tableState.deletingFile, '');
+			delete tableState.rowThumbs[tableState.deletingFile?.rowID][
+				tableState.deletingFile?.columnID
+			];
+			tableState.deletingFile = null;
 		}
 	}}
 />

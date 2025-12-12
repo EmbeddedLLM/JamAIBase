@@ -3,19 +3,35 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import DialogCloseIcon from '$lib/icons/DialogCloseIcon.svelte';
 	import CloseIcon from '$lib/icons/CloseIcon.svelte';
-	import { getTableRowsState } from '$lib/components/tables/tablesState.svelte';
+	import { getTableState, getTableRowsState } from '$lib/components/tables/tablesState.svelte';
 
+	const tableState = getTableState();
 	const tableRowsState = getTableRowsState();
 
 	interface Props {
-		isDeletingFile: { rowID: string; columnID: string; fileUri?: string } | null;
+		deletingFile?: { rowID: string; columnID: string; fileUri?: string } | null;
 		deleteCb: () => void;
 	}
 
-	let { isDeletingFile = $bindable(), deleteCb }: Props = $props();
+	let { deletingFile = $bindable(), deleteCb }: Props = $props();
+
+	let isDeletingFile = $derived(
+		deletingFile === undefined ? tableState.deletingFile : deletingFile
+	);
 </script>
 
-<Dialog.Root bind:open={() => !!isDeletingFile, () => (isDeletingFile = null)}>
+<Dialog.Root
+	bind:open={
+		() => (deletingFile === undefined ? !!tableState.deletingFile : !!deletingFile),
+		() => {
+			if (deletingFile === undefined) {
+				tableState.deletingFile = null;
+			} else {
+				deletingFile = null;
+			}
+		}
+	}
+>
 	<Dialog.Content
 		data-testid="delete-file-dialog"
 		class="w-[clamp(0px,26rem,100%)] bg-white data-dark:bg-[#42464e]"

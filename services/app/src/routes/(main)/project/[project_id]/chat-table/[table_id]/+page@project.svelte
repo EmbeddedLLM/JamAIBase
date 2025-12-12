@@ -50,6 +50,8 @@
 		Promise.all([
 			data.table.then(async (tableRes) => {
 				tableData = structuredClone(tableRes.data); // Client reorder column
+				//TODO: Replace local tableData state with tableState.tableData
+				tableState.tableData = tableData;
 				if (tableRes.error) {
 					tableError = { error: tableRes.error, message: tableRes.message };
 				}
@@ -122,7 +124,7 @@
 	}
 
 	// Chat mode only
-	let generationStatus = $state<string | null>(null);
+	let generationStatus = $state<string[] | null>(null);
 
 	let searchQuery = $state('');
 	let searchController: AbortController | null = null;
@@ -219,7 +221,7 @@
 		if (url.from?.url.pathname !== url.to?.url.pathname) tableLoaded = false;
 	});
 	$effect(() => {
-		data.table, resetTable();
+		(data.table, resetTable());
 	});
 	$effect(() => {
 		if (tableLoaded) fetchThreads();

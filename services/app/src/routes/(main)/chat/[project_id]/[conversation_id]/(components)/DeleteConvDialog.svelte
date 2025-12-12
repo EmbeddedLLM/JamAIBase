@@ -28,7 +28,7 @@
 			{
 				method: 'DELETE',
 				headers: {
-					'x-project-id': page.params.project_id
+					'x-project-id': page.params.project_id ?? page.url.searchParams.get('project_id') ?? ''
 				}
 			}
 		);
