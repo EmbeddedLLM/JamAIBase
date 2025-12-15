@@ -14,7 +14,6 @@
 	import * as Popover from '$lib/components/ui/popover';
 	import InputText from '$lib/components/InputText.svelte';
 	import PeopleIcon from '$lib/icons/PeopleIcon.svelte';
-	import { project_edit_heading } from '$lib/paraglide/messages/en';
 
 	const df = new DateFormatter(getLocale(), {
 		dateStyle: 'long'
