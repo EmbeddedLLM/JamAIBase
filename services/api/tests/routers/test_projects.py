@@ -22,6 +22,7 @@ from jamaibase.types import (
 )
 from jamaibase.utils.exceptions import (
     AuthorizationError,
+    BadInputError,
     ForbiddenError,
     ResourceExistsError,
     ResourceNotFoundError,
@@ -43,6 +44,7 @@ from owl.utils.test import (
     get_file_map,
     list_table_rows,
     setup_organizations,
+    setup_projects,
     upload_file,
 )
 
@@ -53,15 +55,34 @@ FILE_COLUMNS = ["image", "audio", "document"]
 
 
 def test_create_project():
-    with setup_organizations() as ctx:
-        # Standard creation
+    """
+    - Project creation
+    - User cannot be deleted if they are still an owner
+    """
+    with (
+        create_user() as superuser,
+        create_user(dict(email="russell@up.com", name="User")) as user,
+    ):
+        assert superuser.id == "0"
+        assert user.id != "0"
+        client = JamAI(user_id=user.id)
         with (
-            create_project(user_id=ctx.superuser.id),
-            create_project(
-                dict(name="Mickey 17"), user_id=ctx.user.id, organization_id=ctx.org.id
-            ),
+            create_organization(
+                OrganizationCreate(name="System"), user_id=superuser.id
+            ) as superorg,
+            create_organization(OrganizationCreate(name="Clubhouse"), user_id=user.id) as org,
         ):
-            pass
+            assert superorg.id == "0"
+            assert org.id != "0"
+            # Standard creation
+            with (
+                create_project(user_id=superuser.id),
+                create_project(dict(name="Mickey 17"), user_id=user.id, organization_id=org.id),
+            ):
+                with pytest.raises(BadInputError, match="projects with the user as owner"):
+                    client.users.delete_user()
+            with pytest.raises(BadInputError, match="organizations with the user as owner"):
+                client.users.delete_user()
 
 
 @pytest.mark.cloud
@@ -314,6 +335,86 @@ def test_project_deletion_removes_from_secret_allowed_projects():
             client.secrets.delete_secret(
                 organization_id=ctx.org.id, name=secret.name, missing_ok=True
             )
+
+
+def test_update_project_owner():
+    with (
+        setup_projects() as ctx,
+        create_user(dict(email="ClaudiaT@up.com", name="Claudia Tiedemann")) as org_admin,
+    ):
+        first_owner_client = JamAI(user_id=ctx.user.id)
+        org_admin_client = JamAI(user_id=org_admin.id)
+
+        # Should fail because project does not exist
+        with pytest.raises(ResourceNotFoundError, match="is not found."):
+            first_owner_client.projects.update_owner(
+                new_owner_id="fake", project_id=ctx.projects[1].id
+            )
+
+        # Should fail because new owner is not a current member of the project
+        with pytest.raises(ForbiddenError, match="The new owner is not a member of this project"):
+            first_owner_client.projects.update_owner(
+                new_owner_id=org_admin.id, project_id=ctx.projects[1].id
+            )
+
+        # Should fail because the User sending the request is not the owner.
+        membership = first_owner_client.organizations.join_organization(
+            org_admin.id, organization_id=ctx.org.id, role=Role.ADMIN
+        )
+        assert isinstance(membership, OrgMemberRead)
+        membership = first_owner_client.projects.join_project(
+            org_admin.id, project_id=ctx.projects[1].id, role=Role.ADMIN
+        )
+        assert isinstance(membership, ProjectMemberRead)
+
+        with pytest.raises(
+            ForbiddenError, match="Only the owner can transfer the ownership of a project."
+        ):
+            org_admin_client.projects.update_owner(
+                new_owner_id=org_admin.id, project_id=ctx.projects[1].id
+            )
+
+        # Should return the same org since the new owner id is the same as the current one
+        first_owner_client.projects.update_owner(
+            new_owner_id=ctx.user.id, project_id=ctx.projects[1].id
+        )
+
+        # Should succeed since the new owner is now a member of the project
+        new_proj = first_owner_client.projects.update_owner(
+            new_owner_id=org_admin.id, project_id=ctx.projects[1].id
+        )
+        assert new_proj.model_dump(exclude=["owner", "updated_at"]) == ctx.projects[1].model_dump(
+            exclude=["owner", "updated_at"]
+        )
+        assert new_proj.owner != ctx.projects[1].owner
+        assert new_proj.updated_at != ctx.projects[1].updated_at
+        assert new_proj.owner == org_admin.id
+
+        # Should fail because this user is no longer the owner
+        with pytest.raises(
+            ForbiddenError, match="Only the owner can transfer the ownership of a project."
+        ):
+            first_owner_client.projects.update_owner(
+                new_owner_id=org_admin.id, project_id=ctx.projects[1].id
+            )
+        # New owner will be ADMIN
+        membership = org_admin_client.projects.get_member(
+            user_id=org_admin.id, project_id=ctx.projects[1].id
+        )
+        assert isinstance(membership, ProjectMemberRead)
+        assert membership.role == Role.ADMIN
+
+        # Should fail because this is the last membership for this user and he is the current owner of the project
+        with pytest.raises(ForbiddenError, match="Owner cannot leave the project."):
+            org_admin_client.projects.leave_project(org_admin.id, ctx.projects[1].id)
+
+        # Return the project to the first owner
+        org_admin_client.projects.update_owner(
+            new_owner_id=ctx.user.id, project_id=ctx.projects[1].id
+        )
+
+        # Should succeed after returning the project to the old owner.
+        org_admin_client.projects.leave_project(org_admin.id, ctx.projects[1].id)
 
 
 @dataclass(slots=True)

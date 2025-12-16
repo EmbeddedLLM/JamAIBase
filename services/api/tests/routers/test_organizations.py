@@ -298,6 +298,84 @@ def test_delete_org_permission():
             client.organizations.delete_organization(ctx.superorg.id, missing_ok=False)
 
 
+def test_update_organization_owner():
+    with (
+        setup_organizations() as ctx,
+        create_user(dict(email="ClaudiaT@up.com", name="Claudia Tiedemann")) as org_admin,
+    ):
+        first_owner_client = JamAI(user_id=ctx.user.id)
+        org_admin_client = JamAI(user_id=org_admin.id)
+
+        # Should fail because organization does not exist
+        with pytest.raises(ResourceNotFoundError, match="is not found."):
+            first_owner_client.organizations.update_owner(
+                new_owner_id="fake", organization_id=ctx.org.id
+            )
+
+        # Should fail because new owner is not a current member of the organization
+        with pytest.raises(
+            ForbiddenError, match="The new owner is not a member of this organization"
+        ):
+            first_owner_client.organizations.update_owner(
+                new_owner_id=org_admin.id, organization_id=ctx.org.id
+            )
+
+        # Should fail because the User sending the request is not the owner.
+        membership = first_owner_client.organizations.join_organization(
+            org_admin.id, organization_id=ctx.org.id, role=Role.ADMIN
+        )
+        assert isinstance(membership, OrgMemberRead)
+
+        with pytest.raises(
+            ForbiddenError, match="Only the owner can transfer the ownership of an organization."
+        ):
+            org_admin_client.organizations.update_owner(
+                new_owner_id=org_admin.id, organization_id=ctx.org.id
+            )
+
+        # Should return the same org since the new owner id is the same as the current one
+        first_owner_client.organizations.update_owner(
+            new_owner_id=ctx.user.id, organization_id=ctx.org.id
+        )
+
+        # Should succeed since the new owner is now a member of the organization
+        new_org = first_owner_client.organizations.update_owner(
+            new_owner_id=org_admin.id, organization_id=ctx.org.id
+        )
+        assert new_org.model_dump(
+            exclude=["owner", "updated_at", "credit_grant"]
+        ) == ctx.org.model_dump(exclude=["owner", "updated_at", "credit_grant"])
+        assert new_org.owner != ctx.org.owner
+        assert new_org.updated_at != ctx.org.updated_at
+        assert new_org.owner == org_admin.id
+
+        # Should fail because this user is no longer the owner
+        with pytest.raises(
+            ForbiddenError, match="Only the owner can transfer the ownership of an organization."
+        ):
+            first_owner_client.organizations.update_owner(
+                new_owner_id=org_admin.id, organization_id=ctx.org.id
+            )
+        # New owner will be ADMIN
+        membership = org_admin_client.organizations.get_member(
+            user_id=org_admin.id, organization_id=ctx.org.id
+        )
+        assert isinstance(membership, OrgMemberRead)
+        assert membership.role == Role.ADMIN
+
+        # Should fail because this is the last membership for this user and he is the current owner of the organization
+        with pytest.raises(ForbiddenError, match="Owner cannot leave the organization."):
+            org_admin_client.organizations.leave_organization(org_admin.id, ctx.org.id)
+
+        # Return the organization to the first owner
+        org_admin_client.organizations.update_owner(
+            new_owner_id=ctx.user.id, organization_id=ctx.org.id
+        )
+
+        # Should succeed after returning the organization to the old owner.
+        org_admin_client.organizations.leave_organization(org_admin.id, ctx.org.id)
+
+
 def test_organisation_model_catalogue():
     """
     Test listing model configs:

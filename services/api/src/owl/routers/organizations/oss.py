@@ -346,6 +346,67 @@ async def delete_organization(
     return OkResponse()
 
 
+@router.patch(
+    "/v1/organizations/owner",
+    summary="Transfer organization ownership to another user.",
+    description="Permissions: Only the owner of the organization can transfer its ownership.",
+)
+@handle_exception
+async def update_organization_owner(
+    request: Request,
+    user: Annotated[UserAuth, Depends(auth_user_service_key)],
+    session: Annotated[AsyncSession, Depends(yield_async_session)],
+    new_owner_id: Annotated[str, Query(min_length=1, description="New owner User ID.")],
+    organization_id: Annotated[str, Query(min_length=1, description="Organization ID.")],
+) -> OrganizationReadDecrypt:
+    # Fetch
+    organization = await session.get(Organization, organization_id)
+    if organization is None:
+        raise ResourceNotFoundError(f'Organization "{organization_id}" is not found.')
+    new_owner_user = await session.get(User, new_owner_id)
+    if new_owner_user is None:
+        raise ResourceNotFoundError(f'User "{new_owner_id}" is not found.')
+
+    # Check if user is the owner
+    if organization.owner != user.id:
+        raise ForbiddenError("Only the owner can transfer the ownership of an organization.")
+
+    if organization.owner == new_owner_id:
+        return organization
+
+    # Check if the new owner exist and is a member of the organization
+    new_owner_membership = await session.get(OrgMember, (new_owner_id, organization_id))
+    if new_owner_membership is None:
+        raise ForbiddenError("The new owner is not a member of this organization.")
+
+    # Promote new owner to ADMIN
+    # Update organization
+    new_owner_membership.role = Role.ADMIN
+    organization.owner = new_owner_id
+    organization.updated_at = now()
+    session.add(new_owner_membership)
+    session.add(organization)
+    await session.commit()
+    await session.refresh(organization)
+
+    logger.bind(user_id=user.id, org_id=organization_id).success(
+        (
+            f'{user.name} ({user.email}) transferred the ownership of organization "{organization.name}" ({organization_id}) '
+            f"to {new_owner_user.name} ({new_owner_user.email}). ({request.state.id})"
+        )
+    )
+    logger.bind(user_id=new_owner_id, org_id=organization_id).success(
+        (
+            f'{user.name} ({user.email}) transferred the ownership of organization "{organization.name}" ({organization_id}) '
+            f"to you. ({request.state.id})"
+        )
+    )
+
+    # Clear cache
+    await CACHE.refresh_organization_async(organization_id, session)
+    return organization
+
+
 @router.post(
     "/v2/organizations/members",
     summary="Join an organization.",
@@ -546,7 +607,7 @@ async def leave_organization(
     organization = await session.get(Organization, organization_id)
     if organization is None:
         raise ResourceNotFoundError(f'Organization "{organization_id}" is not found.')
-    if user_id == organization.created_by:
+    if user_id == organization.owner:
         raise ForbiddenError("Owner cannot leave the organization.")
     org_member = await session.get(OrgMember, (user_id, organization_id))
     if org_member is None:

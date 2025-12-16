@@ -9,6 +9,7 @@ from owl.db import AsyncSession, yield_async_session
 from owl.db.models import (
     Organization,
     OrgMember,
+    Project,
     ProjectMember,
     User,
 )
@@ -24,6 +25,7 @@ from owl.types import (
 from owl.utils.auth import auth_service_key, auth_user_service_key, has_permissions
 from owl.utils.dates import now
 from owl.utils.exceptions import (
+    BadInputError,
     ResourceExistsError,
     ResourceNotFoundError,
     handle_exception,
@@ -173,6 +175,23 @@ async def delete_user(
     user = await session.get(User, user.id)
     if user is None:
         raise ResourceNotFoundError(f'User "{user.id}" is not found.')
+    # Block if the user is owner of any organizations or projects
+    num_owned_projs = (
+        await session.exec(select(func.count(Project.id)).where(Project.owner == user.id))
+    ).one()
+    if num_owned_projs > 0:
+        raise BadInputError(
+            f"Unable to delete user since there are still {num_owned_projs:,d} projects with the user as owner."
+        )
+    num_owned_orgs = (
+        await session.exec(
+            select(func.count(Organization.id)).where(Organization.owner == user.id)
+        )
+    ).one()
+    if num_owned_orgs > 0:
+        raise BadInputError(
+            f"Unable to delete user since there are still {num_owned_orgs:,d} organizations with the user as owner."
+        )
     org_ids = [m.organization_id for m in user.org_memberships]
     # Delete all related resources
     logger.info(f'{request.state.id} - Deleting user: "{user.id}"')

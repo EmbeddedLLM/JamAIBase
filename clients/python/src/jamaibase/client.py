@@ -1278,6 +1278,19 @@ class _OrganizationsAsync(_ClientAsync):
             **kwargs,
         )
 
+    async def update_owner(
+        self,
+        new_owner_id: str,
+        organization_id: str,
+        **kwargs,
+    ) -> OrganizationRead:
+        return await self._patch(
+            "/v1/organizations/owner",
+            params=dict(organization_id=organization_id, new_owner_id=new_owner_id),
+            response_model=OrganizationRead,
+            **kwargs,
+        )
+
     async def delete_organization(
         self,
         organization_id: str,
@@ -1693,6 +1706,19 @@ class _ProjectsAsync(_ClientAsync):
             "/v2/projects",
             body=body,
             params=dict(project_id=project_id),
+            response_model=ProjectRead,
+            **kwargs,
+        )
+
+    async def update_owner(
+        self,
+        new_owner_id: str,
+        project_id: str,
+        **kwargs,
+    ) -> ProjectRead:
+        return await self._patch(
+            "/v1/projects/owner",
+            params=dict(project_id=project_id, new_owner_id=new_owner_id),
             response_model=ProjectRead,
             **kwargs,
         )
@@ -4605,6 +4631,18 @@ class _Organizations(_OrganizationsAsync):
             super().delete_organization(organization_id, missing_ok=missing_ok, **kwargs)
         )
 
+    def update_owner(
+        self,
+        new_owner_id: str,
+        organization_id: str,
+        **kwargs,
+    ) -> OrganizationRead:
+        return LOOP.run(
+            super().update_owner(
+                new_owner_id=new_owner_id, organization_id=organization_id, **kwargs
+            )
+        )
+
     def join_organization(
         self,
         user_id: str,
@@ -4962,6 +5000,16 @@ class _Projects(_ProjectsAsync):
         **kwargs,
     ) -> OkResponse:
         return LOOP.run(super().delete_project(project_id, missing_ok=missing_ok, **kwargs))
+
+    def update_owner(
+        self,
+        new_owner_id: str,
+        project_id: str,
+        **kwargs,
+    ) -> ProjectRead:
+        return LOOP.run(
+            super().update_owner(new_owner_id=new_owner_id, project_id=project_id, **kwargs)
+        )
 
     def join_project(
         self,

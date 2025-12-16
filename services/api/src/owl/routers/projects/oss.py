@@ -341,6 +341,64 @@ async def delete_project(
     return OkResponse()
 
 
+@router.patch(
+    "/v1/projects/owner",
+    summary="Transfer project ownership to another user.",
+    description="Permissions: Only the owner of the project can transfer its ownership.",
+)
+@handle_exception
+async def update_project_owner(
+    request: Request,
+    user: Annotated[UserAuth, Depends(auth_user)],
+    session: Annotated[AsyncSession, Depends(yield_async_session)],
+    new_owner_id: Annotated[str, Query(min_length=1, description="New owner User ID.")],
+    project_id: Annotated[str, Query(min_length=1, description="Project ID.")],
+) -> ProjectRead:
+    # Fetch
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise ResourceNotFoundError(f'Project "{project_id}" is not found.')
+    new_owner_user = await session.get(User, new_owner_id)
+    if new_owner_user is None:
+        raise ResourceNotFoundError(f'User "{new_owner_id}" is not found.')
+
+    # Check if user is the owner
+    if project.owner != user.id:
+        raise ForbiddenError("Only the owner can transfer the ownership of a project.")
+
+    if project.owner == new_owner_id:
+        return project
+
+    # Check if the new owner exist and is a member of the project
+    new_owner_membership = await session.get(ProjectMember, (new_owner_id, project_id))
+    if new_owner_membership is None:
+        raise ForbiddenError("The new owner is not a member of this project.")
+
+    # Promote new owner to ADMIN
+    # Update project
+    new_owner_membership.role = Role.ADMIN
+    project.owner = new_owner_id
+    project.updated_at = now()
+    session.add(new_owner_membership)
+    session.add(project)
+    await session.commit()
+    await session.refresh(project)
+
+    logger.bind(user_id=user.id, org_id=project.organization_id, proj_id=project_id).success(
+        (
+            f'{user.name} ({user.email}) transferred the ownership of project "{project.name}" ({project_id}) '
+            f"to {new_owner_user.name} ({new_owner_user.email}). ({request.state.id})"
+        )
+    )
+    logger.bind(user_id=new_owner_id, org_id=project.organization_id, proj_id=project_id).success(
+        (
+            f'{user.name} ({user.email}) transferred the ownership of project "{project.name}" ({project_id}) '
+            f"to you. ({request.state.id})"
+        )
+    )
+    return project
+
+
 @router.post(
     "/v2/projects/members",
     summary="Join a project.",
@@ -555,6 +613,8 @@ async def leave_project(
     project = await session.get(Project, project_id)
     if project is None:
         raise ResourceNotFoundError(f'Project "{project_id}" is not found.')
+    if user_id == project.owner:
+        raise ForbiddenError("Owner cannot leave the project.")
     if user.id != user_id:
         has_permissions(
             user,
