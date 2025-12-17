@@ -18,7 +18,7 @@ from owl.db.models import Project, Secret
 from owl.types import AUDIO_FILE_EXTENSIONS, IMAGE_FILE_EXTENSIONS, ColumnDtype
 from owl.utils.billing import OPENTELEMETRY_CLIENT
 from owl.utils.crypt import decrypt
-from owl.utils.exceptions import BadInputError
+from owl.utils.exceptions import BadInputError, JamaiException
 from owl.utils.io import s3_upload
 
 REQ_COUNTER = OPENTELEMETRY_CLIENT.get_counter("code_executor_requests_total")
@@ -126,7 +126,7 @@ async def code_executor(
     output_column: str,
     row_data: dict | None,
     dtype: str,
-) -> str:
+) -> str | None:
     async with observe_code_execution(
         organization_id=organization_id,
         project_id=project_id,
@@ -160,7 +160,7 @@ async def code_executor(
                     logger.info(
                         f"Code Executor: {request.state.id} - Python code execution completed for column {output_column}"
                     )
-                    return str(result)
+                    return None if result is None else str(result)
 
                 if not isinstance(result, bytes):
                     raise BadInputError(
@@ -195,6 +195,9 @@ async def code_executor(
                     )
                     return uri
 
+        except JamaiException:
+            # Don't log expected JamaiExceptions
+            raise
         except Exception as e:
             logger.error(
                 f"Code Executor: {request.state.id} - Python code execution encountered error for column {output_column} : {e}"

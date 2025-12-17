@@ -693,6 +693,8 @@ class GenExecutor(_Executor):
             pass
 
         # Perform completion
+        state_col = f"{task.output_column_name}_"
+        state: dict[str, Any] = self._column_dict.get(state_col, {})
         result = ""
         reasoning = ""
         references = None
@@ -765,7 +767,9 @@ class GenExecutor(_Executor):
                         )
                     )
                     if chunk.finish_reason == "error":
-                        self._error_columns.append(output_column)
+                        raise BadInputError(
+                            "LLM provider encountered unknown error during streaming."
+                        )
             else:
                 response = await self.lm.chat_completion(
                     messages=req.messages,
@@ -783,6 +787,7 @@ class GenExecutor(_Executor):
                 reasoning = response.reasoning_content
 
         except Exception as e:
+            result = f"[ERROR] {str(e)}"
             response_kwargs = dict(
                 id=self._request_id,
                 created=int(time()),
@@ -790,7 +795,7 @@ class GenExecutor(_Executor):
                 usage=ChatCompletionUsage(),
                 choices=[
                     ChatCompletionChoice(
-                        message=ChatCompletionMessage(content=f"[ERROR] {str(e)}"),
+                        message=ChatCompletionMessage(content=result),
                         index=0,
                         finish_reason="error",
                     )
@@ -811,17 +816,16 @@ class GenExecutor(_Executor):
                     row_id=self._row_id,
                 )
             )
-            result = response.content
-            reasoning = response.reasoning_content
+            state["error"] = {"message": result}
             self._error_columns.append(output_column)
             self.log_exception(
                 f'Table "{self._table_id}": Failed to generate completion for column "{output_column}": {repr(e)}',
                 e,
             )
+        else:
+            state.pop("error", None)
         finally:
             await q.put(None)
-            state_col = f"{task.output_column_name}_"
-            state = self._column_dict.get(state_col, {})
             # Always update state
             state["references"] = references.model_dump(mode="json") if references else None
             state["reasoning_content"] = reasoning if reasoning else None
@@ -911,21 +915,25 @@ class GenExecutor(_Executor):
             pass
 
         # Perform code execution
+        state_col = f"{task.output_column_name}_"
+        state: dict[str, Any] = self._column_dict.get(state_col, {})
         result = ""
         try:
-            # Error circuit breaker
-            self._check_upstream_error([body.source_column])
+            error_cols = self._get_upstream_error([body.source_column])
             source_code = self._column_dict.get(body.source_column, "")
 
             # Extract bytes from ColumnDtype.AUDIO and ColumnDtype.IMAGE and put it into a dictionary
             row_data = self._column_dict.copy()
             self.table.postprocess_rows([row_data], include_state=False)
+            # Replace error columns with None value
+            for ec in error_cols:
+                row_data[ec] = None
             for k, v in row_data.items():
                 col = next((col for col in self.table.column_metadata if col.column_id == k), None)
                 if col and (col.dtype == ColumnDtype.AUDIO or col.dtype == ColumnDtype.IMAGE):
                     row_data[k] = await _load_uri_as_bytes(v)
 
-            if source_code and row_data:
+            if source_code:
                 result = await code_executor(
                     request=self.request,
                     organization_id=self.organization.id,
@@ -945,7 +953,7 @@ class GenExecutor(_Executor):
                 usage=ChatCompletionUsage(),
                 choices=[
                     ChatCompletionChoice(
-                        message=ChatCompletionMessage(content=result),
+                        message=ChatCompletionMessage(content=str(result)),
                         index=0,
                     )
                 ],
@@ -966,10 +974,10 @@ class GenExecutor(_Executor):
                     row_id=self._row_id,
                 )
             )
-
             self.log(f'Executed code for column "{output_column}": <{mask_string(result)}>.')
 
         except Exception as e:
+            result = None
             response_kwargs = dict(
                 id=self._request_id,
                 created=int(time()),
@@ -998,14 +1006,17 @@ class GenExecutor(_Executor):
                     row_id=self._row_id,
                 )
             )
-            result = response.content
+            state["error"] = {"message": f"[ERROR] {str(e)}"}
             self._error_columns.append(output_column)
             self.log_exception(
                 f'Table "{self._table_id}": Failed to execute code for column "{output_column}": {repr(e)}',
                 e,
             )
+        else:
+            state.pop("error", None)
         finally:
             await q.put(None)
+            self._column_dict[state_col] = state
             await self._signal_task_completion(task, result)
 
     async def _execute_python_task(self, task: Task, q: Queue[ResultT | None]) -> None:
@@ -1052,21 +1063,27 @@ class GenExecutor(_Executor):
             pass
 
         # Perform python fixed function execution
+        state_col = f"{task.output_column_name}_"
+        state: dict[str, Any] = self._column_dict.get(state_col, {})
         result = ""
         try:
-            # Error circuit breaker
-            # Extract all columns to the left and check for upstream errors
-            self._check_upstream_error(self._extract_all_upstream_columns(output_column))
+            # Extract all columns to the left and get upstream error columns
+            error_cols = self._get_upstream_error(
+                self._extract_all_upstream_columns(output_column)
+            )
 
             # Extract bytes from ColumnDtype.AUDIO and ColumnDtype.IMAGE and put it into a dictionary
             row_data = self._column_dict.copy()
             self.table.postprocess_rows([row_data], include_state=False)
+            # Replace error columns with None value
+            for ec in error_cols:
+                row_data[ec] = None
             for k, v in row_data.items():
                 col = next((col for col in self.table.column_metadata if col.column_id == k), None)
                 if col and (col.dtype == ColumnDtype.AUDIO or col.dtype == ColumnDtype.IMAGE):
                     row_data[k] = await _load_uri_as_bytes(v)
 
-            if body.python_code and row_data:
+            if body.python_code:
                 result = await code_executor(
                     request=self.request,
                     organization_id=self.organization.id,
@@ -1084,7 +1101,7 @@ class GenExecutor(_Executor):
                 usage=ChatCompletionUsage(),
                 choices=[
                     ChatCompletionChoice(
-                        message=ChatCompletionMessage(content=result),
+                        message=ChatCompletionMessage(content=str(result)),
                         index=0,
                     )
                 ],
@@ -1104,12 +1121,12 @@ class GenExecutor(_Executor):
                     row_id=self._row_id,
                 )
             )
-
             self.log(
                 f'Executed python code for column "{output_column}": <{mask_string(result)}>.'
             )
 
         except Exception as e:
+            result = None
             response_kwargs = dict(
                 id=self._request_id,
                 created=int(time()),
@@ -1138,14 +1155,17 @@ class GenExecutor(_Executor):
                     row_id=self._row_id,
                 )
             )
-            result = response.content
+            state["error"] = {"message": f"[ERROR] {str(e)}"}
             self._error_columns.append(output_column)
             self.log_exception(
                 f'Table "{self._table_id}": Failed to execute python code for column "{output_column}": {repr(e)}',
                 e,
             )
+        else:
+            state.pop("error", None)
         finally:
             await q.put(None)
+            self._column_dict[state_col] = state
             await self._signal_task_completion(task, result)
 
     async def _signal_task_completion(self, task: Task, result: Any) -> None:
@@ -1197,12 +1217,25 @@ class GenExecutor(_Executor):
         # logger.warning(f"{message=}")
         return message
 
-    def _check_upstream_error(self, upstream_cols: list[str]) -> None:
+    def _get_upstream_error(self, upstream_cols: list[str]) -> list[str]:
         if not isinstance(upstream_cols, list):
             raise TypeError(f"`upstream_cols` must be a list, got: {type(upstream_cols)}")
-        error_cols = [f'"{col}"' for col in upstream_cols if col in self._error_columns]
+        error_cols = [
+            col
+            for col in upstream_cols
+            if col in self._error_columns
+            or (
+                f"{col}_" in self._column_dict
+                and self._column_dict[f"{col}_"].get("error", {}).get("message", None)
+            )
+        ]
+        return list(set(error_cols))
+
+    def _check_upstream_error(self, upstream_cols: list[str]) -> None:
+        error_cols = self._get_upstream_error(upstream_cols)
+        formatted_error_cols = [f'"{col}"' for col in error_cols]
         if len(error_cols) > 0:
-            raise UpStreamError(f"Upstream columns errored out: {', '.join(error_cols)}")
+            raise UpStreamError(f"Upstream columns errored out: {', '.join(formatted_error_cols)}")
 
     @classmethod
     async def setup_rag(

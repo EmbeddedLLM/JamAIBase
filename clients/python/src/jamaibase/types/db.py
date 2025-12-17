@@ -720,6 +720,14 @@ class ModelConfigUpdate(ModelInfo):
 
 class ModelConfigCreate(ModelConfigUpdate):
     # Overrides to make these field required in ModelConfigCreate.
+    id: SanitisedNonEmptyStr = Field(
+        description=(
+            "Unique identifier. "
+            "Users will specify this to select a model. "
+            "Must follow the following format: `{provider}/{model_id}`. "
+            "Examples=['openai/gpt-4o-mini', 'Qwen/Qwen2.5-0.5B']"
+        ),
+    )
     type: _ModelType = Field(
         description="Model type. Can be completion, chat, embed, or rerank.",
     )

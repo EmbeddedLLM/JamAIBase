@@ -1251,6 +1251,175 @@ async def test_python_fixed_function_str(
         assert rows.values[0]["result_column"] == python_code["expected"]
 
 
+@pytest.mark.parametrize("stream", **STREAM_PARAMS)
+async def test_error_handling(
+    setup: ServingContext,
+    stream: bool,
+):
+    table_type = TableType.ACTION
+    client = JamAI(user_id=setup.superuser_id, project_id=setup.project_id)
+    cols = [
+        ColumnSchemaCreate(id="input", dtype="str"),
+        # Error due to output type mismatch
+        ColumnSchemaCreate(
+            id="python",
+            dtype="image",
+            gen_config=PythonGenConfig(python_code="row['python'] = row['input']"),
+        ),
+        # Error out due to exceeding context length
+        ColumnSchemaCreate(
+            id="llm0",
+            dtype="str",
+            gen_config=LLMGenConfig(
+                model="ellm/lorem-context-10",
+                prompt='Reply: "${input}"',
+            ),
+        ),
+        ColumnSchemaCreate(
+            id="llm1",
+            dtype="str",
+            gen_config=LLMGenConfig(
+                model="ellm/lorem-context-10",
+                prompt='Reply: "${llm0}"',
+            ),
+        ),
+        ColumnSchemaCreate(
+            id="inspect_python",
+            dtype="str",
+            gen_config=PythonGenConfig(python_code="row['inspect_python'] = row['python']"),
+        ),
+        ColumnSchemaCreate(
+            id="inspect_llm0",
+            dtype="str",
+            gen_config=PythonGenConfig(python_code="row['inspect_llm0'] = row['llm0']"),
+        ),
+        ColumnSchemaCreate(
+            id="inspect_llm1",
+            dtype="str",
+            gen_config=PythonGenConfig(python_code="row['inspect_llm1'] = row['llm1']"),
+        ),
+    ]
+    with create_table(client, table_type, cols=cols) as table:
+        data = [{"input": "2"}]
+        # Add rows (error columns)
+        response = add_table_rows(
+            client, table_type, table.id, data, stream=stream, check_usage=False
+        )
+
+        row_id = response.rows[0].row_id
+        assert len(response.rows) == len(data)
+        rows = list_table_rows(client, table_type, table.id)
+        assert rows.total == len(data)
+        row = rows.values[0]
+        assert row["python"] is None
+        assert row["llm0"].startswith("[ERROR] litellm.ContextWindowExceededError")
+        assert row["llm1"].startswith("[ERROR] Upstream columns errored out")
+        assert row["inspect_python"] is None
+        assert row["inspect_llm0"] is None
+        assert row["inspect_llm1"] is None
+        row = rows.items[0]
+        assert row["python"]["error"]["message"].startswith(
+            "[ERROR] Result type must be bytes for column type"
+        )
+        assert "original" not in row["python"]
+        assert "original" not in row["llm0"]
+        assert "original" not in row["llm1"]
+        assert "error" not in row["inspect_python"]
+        assert "error" not in row["inspect_llm0"]
+        assert "error" not in row["inspect_llm1"]
+        # Regen (should still error out)
+        response = regen_table_rows(
+            client,
+            table_type,
+            table.id,
+            [row_id],
+            stream=stream,
+            check_usage=False,
+            regen_strategy=RegenStrategy.RUN_AFTER,
+            output_column_id="llm1",
+        )
+        row = response.rows[0]
+        assert row.columns["llm1"].content.startswith("[ERROR] Upstream columns errored out")
+        assert row.columns["inspect_python"].content == "None"
+        assert row.columns["inspect_llm0"].content == "None"
+        assert row.columns["inspect_llm1"].content == "None"
+        rows = list_table_rows(client, table_type, table.id)
+        row = rows.values[0]
+        assert row["python"] is None
+        assert row["llm0"].startswith("[ERROR] litellm.ContextWindowExceededError")
+        assert row["llm1"].startswith("[ERROR] Upstream columns errored out")
+        assert row["inspect_python"] is None
+        assert row["inspect_llm0"] is None
+        assert row["inspect_llm1"] is None
+
+        # Update and Regen (succeed columns)
+        transparent_1x1_image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAoMBgQhXbJwAAAAASUVORK5CYII="
+        response = client.table.update_table_rows(
+            table_type,
+            MultiRowUpdateRequest(
+                table_id=table.id,
+                data={row_id: {"input": transparent_1x1_image_base64}},
+            ),
+        )
+        client.table.update_gen_config(
+            table_type,
+            GenConfigUpdateRequest(
+                table_id=table.id,
+                column_map=dict(
+                    python=PythonGenConfig(
+                        python_code="import base64;row['python'] = base64.b64decode(row['input'])"
+                    ),
+                    llm0=LLMGenConfig(model="ellm/echo-prompt"),
+                ),
+            ),
+        )
+        # Regen to clear out error state
+        response = regen_table_rows(
+            client,
+            table_type,
+            table.id,
+            [row_id],
+            stream=stream,
+            check_usage=False,
+            regen_strategy=RegenStrategy.RUN_BEFORE,
+            output_column_id="llm0",
+        )
+        assert len(response.rows) == 1
+        row = response.rows[0]
+        rows = list_table_rows(client, table_type, table.id)
+        assert rows.total == len(data)
+        assert rows.values[0]["python"].startswith("s3://file/raw/0/")
+        assert rows.values[0]["python"].endswith(".png")
+        assert transparent_1x1_image_base64 in rows.values[0]["llm0"]
+
+        response = regen_table_rows(
+            client,
+            table_type,
+            table.id,
+            [row_id],
+            stream=stream,
+            check_usage=False,
+            regen_strategy=RegenStrategy.RUN_AFTER,
+            output_column_id="llm1",
+        )
+        assert len(response.rows) == 1
+        row = response.rows[0]
+        assert row.columns["llm1"].content.startswith("[ERROR] litellm.ContextWindowExceededError")
+        assert row.columns["inspect_python"].content.startswith("b'\\")
+        assert row.columns["inspect_llm0"].content.startswith("You are a versatile data generator")
+        assert row.columns["inspect_llm1"].content == "None"
+        rows = list_table_rows(client, table_type, table.id)
+        assert rows.total == 1
+        import ast
+        import base64
+
+        assert (
+            base64.b64encode(ast.literal_eval((rows.values[0]["inspect_python"]))).decode("ascii")
+            == transparent_1x1_image_base64
+        )
+        assert transparent_1x1_image_base64 in rows.values[0]["inspect_llm0"]
+
+
 def _read_file_content(file_path):
     with open(file_path, "rb") as f:
         return f.read()
