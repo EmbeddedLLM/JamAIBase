@@ -38,6 +38,7 @@ from jamaibase.types import (
 )
 from owl.configs import ENV_CONFIG
 from owl.types import (
+    CloudProvider,
     ModelCapability,
     ModelType,
     RegenStrategy,
@@ -141,6 +142,7 @@ def setup():
                     name="ELLM Lorem Ipsum Generator",
                     capabilities=[
                         ModelCapability.CHAT,
+                        ModelCapability.REASONING,
                         ModelCapability.IMAGE,
                         ModelCapability.AUDIO,
                     ],
@@ -184,7 +186,7 @@ def setup():
                     dict(
                         model_id=lorem_llm_config.id,
                         name=f"{lorem_llm_config.name} Deployment",
-                        provider="custom",
+                        provider=CloudProvider.ELLM,
                         routing_id=lorem_llm_config.id,
                         api_base=ENV_CONFIG.test_llm_api_base,
                     )
@@ -193,7 +195,7 @@ def setup():
                     dict(
                         model_id=short_llm_config.id,
                         name="Short chat Deployment",
-                        provider="custom",
+                        provider=CloudProvider.ELLM,
                         routing_id=short_llm_config.id,
                         api_base=ENV_CONFIG.test_llm_api_base,
                     )
@@ -202,7 +204,7 @@ def setup():
                     dict(
                         model_id=echo_config.id,
                         name="Echo Prompt Deployment",
-                        provider="custom",
+                        provider=CloudProvider.ELLM,
                         routing_id=echo_config.id,
                         api_base=ENV_CONFIG.test_llm_api_base,
                     )
@@ -2291,6 +2293,126 @@ def test_multiturn_regen(
             chat = row.columns["AI"].content.strip()
             assert chat != "How are you?", f"{row.columns=}"
             assert "10" in chat, f"{row.columns=}"
+
+
+@pytest.mark.parametrize("stream", **STREAM_PARAMS)
+def test_regen_reasoning_state(
+    setup: ServingContext,
+    stream: bool,
+):
+    """
+    Tests multiturn row regen.
+    - Each row correctly sees the regenerated output of the previous row
+
+    Args:
+        setup (ServingContext): Setup.
+        table_type (TableType): Table type.
+        stream (bool): Stream (SSE) or not.
+    """
+    client = JamAI(user_id=setup.superuser_id, project_id=setup.project_id)
+    cols = [
+        ColumnSchemaCreate(id="User", dtype="str"),
+        ColumnSchemaCreate(
+            id="AI",
+            dtype="str",
+            gen_config=LLMGenConfig(
+                model=setup.lorem_llm_model_id,
+                system_prompt="",
+                prompt="${User}",
+                max_tokens=20,
+                multi_turn=False,
+                reasoning_effort="medium",
+            ),
+        ),
+    ]
+    table_type = TableType.ACTION
+    with create_table(client, table_type, cols=cols) as table:
+        ### --- Add rows --- ###
+        response = add_table_rows(client, table_type, table.id, [dict(User="Hi")], stream=stream)
+        assert len(response.rows) == 1
+        # Check reasoning state
+        rows = list_table_rows(client, table_type, table.id)
+        col = rows.items[0]["AI"]
+        reasoning_content = col.get("reasoning_content", None)
+        assert reasoning_content is not None
+        assert len(reasoning_content) > 0
+        if stream:
+            reasoning_time = col.get("reasoning_time", None)
+            assert reasoning_time is not None
+            assert reasoning_time > 0
+
+        ### --- Regen rows --- ###
+        # Update gen config and regen
+        table = client.table.update_gen_config(
+            table_type,
+            GenConfigUpdateRequest(
+                table_id=table.id,
+                column_map=dict(
+                    AI=LLMGenConfig(
+                        model=setup.desc_llm_model_id,
+                        system_prompt="",
+                        prompt="${User}",
+                        max_tokens=20,
+                        multi_turn=False,
+                        reasoning_effort="medium",
+                    )
+                ),
+            ),
+        )
+        response = regen_table_rows(
+            client,
+            table_type,
+            table.id,
+            [response.rows[0].row_id],
+            stream=stream,
+        )
+        assert len(response.rows) == 1
+        # Check reasoning state
+        rows = list_table_rows(client, table_type, table.id)
+        col = rows.items[0]["AI"]
+        _reasoning_content = col.get("reasoning_content", None)
+        assert _reasoning_content is not None
+        assert len(_reasoning_content) > 0
+        assert _reasoning_content != reasoning_content
+        if stream:
+            _reasoning_time = col.get("reasoning_time", None)
+            assert _reasoning_time is not None
+            assert _reasoning_time > 0
+
+        ### --- Regen rows --- ###
+        # Update gen config and regen
+        table = client.table.update_gen_config(
+            table_type,
+            GenConfigUpdateRequest(
+                table_id=table.id,
+                column_map=dict(
+                    AI=LLMGenConfig(
+                        model=setup.desc_llm_model_id,
+                        system_prompt="",
+                        prompt="${User}",
+                        max_tokens=20,
+                        multi_turn=False,
+                        reasoning_effort=None,
+                    )
+                ),
+            ),
+        )
+        response = regen_table_rows(
+            client,
+            table_type,
+            table.id,
+            [response.rows[0].row_id],
+            stream=stream,
+        )
+        assert len(response.rows) == 1
+        # Check reasoning state
+        rows = list_table_rows(client, table_type, table.id)
+        col = rows.items[0]["AI"]
+        _reasoning_content = col.get("reasoning_content", None)
+        assert _reasoning_content is None
+        if stream:
+            _reasoning_time = col.get("reasoning_time", None)
+            assert _reasoning_time is None
 
 
 @pytest.mark.parametrize("table_type", TABLE_TYPES)

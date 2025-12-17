@@ -111,15 +111,15 @@ classifiers = [ # https://pypi.org/classifiers/
 # Sort your dependencies https://sortmylist.com/
 # In general, for v1 and above, we pin to minor version using ~=
 dependencies = [
-    "aioboto3~=7.0.0",
-    "aiobotocore~=2.21.0",                                  # Took long time to resolve
-    "aiofiles~=24.1.0",
+    "aioboto3~=15.5.0",
+    "aiobotocore==2.25.1",                                  # Took long time to resolve
+    "aiofiles~=25.1.0",
     "aiosqlite~=0.21.0",
     "async-lru~=2.0.0",
     "asyncpg~=0.30.0",
     "authlib~=1.6.0",
     "bm25s~=0.2.0",
-    "boto3==1.37.1",                                        # Took long time to resolve
+    "boto3==1.40.61",                                       # Took long time to resolve
     "celery~=5.5.0",
     "clickhouse-connect~=0.8.0",
     "cloudevents~=1.12.0",
@@ -142,7 +142,7 @@ dependencies = [
     "natsort[fast]~=8.4.0",
     "nltk~=3.9.0",
     "numpy>=1.26.0",
-    "openai~=1.99.0",
+    "openai~=2.9.0",
     "opentelemetry-api~=1.36.0",
     "opentelemetry-distro~=0.57b0",
     "opentelemetry-exporter-otlp~=1.36.0",
@@ -187,14 +187,14 @@ dependencies = [
     "pycryptodomex~=3.23.0",
     "pydantic-extra-types~=2.10.0",
     "pydantic-settings~=2.10.0",
-    "pydantic[email,timezone]~=2.11.0",
+    "pydantic[email,timezone]~=2.11.0",                     # 2.12 causes issues with sqlmodel Datetime
     "pydub~=0.25.0",
     "pyjwt~=2.10.0",
     "pylance==0.16.0",
     "python-multipart~=0.0.20",
     "redis[hiredis]~=5.3.0",
     "SQLAlchemy~=2.0.0",
-    "sqlmodel~=0.0.20",
+    "sqlmodel~=0.0.27",
     "sqlparse~=0.5.0",
     "starlette~=0.41.0",
     "stripe~=9.12.0",

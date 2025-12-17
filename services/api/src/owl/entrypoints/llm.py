@@ -234,6 +234,7 @@ async def chat_completion(body: ChatCompletionRequest):
     model_spec = _parse_chat_model_id(body.model)
     num_input_tokens = len(" ".join(m.text_content for m in body.messages).split(" "))
     user_messages = [m for m in body.messages if m.role == ChatRole.USER]
+    reasoning = body.reasoning_effort not in (None, "disable", "minimal", "none")
 
     # Test context length error handling
     if num_input_tokens > model_spec.max_context_length:
@@ -348,15 +349,16 @@ async def chat_completion(body: ChatCompletionRequest):
                 for i in range(body.n):
                     if model_spec.tpot_ms > 0:
                         await sleep(model_spec.tpot_ms / 1000)
+                    if reasoning and t < 2:
+                        delta = ChatCompletionDelta(reasoning_content=content)
+                    else:
+                        delta = ChatCompletionDelta(content=content)
                     chunk = ChatCompletionChunkResponse(
                         id=body.id,
                         model=model_spec.id,
                         choices=[
                             ChatCompletionChoice(
-                                index=i,
-                                delta=ChatCompletionDelta(content=content),
-                                logprobs=None,
-                                finish_reason=None,
+                                index=i, delta=delta, logprobs=None, finish_reason=None
                             )
                         ],
                         usage=None,
@@ -417,6 +419,13 @@ async def chat_completion(body: ChatCompletionRequest):
     # Non-stream
     if (model_spec.ttft_ms + model_spec.tpot_ms) > 0:
         await sleep((model_spec.ttft_ms + model_spec.tpot_ms * len(completion_tokens)) / 1000)
+    contents = []
+    reasoning_contents = []
+    for t in range(num_completion_tokens):
+        if reasoning and t < 2:
+            reasoning_contents.append(completion_tokens[t % len(completion_tokens)])
+        else:
+            contents.append(completion_tokens[t % len(completion_tokens)])
     response = ChatCompletionResponse(
         id=body.id,
         model=model_spec.id,
@@ -424,13 +433,11 @@ async def chat_completion(body: ChatCompletionRequest):
             ChatCompletionChoice(
                 index=i,
                 message=ChatCompletionMessage(
-                    content=" ".join(
-                        completion_tokens[t % len(completion_tokens)]
-                        for t in range(num_completion_tokens)
-                    )
+                    content=" ".join(contents),
+                    reasoning_content=" ".join(reasoning_contents) if reasoning_contents else None,
                 ),
                 logprobs=None,
-                finish_reason="length",
+                finish_reason="length" if num_completion_tokens == body.max_tokens else "stop",
             )
             for i in range(body.n)
         ],

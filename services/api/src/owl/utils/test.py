@@ -401,6 +401,7 @@ ELLM_DESCRIBE_CONFIG = ModelConfigCreate(
     type=ModelType.LLM,
     capabilities=[
         ModelCapability.CHAT,
+        ModelCapability.REASONING,
         ModelCapability.IMAGE,
         ModelCapability.AUDIO,
     ],
@@ -483,7 +484,7 @@ OPENAI_O4_MINI_DEPLOYMENT = DeploymentCreate(
 ELLM_DESCRIBE_DEPLOYMENT = DeploymentCreate(
     model_id=ELLM_DESCRIBE_CONFIG.id,
     name=f"{ELLM_DESCRIBE_CONFIG.name} Deployment",
-    provider="custom",
+    provider=CloudProvider.ELLM,
     routing_id=ELLM_DESCRIBE_CONFIG.id,
     api_base=ENV_CONFIG.test_llm_api_base,
 )

@@ -498,8 +498,8 @@ class DeploymentRouter:
 
         # Anthropic specific
         if ctx.inference_provider == CloudProvider.ANTHROPIC:
-            # Sonnet 4.5 cannot specify both `temperature` and `top_p`
-            if "sonnet-4-5" in ctx.routing_id:
+            # 4.1 and 4.5 models cannot specify both `temperature` and `top_p`
+            if "-4-1" in ctx.routing_id or "-4-5" in ctx.routing_id:
                 t = hyperparams.get("temperature", None)
                 p = hyperparams.get("top_p", None)
                 if t is not None and p is not None:
@@ -587,6 +587,7 @@ class DeploymentRouter:
                     reasoning_effort = "high"
             if ctx.inference_provider == CloudProvider.ELLM:
                 hyperparams["reasoning_effort"] = reasoning_effort
+                hyperparams["allowed_openai_params"] = ["reasoning_effort"]
                 return
             elif ctx.inference_provider in [CloudProvider.GEMINI, CloudProvider.ANTHROPIC]:
                 # Gemini 3-Pro recommends reasoning_effort
@@ -604,8 +605,10 @@ class DeploymentRouter:
                     else:
                         thinking_budget = 8192
                 if ctx.inference_provider == CloudProvider.ANTHROPIC:
-                    hyperparams["temperature"] = 1
-                    hyperparams["top_p"] = min(max(0.95, hyperparams.pop("top_p", 1.0)), 1.0)
+                    if "temperature" in hyperparams:
+                        hyperparams["temperature"] = 1
+                    if "top_p" in hyperparams:
+                        hyperparams["top_p"] = min(max(0.95, hyperparams.pop("top_p", 1.0)), 1.0)
                     thinking_budget = max(thinking_budget, 1024)
                 hyperparams["thinking"] = {
                     "type": "enabled",

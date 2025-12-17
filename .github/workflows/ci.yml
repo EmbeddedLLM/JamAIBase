@@ -247,6 +247,11 @@ jobs:
         timeout-minutes: 1
         run: mkdir -p logs && docker compose -p jm -f docker/compose.ci.yml logs starling > logs/starling.log
 
+      - name: Inspect test-llm logs
+        timeout-minutes: 1
+        if: always() && steps.launch_services.outcome == 'success'
+        run: mkdir -p logs && docker compose -p jm -f docker/compose.ci.yml logs test-llm > logs/test-llm.log
+
       - name: Test Stripe integration (Cloud only)
         id: test_stripe
         if: matrix.jamai-mode == 'cloud' && matrix.test-group == 'group1' && steps.launch_services.outcome == 'success'

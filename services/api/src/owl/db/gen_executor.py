@@ -748,7 +748,7 @@ class GenExecutor(_Executor):
                 ):
                     reasoning += chunk.reasoning_content
                     result += chunk.content
-                    if chunk.content and reasoning_time is None:
+                    if chunk.content and reasoning and reasoning_time is None:
                         reasoning_time = perf_counter() - t0
                     # if chunk.content is None and chunk.usage is None:
                     #     continue
@@ -822,12 +822,10 @@ class GenExecutor(_Executor):
             await q.put(None)
             state_col = f"{task.output_column_name}_"
             state = self._column_dict.get(state_col, {})
-            if references is not None:
-                state["references"] = references.model_dump(mode="json")
-            if reasoning:
-                state["reasoning_content"] = reasoning
-            if reasoning_time is not None:
-                state["reasoning_time"] = reasoning_time
+            # Always update state
+            state["references"] = references.model_dump(mode="json") if references else None
+            state["reasoning_content"] = reasoning if reasoning else None
+            state["reasoning_time"] = reasoning_time if reasoning_time else None
             self._column_dict[state_col] = state
             await self._signal_task_completion(task, result)
             self.log(f'Streamed completion for column "{output_column}": <{mask_string(result)}>.')

@@ -24,11 +24,17 @@ from owl.utils.exceptions import (
     ResourceNotFoundError,
     handle_exception,
 )
+from owl.utils.mcp import MCP_TOOL_TAG
 
 router = APIRouter()
 
 
-@router.post("/v2/secrets")
+@router.post(
+    "/v2/secrets",
+    summary="Create an organization secret.",
+    description="Permissions: `organization.ADMIN`.",
+    tags=[MCP_TOOL_TAG, "organization.ADMIN"],
+)
 @handle_exception
 async def create_secret(
     request: Request,
@@ -80,9 +86,7 @@ async def create_secret(
         existing_projects = (await session.exec(statement)).all()
         if len(existing_projects) != len(body.allowed_projects):
             non_exist_projects = set(body.allowed_projects) - set(existing_projects)
-            raise BadInputError(
-                f"Non-existing projects are not allowed: '{"', '".join(non_exist_projects)}'."
-            )
+            raise ResourceNotFoundError(f"Projects not found: {', '.join(non_exist_projects)}")
 
     # Create new secret
     secret = Secret(
@@ -103,8 +107,9 @@ async def create_secret(
 
 @router.get(
     "/v2/secrets/list",
-    summary="List system-wide secrets.",
+    summary="List organization secrets.",
     description="Permissions: `organization.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER"],
 )
 @handle_exception
 async def list_secrets(
@@ -158,8 +163,9 @@ async def list_secrets(
 
 @router.get(
     "/v2/secrets",
-    summary="Get a secret.",
+    summary="Get an organization secret.",
     description="Permissions: `organization.MEMBER`.",
+    tags=[MCP_TOOL_TAG, "organization.MEMBER"],
 )
 @handle_exception
 async def get_secret(
@@ -195,11 +201,15 @@ async def get_secret(
     secret = await session.get(Secret, (organization_id, normalized_name))
     if secret is None:
         raise ResourceNotFoundError(f'Secret "{normalized_name}" is not found.')
-
     return secret.to_read_masked()
 
 
-@router.patch("/v2/secrets")
+@router.patch(
+    "/v2/secrets",
+    summary="Update an organization secret.",
+    description="Permissions: `organization.ADMIN`.",
+    tags=[MCP_TOOL_TAG, "organization.ADMIN"],
+)
 @handle_exception
 async def update_secret(
     request: Request,
@@ -256,9 +266,7 @@ async def update_secret(
         existing_projects = (await session.exec(statement)).all()
         if len(existing_projects) != len(body.allowed_projects):
             non_exist_projects = set(body.allowed_projects) - set(existing_projects)
-            raise BadInputError(
-                f"Non-existing projects are not allowed: '{"', '".join(non_exist_projects)}'."
-            )
+            raise ResourceNotFoundError(f"Projects not found: {', '.join(non_exist_projects)}")
     secret, updates = await Secret.update(
         session, (organization_id, normalized_name), body, name="Secret"
     )
@@ -272,8 +280,9 @@ async def update_secret(
 
 @router.delete(
     "/v2/secrets",
-    summary="Delete a secret.",
+    summary="Delete an organization secret.",
     description="Permissions: `organization.ADMIN`.",
+    tags=[MCP_TOOL_TAG, "organization.ADMIN"],
 )
 @handle_exception
 async def delete_secret(

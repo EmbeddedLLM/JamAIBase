@@ -1,5 +1,5 @@
-import random
 from dataclasses import dataclass
+from random import choice
 
 import pytest
 from pydantic import ValidationError
@@ -16,7 +16,6 @@ from owl.types import (
 )
 from owl.utils.crypt import generate_key
 from owl.utils.exceptions import (
-    BadInputError,
     ForbiddenError,
     ResourceExistsError,
     ResourceNotFoundError,
@@ -303,16 +302,10 @@ name_value_pairs = [
     ("sql_injection", "'; DROP TABLE secrets; --"),
     ("null_bytes", "val\x00ue"),
 ]
-randoms = list(range(len(name_value_pairs)))
-random.shuffle(randoms)
-secret_name_value_pairs = [
-    (name_value_pairs[i1][0], name_value_pairs[i1][1], name_value_pairs[i2][1])
-    for i1, i2 in zip(list(range(len(name_value_pairs))), randoms, strict=True)
-]
 
 
-@pytest.mark.parametrize("name, value, updated_value", secret_name_value_pairs)
-def test_secret_value_handling(admin_client, org_context, name, value, updated_value):
+@pytest.mark.parametrize("name, value", name_value_pairs)
+def test_secret_value_handling(admin_client, org_context, name, value):
     try:
         secret = admin_client.secrets.create_secret(
             body=SecretCreate(name=name, value=value),
@@ -333,12 +326,15 @@ def test_secret_value_handling(admin_client, org_context, name, value, updated_v
         assert updated_secret_same.value == value
 
         # updates to different value
+        new_value = choice(
+            [name_value[1] for name_value in name_value_pairs if name_value[1] != value]
+        )
         updated_secret = admin_client.secrets.update_secret(
             organization_id=org_context.superorg.id,
             name=name,
-            body=SecretUpdate(value=updated_value),
+            body=SecretUpdate(value=new_value),
         )
-        assert updated_secret.value == updated_value
+        assert updated_secret.value == new_value
     finally:
         admin_client.secrets.delete_secret(
             organization_id=org_context.superorg.id, name=name, missing_ok=True
@@ -490,92 +486,61 @@ def test_organization_isolation(multi_org_context):
         )
 
 
-def test_deduplicate_allowed_projects_with_duplication(admin_client, org_context):
-    """Test creating a secret with duplicate projects in allowed_projects list."""
-    org_id = org_context.superorg.id
-    with (
-        create_project(
-            dict(name="project1"), user_id=org_context.superuser.id, organization_id=org_id
-        ) as proj1,
-        create_project(
-            dict(name="project2"), user_id=org_context.superuser.id, organization_id=org_id
-        ) as proj2,
-    ):
-        secret = admin_client.secrets.create_secret(
-            body=SecretCreate(
-                name="DUPLICATE_PROJECTS_SECRET",
-                value="test-value",
-                allowed_projects=[proj1.id, proj2.id, proj1.id, proj2.id],
-            ),
-            organization_id=org_context.superorg.id,
-        )
-
-        try:
-            assert secret.name == "DUPLICATE_PROJECTS_SECRET"
-            projects = [proj1.id, proj2.id]
-            # verify deduplication
-            assert len(secret.allowed_projects) == len(projects)
-            assert set(secret.allowed_projects) == set(projects)
-
-            updated_secret = admin_client.secrets.update_secret(
-                organization_id=org_context.superorg.id,
-                name="DUPLICATE_PROJECTS_SECRET",
-                body=SecretUpdate(allowed_projects=[proj2.id, proj2.id, proj1.id]),
-            )
-            # verify deduplication on update
-            assert len(updated_secret.allowed_projects) == len(projects)
-            assert set(secret.allowed_projects) == set(projects)
-        finally:
-            admin_client.secrets.delete_secret(
-                organization_id=org_id, name=secret.name, missing_ok=True
-            )
-
-
-def test_allowed_projects_with_nonexistent_project(admin_client, org_context):
-    """Test creating a secret with empty string in allowed_projects list."""
-    secret_name = "EMPTY_PROJECT_SECRET"
-    with (
-        create_project(
-            dict(name="project1"),
-            user_id=org_context.superuser.id,
-            organization_id=org_context.superorg.id,
-        ) as proj1,
-    ):
-        try:
-            with pytest.raises(
-                BadInputError,
-                match=r"Non-existing projects are not allowed:",
-            ):
-                admin_client.secrets.create_secret(
+def test_allowed_projects():
+    """Test allowed projects list."""
+    with create_user(dict(email="a@local.com", name="A")) as user:
+        super_client = JamAI(user_id=user.id)
+        with (
+            create_organization(OrganizationCreate(name="Org"), user_id=user.id) as org,
+            create_project(user_id=user.id, organization_id=org.id) as p0,
+        ):
+            # Test create with empty string project ID
+            secret_name = "empty_string_project"
+            with pytest.raises(ResourceNotFoundError, match="Projects not found"):
+                super_client.secrets.create_secret(
                     body=SecretCreate(
                         name=secret_name,
                         value="test-value",
-                        allowed_projects=["", proj1.id],
+                        allowed_projects=["", p0.id],
                     ),
-                    organization_id=org_context.superorg.id,
+                    organization_id=org.id,
                 )
 
-            admin_client.secrets.create_secret(
+            super_client.secrets.create_secret(
                 body=SecretCreate(
                     name=secret_name,
                     value="test-value",
-                    allowed_projects=[proj1.id],
+                    allowed_projects=[p0.id],
                 ),
-                organization_id=org_context.superorg.id,
+                organization_id=org.id,
             )
-            with pytest.raises(
-                BadInputError,
-                match=r"Non-existing projects are not allowed:",
-            ):
-                admin_client.secrets.update_secret(
-                    organization_id=org_context.superorg.id,
+            with pytest.raises(ResourceNotFoundError, match="Projects not found"):
+                super_client.secrets.update_secret(
+                    organization_id=org.id,
                     name=secret_name,
-                    body=SecretUpdate(allowed_projects=["", proj1.id]),
+                    body=SecretUpdate(allowed_projects=["", p0.id]),
                 )
-        finally:
-            admin_client.secrets.delete_secret(
-                organization_id=org_context.superorg.id, name=secret_name, missing_ok=True
+            # Test duplicated allowed projects
+            secret_name = "duplicated_projects"
+            secret = super_client.secrets.create_secret(
+                body=SecretCreate(
+                    name=secret_name,
+                    value="test-value",
+                    allowed_projects=[p0.id, p0.id],
+                ),
+                organization_id=org.id,
             )
+            assert secret.allowed_projects == [p0.id]
+            secret = super_client.secrets.update_secret(
+                organization_id=org.id,
+                name=secret_name,
+                body=SecretUpdate(allowed_projects=[p0.id, p0.id]),
+            )
+            assert secret.allowed_projects == [p0.id]
+        # Should be deleted after org deletion
+        with sync_session() as session:
+            secret = session.get(Secret, (org.id, secret_name))
+            assert secret is None
 
 
 def test_list_pagination_and_search(admin_client, org_context):

@@ -17,6 +17,7 @@ from owl.db.models import (
     PricePlan,
     Project,
     ProjectMember,
+    Secret,
     User,
 )
 from owl.types import (
@@ -316,6 +317,7 @@ async def delete_organization(
     # Delete related resources
     await session.exec(delete(Organization).where(Organization.id == organization_id))
     await session.exec(delete(Project).where(Project.organization_id == organization_id))
+    await session.exec(delete(Secret).where(Secret.organization_id == organization_id))
     if ENV_CONFIG.is_cloud:
         from owl.db.models.cloud import VerificationCode
 

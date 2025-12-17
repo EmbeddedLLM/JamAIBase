@@ -8,6 +8,7 @@ router = APIRouter()
 router.include_router(oss_router)
 router.include_router(secrets_router)
 
+
 if ENV_CONFIG.is_cloud:
     from owl.routers.organizations.cloud import router as cloud_router
 
