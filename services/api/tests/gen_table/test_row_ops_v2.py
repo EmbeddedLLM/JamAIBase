@@ -401,7 +401,38 @@ def _assert_dict_equal(d1: dict[str, Any], d2: dict[str, Any], exclude: list[str
     assert d1 == d2
 
 
-# TODO: Test add row with complete data including output columns
+@pytest.mark.parametrize("stream", **STREAM_PARAMS)
+def test_add_row_with_output(
+    setup: ServingContext,
+    stream: bool,
+):
+    table_type = TableType.ACTION
+    client = JamAI(user_id=setup.superuser_id, project_id=setup.project_id)
+    cols = [
+        ColumnSchemaCreate(id="input", dtype="str"),
+        ColumnSchemaCreate(
+            id="output",
+            dtype="str",
+            gen_config=LLMGenConfig(prompt="${input}", model=setup.desc_llm_model_id),
+        ),
+    ]
+    with create_table(client, table_type, cols=cols) as table:
+        # Add rows
+        data = [
+            dict(input="test", output="out"),
+            # String column should be able to take in arbitrary strings
+            dict(input="s3://test/file.ai", output="out"),
+        ]
+        response = add_table_rows(client, table_type, table.id, data, stream=stream)
+        assert len(response.rows) == 0 if stream else len(data)
+        # List rows
+        _rows = list_table_rows(client, table_type, table.id)
+        assert len(_rows.items) == len(data)
+        assert _rows.total == len(data)
+        assert _rows.values[0]["input"] == "test"
+        assert _rows.values[1]["input"] == "s3://test/file.ai"
+        assert _rows.values[0]["output"] == "out"
+        assert _rows.values[1]["output"] == "out"
 
 
 @pytest.mark.parametrize("table_type", TABLE_TYPES)

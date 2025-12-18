@@ -3296,7 +3296,7 @@ class _GenTableClientAsync(_ClientAsync):
         Args:
             table_type (str): Table type.
             table_id (str): ID or name of the table to be exported.
-            delimiter (str, optional): The delimiter of the file: can be "," or "\\t". Defaults to ",".
+            delimiter (str, optional): The delimiter of the content can be "," or "\\t". Defaults to ",".
             columns (list[str], optional): A list of columns to be exported. Defaults to None (export all columns).
 
         Returns:
@@ -6130,7 +6130,7 @@ class _GenTableClient(_GenTableClientAsync):
         Args:
             table_type (str): Table type.
             table_id (str): ID or name of the table to be exported.
-            delimiter (str, optional): The delimiter of the file: can be "," or "\\t". Defaults to ",".
+            delimiter (str, optional): The delimiter of the content can be "," or "\\t". Defaults to ",".
             columns (list[str], optional): A list of columns to be exported. Defaults to None (export all columns).
 
         Returns:

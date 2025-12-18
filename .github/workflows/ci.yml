@@ -13,12 +13,6 @@ on:
     tags:
       - "v*"
 
-# Cancel in-progress CI jobs if there is a new push
-# https://stackoverflow.com/a/72408109
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
   check_changes:
     name: Check for changes
@@ -58,6 +52,9 @@ jobs:
         jamai-mode: ["oss"]
         test-group: [group1, group2, group3, group4]
     timeout-minutes: 90
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.jamai-mode }}-${{ matrix.test-group }}
+      cancel-in-progress: true
 
     steps:
       - name: Checkout code
@@ -148,14 +145,22 @@ jobs:
           OWL_STRIPE_WEBHOOK_SECRET_TEST: ${{ secrets.OWL_STRIPE_WEBHOOK_SECRET_TEST }}
           OWL_STRIPE_PUBLISHABLE_KEY_TEST: ${{ secrets.OWL_STRIPE_PUBLISHABLE_KEY_TEST }}
 
+      - name: Configure Docker timeout
+        run: |
+          mkdir -p ~/.docker
+          echo '{"max-concurrent-downloads": 3, "max-download-attempts": 5}' > ~/.docker/config.json
+
       - name: Launch services
         id: launch_services
         timeout-minutes: 20
         if: always()
-        run: docker compose -p jm -f docker/compose.ci.yml up --quiet-pull -d --wait
+        run: |
+          docker compose -p jm -f docker/compose.ci.yml up --quiet-pull -d --wait
         env:
           COMPOSE_DOCKER_CLI_BUILD: 1
           DOCKER_BUILDKIT: 1
+          COMPOSE_HTTP_TIMEOUT: 30
+          DOCKER_CLIENT_TIMEOUT: 30
 
       - name: Inspect owl logs if failed to launch
         timeout-minutes: 1

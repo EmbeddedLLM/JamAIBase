@@ -1,4 +1,3 @@
-import re
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
@@ -919,7 +918,7 @@ def test_add_row_sequential_completion_with_error(
     [
         "s3://image-bucket/bmp/cifar10-deer.bmp",
         "s3://image-bucket/tiff/cifar10-deer.tiff",
-        "file://image-bucket/tiff/rabbit.tiff",
+        # "file://image-bucket/tiff/rabbit.tiff",
     ],
 )
 def test_add_row_image_file_column_invalid_extension(
@@ -931,15 +930,7 @@ def test_add_row_image_file_column_invalid_extension(
     client = JamAI(user_id=setup.user_id, project_id=setup.project_id)
     with _create_table(client, table_type) as table:
         assert isinstance(table, TableMetaResponse)
-        with pytest.raises(
-            BadInputError,
-            match=re.compile(
-                f"^.*{re.escape('Unsupported file type. Make sure the file belongs to one of the following formats:')}.*"
-                f"{re.escape('[Image File Types]:')}.*"
-                f"{re.escape('[Audio File Types]:')}.*"
-                f"{re.escape('[Document File Types]:')}.*$"
-            ),
-        ):
+        with pytest.raises(BadInputError, match="Unsupported file type"):
             response = _add_row(
                 client,
                 table_type,

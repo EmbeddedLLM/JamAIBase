@@ -1,6 +1,5 @@
 from datetime import datetime
 from enum import StrEnum
-from os.path import splitext
 from typing import Annotated, Any, Generic, Literal, Self, Type, TypeVar
 
 import pandas as pd
@@ -498,28 +497,11 @@ ALLOWED_FILE_EXTENSIONS = set(
 )
 
 
-def check_data(value: Any) -> Any:
-    if isinstance(value, str) and (value.startswith("s3://") or value.startswith("file://")):
-        extension = splitext(value)[1].lower()
-        if extension not in ALLOWED_FILE_EXTENSIONS:
-            raise ValueError(
-                "Unsupported file type. Make sure the file belongs to "
-                "one of the following formats: \n"
-                f"[Image File Types]: \n{IMAGE_FILE_EXTENSIONS} \n"
-                f"[Audio File Types]: \n{AUDIO_FILE_EXTENSIONS} \n"
-                f"[Document File Types]: \n{DOCUMENT_FILE_EXTENSIONS}"
-            )
-    return value
-
-
-CellValue = Annotated[Any, AfterValidator(check_data)]
-
-
 class RowAdd(BaseModel):
     table_id: str = Field(
         description="Table name or ID.",
     )
-    data: dict[str, CellValue] = Field(
+    data: dict[str, Any] = Field(
         description="Mapping of column names to its value.",
     )
     stream: bool = Field(
@@ -533,7 +515,7 @@ class RowAdd(BaseModel):
 
 
 class MultiRowAddRequest(t.MultiRowAddRequest):
-    data: list[dict[str, CellValue]] = Field(
+    data: list[dict[str, Any]] = Field(
         min_length=1,
         description=(
             "List of mapping of column names to its value. "
@@ -544,7 +526,7 @@ class MultiRowAddRequest(t.MultiRowAddRequest):
 
 
 class MultiRowAddRequestWithLimit(MultiRowAddRequest):
-    data: list[dict[str, CellValue]] = Field(
+    data: list[dict[str, Any]] = Field(
         min_length=1,
         max_length=100,
         description=(
@@ -556,14 +538,14 @@ class MultiRowAddRequestWithLimit(MultiRowAddRequest):
 
 
 class MultiRowUpdateRequest(t.MultiRowUpdateRequest):
-    data: dict[str, dict[str, CellValue]] = Field(
+    data: dict[str, dict[str, Any]] = Field(
         min_length=1,
         description="Mapping of row IDs to row data, where each row data is a mapping of column names to its value.",
     )
 
 
 class MultiRowUpdateRequestWithLimit(MultiRowUpdateRequest):
-    data: dict[str, dict[str, CellValue]] = Field(
+    data: dict[str, dict[str, Any]] = Field(
         min_length=1,
         max_length=100,
         description="Mapping of row IDs to row data, where each row data is a mapping of column names to its value.",
@@ -571,7 +553,7 @@ class MultiRowUpdateRequestWithLimit(MultiRowUpdateRequest):
 
 
 class RowUpdateRequest(t.RowUpdateRequest):
-    data: dict[str, CellValue] = Field(
+    data: dict[str, Any] = Field(
         description="Mapping of column names to its value.",
     )
 

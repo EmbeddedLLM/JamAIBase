@@ -647,7 +647,7 @@ class TableDataImportRequest(BaseModel):
     # ] = None
     delimiter: Annotated[
         Literal[",", "\t"],
-        Field(description='The delimiter of the file: can be "," or "\\t". Defaults to ",".'),
+        Field(description='The delimiter of the content can be "," or "\\t". Defaults to ",".'),
     ] = ","
 
 

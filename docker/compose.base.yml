@@ -19,7 +19,7 @@ services:
       - jamai
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.113.0
+    image: ghcr.io/embeddedllm/otel/opentelemetry-collector-contrib:0.113.0
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
       - ./otel_configs/otel-collector-config.yaml:/etc/otelcol/config.yaml
@@ -27,7 +27,7 @@ services:
       - jamai
 
   victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.124.0
+    image: ghcr.io/embeddedllm/victoriametrics/victoria-metrics:v1.124.0
     command:
       - "--selfScrapeInterval=15s"
       - "--retentionPeriod=100y"
@@ -43,7 +43,7 @@ services:
       start_period: 30s
 
   vmauth:
-    image: victoriametrics/vmauth:v1.124.0
+    image: ghcr.io/embeddedllm/victoriametrics/vmauth:v1.124.0
     command:
       - "--auth.config=/etc/config.yml"
     volumes:
@@ -58,7 +58,7 @@ services:
       start_period: 30s
 
   victorialogs:
-    image: victoriametrics/victoria-logs:v1.28.0
+    image: ghcr.io/embeddedllm/victoriametrics/victoria-logs:v1.28.0
     command:
       - "--retentionPeriod=100y"
     volumes:
@@ -73,7 +73,7 @@ services:
       start_period: 30s
 
   vmagent:
-    image: victoriametrics/vmagent:v1.124.0
+    image: ghcr.io/embeddedllm/victoriametrics/vmagent:v1.124.0
     depends_on:
       victoriametrics:
         condition: service_healthy
@@ -97,7 +97,7 @@ services:
       - jamai
 
   clickhouse:
-    image: clickhouse:24.10.2.80
+    image: ghcr.io/embeddedllm/clickhouse:24.10.2.80
     volumes:
       - ../docker_data/ch_data:/var/lib/clickhouse/
       - ../docker_data/ch_logs:/var/log/clickhouse-server/
@@ -157,7 +157,7 @@ services:
       start_period: 30s
 
   pgbouncer:
-    image: edoburu/pgbouncer:v1.24.0-p0
+    image: ghcr.io/embeddedllm/edoburu/pgbouncer:v1.24.0-p0
     depends_on:
       postgresql:
         condition: service_healthy
@@ -187,7 +187,7 @@ services:
       - jamai
 
   minio:
-    image: minio/minio:RELEASE.2025-05-24T17-08-30Z
+    image: ghcr.io/embeddedllm/minio/minio:RELEASE.2025-05-24T17-08-30Z
     entrypoint: /bin/sh -c " minio server /data --console-address ':9001' & until (mc config host add myminio http://localhost:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}) do echo '...waiting...' && sleep 1; done; mc mb myminio/file; wait "
     environment:
       MINIO_ROOT_USER: minioadmin

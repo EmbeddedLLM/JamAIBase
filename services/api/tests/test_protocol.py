@@ -138,12 +138,6 @@ def test_chat_completion(body: ChatCompletionResponse):
 
 
 def test_multirow_add():
-    # AAC files not accepted
-    with pytest.raises(ValidationError, match="Unsupported file type"):
-        MultiRowAddRequestWithLimit(
-            table_id="x",
-            data=[{"col1": "s3://val1.aac", "col2": "val2"}],
-        )
     body = MultiRowAddRequestWithLimit(
         table_id="x",
         data=[{"col1": "s3://val1.mp3", "col2": "val2"}],
@@ -174,12 +168,6 @@ def test_multirow_add():
 
 
 def test_multirow_update():
-    # AAC files not accepted
-    with pytest.raises(ValidationError, match="Unsupported file type"):
-        MultiRowUpdateRequestWithLimit(
-            table_id="x",
-            data={"row1": {"col1": "s3://val1.aac", "col2": "val2"}},
-        )
     body = MultiRowUpdateRequestWithLimit(
         table_id="x",
         data={"row1": {"col1": "s3://val1.mp3", "col2": "val2"}},

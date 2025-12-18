@@ -37,7 +37,14 @@ from jamaibase.utils.io import (  # noqa: F401
     read_yaml,
 )
 from owl.configs import ENV_CONFIG
-from owl.types import DBStorageUsage, TableType
+from owl.types import (
+    ALLOWED_FILE_EXTENSIONS,
+    AUDIO_FILE_EXTENSIONS,
+    DOCUMENT_FILE_EXTENSIONS,
+    IMAGE_FILE_EXTENSIONS,
+    DBStorageUsage,
+    TableType,
+)
 from owl.utils import uuid7_str
 from owl.utils.exceptions import BadInputError, ResourceNotFoundError
 
@@ -112,19 +119,30 @@ def validate_url(url: str, *, error_cls: type[Exception] = BadInputError) -> str
     except Exception as e:
         raise error_cls(f'URL "{url}" is invalid: {e}') from e
     if parsed.scheme == "s3":
+        # We only allow certain file extensions for S3 URLs
+        extension = splitext(url)[1].lower()
+        if extension not in ALLOWED_FILE_EXTENSIONS:
+            raise error_cls(
+                (
+                    "Unsupported file type. Supported formats are:\n"
+                    f"- Images: {IMAGE_FILE_EXTENSIONS}\n"
+                    f"- Audio: {AUDIO_FILE_EXTENSIONS}\n"
+                    f"- Documents: {DOCUMENT_FILE_EXTENSIONS}"
+                )
+            )
         return url
     if parsed.scheme != "https":
-        raise error_cls(f'URL "{url}" is invalid: Scheme is not "https".')
+        raise error_cls(f'URL "{url}" is invalid: Scheme is not "https"')
     if not parsed.hostname:
-        raise error_cls(f'URL "{url}" is invalid: Missing hostname.')
+        raise error_cls(f'URL "{url}" is invalid: Missing hostname')
     try:
         ips = {info[4][0] for info in socket.getaddrinfo(parsed.hostname, None)}
     except socket.gaierror as e:
         raise error_cls(f'URL "{url}" is invalid: {e}') from e
     if not ips:
-        raise error_cls(f'URL "{url}" is invalid: Failed to resolve hostname.')
+        raise error_cls(f'URL "{url}" is invalid: Failed to resolve hostname')
     if any(_is_private_or_local_ip(ip) for ip in ips):
-        raise error_cls(f'URL "{url}" is invalid: Hostname resolves to private or local IP.')
+        raise error_cls(f'URL "{url}" is invalid: Hostname resolves to private or local IP')
     return url
 
 
