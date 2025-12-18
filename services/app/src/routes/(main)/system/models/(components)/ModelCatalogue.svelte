@@ -289,7 +289,7 @@
 						</p>
 					</div>
 				{:else}
-					{#each paginatedConfigs as modelConfig (modelConfig.id)}
+					{#each paginatedConfigs as modelConfig}
 						<ModelConfigCard
 							{modelConfig}
 							{currentPage}

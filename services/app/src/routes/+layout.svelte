@@ -1,11 +1,13 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { browser } from '$app/environment';
+	import { env } from '$env/dynamic/public';
+	import { onMount, setContext, getContext } from 'svelte';
+	import { browser, dev } from '$app/environment';
 	import { beforeNavigate, afterNavigate } from '$app/navigation';
 	import NProgress from 'nprogress';
 	import '../app.css';
 	import 'overlayscrollbars/overlayscrollbars.css';
 	import '@fontsource-variable/roboto-flex';
+	import { key, Tracker, type TrackerContext } from '$lib/tracker';
 	import { showDock, showRightDock, preferredTheme, activeOrganization } from '$globalStore';
 
 	import * as Tooltip from '$lib/components/ui/tooltip';
@@ -70,6 +72,20 @@
 	// });
 
 	onMount(() => {
+		if (env.PUBLIC_OPENREPLAY_INGEST_URL && env.PUBLIC_OPENREPLAY_PROJECT_KEY) {
+			const tracker = new Tracker({
+				ingestPoint: env.PUBLIC_OPENREPLAY_INGEST_URL,
+				projectKey: env.PUBLIC_OPENREPLAY_PROJECT_KEY,
+				__DISABLE_SECURE_MODE: dev
+			});
+
+			setContext<TrackerContext>(key, {
+				getTracker: () => tracker
+			});
+
+			tracker.start();
+		}
+
 		//* Reflect changes to user preference for immediately
 		window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (event) => {
 			if ($preferredTheme == 'SYSTEM') {
@@ -80,6 +96,21 @@
 				}
 			}
 		});
+	});
+
+	$effect(() => {
+		const tracker = getContext<TrackerContext>(key)?.getTracker();
+		if (tracker) {
+			if (data.user) {
+				tracker?.setUserID(data.user.id);
+				tracker?.setMetadata('email', data.user.email);
+				tracker?.setMetadata('name', data.user.name);
+			} else {
+				tracker?.setUserID('');
+				tracker?.setMetadata('email', '');
+				tracker?.setMetadata('name', '');
+			}
+		}
 	});
 
 	// function switchTheme(e: KeyboardEvent) {

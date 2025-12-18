@@ -78,6 +78,7 @@
 		"@fontsource-variable/roboto-flex": "^5.0.15",
 		"@formkit/auto-animate": "^0.8.1",
 		"@monaco-editor/loader": "^1.5.0",
+		"@openreplay/tracker": "^17.0.1",
 		"@stripe/stripe-js": "^3.5.0",
 		"@tailwindcss/container-queries": "^0.1.1",
 		"auth0": "^4.4.0",
