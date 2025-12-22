@@ -1,16 +1,7 @@
 import { createPaginationSchema } from "@/helpers/utils";
-import { TableIdSchema, TableMetaResponseSchema, TableTypesSchema } from "@/resources/gen_tables/tables";
+import { TableMetaResponseSchema, TableTypesSchema } from "@/resources/gen_tables/tables";
+import { ProjectReadSchema } from "@/resources/projects/types";
 import { z } from "zod";
-
-const TemplateTagSchema = z.object({
-    id: z.string()
-});
-const TemplateSchema = z.object({
-    id: z.string(),
-    name: z.string(),
-    created_at: z.string(),
-    tags: z.array(TemplateTagSchema)
-});
 
 // List Templates
 export const ListTemplatesRequestSchema = z.object({
@@ -20,13 +11,13 @@ export const ListTemplatesRequestSchema = z.object({
     order_ascending: z.boolean().optional(),
     search_query: z.string().optional()
 });
-export const ListTemplatesResponseSchema = createPaginationSchema(TemplateSchema);
+export const ListTemplatesResponseSchema = createPaginationSchema(ProjectReadSchema);
 
 // Get Template
 export const GetTemplateRequestSchema = z.object({
     template_id: z.string()
 });
-export const GetTemplateResponseSchema = TemplateSchema;
+export const GetTemplateResponseSchema = ProjectReadSchema;
 
 // List Table
 export const ListTablesRequestSchema = z.object({
@@ -46,7 +37,7 @@ export const ListTablesResponseSchema = createPaginationSchema(TableMetaResponse
 export const GetTableRequestSchema = z.object({
     template_id: z.string(),
     table_type: TableTypesSchema,
-    table_id: TableIdSchema
+    table_id: z.string()
 });
 export const GetTableResponseSchema = TableMetaResponseSchema;
 
@@ -54,13 +45,14 @@ export const GetTableResponseSchema = TableMetaResponseSchema;
 export const ListTableRowsRequestSchema = z.object({
     template_id: z.string(),
     table_type: z.string(),
-    table_id: TableIdSchema,
-    starting_after: z.string().nullable().optional(),
+    table_id: z.string(),
     offset: z.number().int().min(0).default(0),
     limit: z.number().int().min(1).max(100).default(100),
-    order_by: z.string().default("updated_at"),
+    order_by: z.string().default("ID"),
     order_ascending: z.boolean().default(true),
-    parent_id: z.string().nullable().optional(),
+    columns: z.array(z.string()).optional(),
+    search_query: z.string().optional(),
+    search_columns: z.array(z.string()).optional(),
     float_decimals: z.number().int().min(0).default(0),
     vec_decimals: z.number().int().min(0).default(0)
 });

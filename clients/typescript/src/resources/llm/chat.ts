@@ -69,6 +69,12 @@ export const ChatRequestSchema = z.object({
     user: z.string().default("")
 });
 
+// Delta schema for streaming responses - same as ChatEntry but with all fields optional
+export const ChatCompletionDeltaSchema = ChatEntrySchema.partial().extend({
+    role: ChatRoleSchema.optional().default("assistant"),
+    content: z.union([z.string(), z.array(z.record(z.union([z.string(), z.record(z.string())])))]).nullable().optional()
+});
+
 export const ChatCompletionChoiceSchema = z.object({
     message: ChatEntrySchema,
     index: z.number(),
@@ -76,10 +82,10 @@ export const ChatCompletionChoiceSchema = z.object({
 });
 
 export const ChatCompletionChoiceDeltaSchema = z.object({
-    message: ChatEntrySchema,
+    message: ChatEntrySchema.nullable().optional(),
     index: z.number(),
-    finish_reason: z.string().nullable(),
-    delta: ChatEntrySchema.nullable()
+    finish_reason: z.string().nullable().optional(),
+    delta: ChatCompletionDeltaSchema.nullable().optional()
 });
 
 export const ChunkSchema = z.object({
@@ -132,6 +138,7 @@ export type ChatCompletionUsage = z.infer<typeof ChatCompletionUsageSchema>;
 export type ChatRequest = z.input<typeof ChatRequestSchema>;
 export type Chunk = z.infer<typeof ChunkSchema>;
 export type References = z.infer<typeof ReferencesSchema>;
+export type ChatCompletionDelta = z.infer<typeof ChatCompletionDeltaSchema>;
 export type ChatCompletionChoice = z.infer<typeof ChatCompletionChoiceSchema>;
 export type ChatCompletionChoiceDelta = z.infer<typeof ChatCompletionChoiceDeltaSchema>;
 export type ChatCompletionChunk = z.infer<typeof ChatCompletionChunkSchema>;

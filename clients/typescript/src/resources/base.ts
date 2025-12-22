@@ -20,12 +20,14 @@ type ConfigWithBaseURL = BaseConfig & {
     baseURL: string;
     token?: string;
     projectId?: string;
+    userId?: string;
 };
 
 type ConfigWithoutBaseURL = BaseConfig & {
     baseURL?: string;
     token: string;
     projectId: string;
+    userId?: string;
 };
 
 export type TConfig = ConfigWithBaseURL | ConfigWithoutBaseURL;
@@ -45,7 +47,7 @@ export abstract class Base {
      * @param {AxiosInstance} [httpClient] Axios instance for making HTTP requests. If not provided, a default instance will be created.
      * @param {number} [timeout] Timeout (ms) for the requests. Default value is none.
      */
-    constructor({ baseURL, token, projectId, maxRetries = 0, httpClient, timeout, dangerouslyAllowBrowser = false }: TConfig) {
+    constructor({ baseURL, token, projectId, userId, maxRetries = 0, httpClient, timeout, dangerouslyAllowBrowser = false }: TConfig) {
         this.maxRetries = maxRetries;
         this.httpClient = httpClient || axios.create({});
         this.timeout = timeout;
@@ -56,7 +58,7 @@ export abstract class Base {
             );
         }
 
-        // Setting up the interceptor
+        // Setting up the request interceptor
         this.httpClient.interceptors.request.use(
             async (config) => {
                 const userAgent = await this.generateUserAgent();
@@ -70,6 +72,64 @@ export abstract class Base {
             }
         );
 
+        // Setting up the response interceptor for better error messages
+        this.httpClient.interceptors.response.use(
+            (response) => response,
+            (error) => {
+                if (error.response) {
+                    // The request was made and the server responded with a status code
+                    // that falls out of the range of 2xx
+                    const { status, data, config } = error.response;
+                    const method = config?.method?.toUpperCase() || "REQUEST";
+                    const url = config?.url || "unknown";
+
+                    let errorMessage = `${method} ${url} failed with status ${status}`;
+
+                    // Add response body details if available
+                    if (data) {
+                        if (typeof data === "string") {
+                            errorMessage += `\nResponse: ${data}`;
+                        } else if (data.detail) {
+                            errorMessage += `\nDetail: ${typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)}`;
+                        } else if (data.message) {
+                            errorMessage += `\nMessage: ${typeof data.message === "string" ? data.message : JSON.stringify(data.message)}`;
+                        } else if (data.error) {
+                            errorMessage += `\nError: ${typeof data.error === "string" ? data.error : JSON.stringify(data.error)}`;
+                        } else {
+                            errorMessage += `\nResponse: ${JSON.stringify(data)}`;
+                        }
+                    }
+
+                    // Create a new error with the enhanced message
+                    const enhancedError = new Error(errorMessage);
+                    enhancedError.name = error.name;
+                    // Preserve the original error properties
+                    Object.assign(enhancedError, {
+                        response: error.response,
+                        request: error.request,
+                        config: error.config,
+                        code: error.code,
+                        status
+                    });
+
+                    return Promise.reject(enhancedError);
+                } else if (error.request) {
+                    // The request was made but no response was received
+                    const enhancedError = new Error(`No response received from server: ${error.message}`);
+                    enhancedError.name = error.name;
+                    Object.assign(enhancedError, {
+                        request: error.request,
+                        config: error.config,
+                        code: error.code
+                    });
+                    return Promise.reject(enhancedError);
+                } else {
+                    // Something happened in setting up the request that triggered an Error
+                    return Promise.reject(error);
+                }
+            }
+        );
+
         // add baseurl to axios instance
         this.httpClient.defaults.baseURL = baseURL || "https://api.jamaibase.com";
 
@@ -80,6 +140,10 @@ export abstract class Base {
 
         if (projectId) {
             this.setProjId(projectId);
+        }
+
+        if (userId) {
+            this.setUserId(userId);
         }
 
         // add timeout to client
@@ -141,11 +205,23 @@ export abstract class Base {
         let getURL = `/api/health`;
         return this.httpClient.get(getURL);
     }
+
+    protected async put(url: string, data?: any, config?: any): Promise<AxiosResponse> {
+        return this.httpClient.put(url, data, config);
+    }
+
+    protected async options(url: string, config?: any): Promise<AxiosResponse> {
+        return this.httpClient.options(url, config);
+    }
+
     protected setApiKey(token: string) {
         this.httpClient.defaults.headers.common["Authorization"] = `Bearer ${token}`;
     }
     protected setProjId(projectId: string) {
         this.httpClient.defaults.headers.common["X-PROJECT-ID"] = projectId;
+    }
+    protected setUserId(projectId: string) {
+        this.httpClient.defaults.headers.common["X-USER-ID"] = projectId;
     }
 
     protected setAuthHeader(header: string) {

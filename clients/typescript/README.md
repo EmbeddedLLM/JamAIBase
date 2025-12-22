@@ -24,6 +24,52 @@
   <img src="https://embeddedllm.github.io/jamaibase-ts-docs/JamAI_Base_Cover.png" alt="JamAI Base Cover">
 </p>
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Key Benefits](#key-benefits)
+- [Key Features](#key-features)
+- [Installation](#installation)
+- [Getting Started](#getting-started)
+  - [Cloud 🚀](#cloud-)
+  - [OSS](#oss)
+  - [Configuration Tips](#configuration-tips)
+- [Usage](#usage)
+  - [Create API Client](#create-api-client)
+  - [Types](#types)
+- [Generative Tables (Basics)](#generative-tables-basics)
+  - [Creating Tables](#creating-tables)
+  - [Adding Rows](#adding-rows)
+  - [Retrieving Rows](#retrieving-rows)
+  - [Retrieving Tables](#retrieving-tables)
+  - [Deleting Rows](#deleting-rows)
+  - [Deleting Tables](#deleting-tables)
+- [Generative Tables (Advanced)](#generative-tables-advanced)
+  - [Duplicating Tables](#duplicating-tables)
+  - [Renaming Tables](#renaming-tables)
+  - [Column Management](#column-management)
+  - [Updating Rows](#updating-rows)
+  - [Regenerating Rows](#regenerating-rows)
+  - [Hybrid Search](#hybrid-search)
+  - [Import/Export Data](#importexport-data)
+- [Retrieval Augmented Generation (RAG)](#retrieval-augmented-generation-rag)
+- [LLM Operations](#llm-operations)
+  - [Chat Completions](#chat-completions)
+  - [Embeddings](#embeddings)
+  - [Model Information](#model-information)
+- [File Management](#file-management)
+- [Organizations & Projects](#organizations--projects)
+  - [Organizations](#organizations)
+  - [Projects](#projects)
+- [Users & Authentication](#users--authentication)
+- [Secrets Management](#secrets-management)
+- [Conversations](#conversations)
+- [Framework Examples](#framework-examples)
+  - [React JS](#react-js)
+  - [Next JS](#next-js)
+  - [SvelteKit](#sveltekit)
+  - [Nuxt](#nuxt)
+
 ## Overview
 
 Welcome to JamAI Base – the real-time database that orchestrates Large Language Models (LLMs) for you. Designed to simplify AI integration, JamAI Base offers a Backend as a Service (BaaS) platform with an intuitive, spreadsheet-like interface. Focus on defining your data requirements through natural language prompts, and let us handle the complexities of RAG, LLMOps, conversation histories, and LLM orchestration.
@@ -78,7 +124,7 @@ Facilitate real-time interactions between the application frontend and the LLM b
 
 ### Knowledge Tables
 
-Act as repositories for structured data and documents, enhancing the LLM’s contextual understanding.
+Act as repositories for structured data and documents, enhancing the LLM's contextual understanding.
 
 -   **Rich Contextual Backdrop**: Provide a rich contextual backdrop for LLM operations.
 -   **Enhanced Data Retrieval**: Support other generative tables by supplying detailed, structured contextual information.
@@ -113,13 +159,116 @@ Focus on defining "what" you want to achieve rather than "how" to achieve it.
 npm install jamaibase@latest
 ```
 
+## Getting Started
+
+The recommended way of using JamAI Base is via Cloud 🚀. Did we mention that you can get free LLM tokens?
+
+### Cloud 🚀
+
+1. First, [sign up for a free account on JamAI Base Cloud!](https://cloud.jamaibase.com/)
+2. Create a project and give it any name that you want.
+3. Get your API credentials:
+   - API key can be obtained from [the "API Keys" section at cloud.jamaibase](https://cloud.jamaibase.com/organization/secrets).
+   - Project ID can be obtained by browsing to any of your projects.
+
+4. Install the package:
+
+   ```bash
+   npm install jamaibase
+   ```
+
+5. In your script, import the `JamAI` class and create an instance:
+
+   ```typescript
+   import JamAI from "jamaibase";
+
+   const jamai = new JamAI({
+     token: "your_pat",
+     projectId: "your_project_id"
+   });
+   ```
+
+### OSS
+
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/EmbeddedLLM/JamAIBase.git
+   cd JamAIBase
+   ```
+
+2. Modify the configuration to suit your needs:
+
+   - `services/api/src/owl/configs/models.json` specifies all the available models.
+   - `.env` specifies which model to run on the `infinity` service for locally-hosted embedding and reranking models.
+   - `.env` also specifies all the third party API keys to be used.
+
+   For OSS mode, in order for you to see and use other third party models such as OpenAI, you need to provide your own OpenAI API key in `.env` file (refer to `.env.example` file).
+
+3. Launch the Docker containers by running one of these:
+
+   ```bash
+   # CPU-only
+   docker compose -f docker/compose.cpu.yml up --quiet-pull -d
+
+   # With NVIDIA GPU
+   docker compose -f docker/compose.nvidia.yml up --quiet-pull -d
+   ```
+
+   - By default, frontend and backend are accessible at ports 4000 and 6969.
+   - You can change the ports exposed to host by setting env var in `.env` or shell like so `API_PORT=6968 FRONTEND_PORT=4001 docker compose -f docker/compose.cpu.yml up --quiet-pull -d`
+
+4. Try the command below in your terminal, or open your browser and go to `localhost:4000`.
+
+   ```bash
+   curl localhost:6969/api/v1/models
+   ```
+
+5. To use the TypeScript SDK, install `jamaibase`:
+
+   ```bash
+   npm install jamaibase
+   ```
+
+6. In your script, import the `JamAI` class and create an instance:
+
+   - `baseURL` should point to the exposed port of `owl` service.
+
+   ```typescript
+   import JamAI from "jamaibase";
+
+   const jamai = new JamAI({
+     baseURL: "http://localhost:6969/api"
+   });
+   ```
+
+### Configuration Tips
+
+`projectId`, `token` (API key), and `baseURL` can be configured in multiple ways (from highest priority to least priority):
+
+- Passing it as arguments when creating the client instance
+- Specifying it as environment variable named `JAMAI_PROJECT_ID`, `JAMAI_API_KEY` and `JAMAI_API_BASE` respectively
+- Specifying it in `.env` file as `JAMAI_PROJECT_ID`, `JAMAI_API_KEY` and `JAMAI_API_BASE` respectively
+
+```typescript
+import JamAI from "jamaibase";
+
+// Cloud
+const client = new JamAI({ projectId: "...", token: "..." });
+console.log(client.baseURL);
+
+// OSS
+const client = new JamAI({ baseURL: "..." });
+console.log(client.baseURL);
+```
+
 ## Usage
 
 ### Create API Client
 
 Create an API client with baseURL:
 
-```javascript
+```typescript
 import JamAI from "jamaibase";
 
 const jamai = new JamAI({ baseURL: "http://localhost:5173/" });
@@ -127,7 +276,7 @@ const jamai = new JamAI({ baseURL: "http://localhost:5173/" });
 
 Create an API client with api key and project id:
 
-```javascript
+```typescript
 import JamAI from "jamaibase";
 
 const jamai = new JamAI({ token: "jamai_pat", projectId: "proj_id" });
@@ -135,7 +284,7 @@ const jamai = new JamAI({ token: "jamai_pat", projectId: "proj_id" });
 
 Create an API client with custom HTTP client:
 
-```javascript
+```typescript
 import axios from "axios";
 import JamAI from "jamaibase";
 
@@ -157,10 +306,9 @@ const jamai = new JamAI({
 });
 ```
 
+Create an API client with maxRetry and timeout:
 
-Create an API client with maxretry and timeout:
-
-```javascript
+```typescript
 import JamAI from "jamaibase";
 
 const jamai = new JamAI({
@@ -170,9 +318,9 @@ const jamai = new JamAI({
 });
 ```
 
-Configure httpAgent/ httpsAgent:
+Configure httpAgent/httpsAgent:
 
-```javascript
+```typescript
 import JamAI from "jamaibase";
 
 const jamai = new JamAI({
@@ -190,88 +338,1243 @@ jamai.setHttpagentConfig({
 
 Types can be imported from resources:
 
-```javascript
+```typescript
 import { ChatRequest } from "jamaibase/resources/llm/chat";
 
 let response: ChatRequest;
 ```
 
-### Use client object to call the methods
+## Generative Tables (Basics)
 
-Example of adding a row to action table:
+There are 3 types of Generative Tables:
 
-```javascript
-try {
-    const response = await jamai.table.addRow({
-        table_type: "action",
-        table_id: "workout-suggestion",
-        data: [
-            {
-                age: 30,
-                height_in_centimeters: 170,
-                weight_in_kg: 60
+- **Action**: For chaining LLM reasoning steps
+- **Knowledge**: For embedding external knowledge and files to power Retrieval Augmented Generation (RAG)
+- **Chat**: For LLM agents with LLM chaining capabilities
+
+We will guide you through the steps of leveraging Generative Tables to unleash the full potential of LLMs.
+
+### Creating Tables
+
+Let's start with creating simple tables. Create a table by defining a schema.
+
+> [!NOTE]
+> When it comes to table names, there are some restrictions:
+>
+> - Must have at least 1 character and up to 100 characters
+> - Must start and end with an alphabet or number
+> - Middle characters can contain alphabets, numbers, underscores `_`, dashes `-`, dots `.`
+>
+> Column names have almost the same restrictions, except that:
+>
+> - Spaces ` ` are accepted
+> - Dots `.` are not accepted
+> - Cannot be called "ID" or "Updated at" (case-insensitive)
+
+```typescript
+// Create an Action Table
+const actionTable = await jamai.table.createActionTable({
+    id: "action-simple",
+    cols: [
+        { id: "image", dtype: "image" },  // Image input
+        { id: "length", dtype: "int" },  // Integer input
+        { id: "question", dtype: "str" },
+        {
+            id: "answer",
+            dtype: "str",
+            gen_config: {
+                model: "openai/gpt-4o-mini",  // Leave this out to use a default model
+                system_prompt: "You are a concise assistant.",
+                prompt: "Image: ${image}\n\nQuestion: ${question}\n\nAnswer the question in ${length} words.",
+                temperature: 0.001,
+                top_p: 0.001,
+                max_tokens: 100
             }
-        ],
-        reindex: null,
-        concurrent: false
-    });
-    console.log("response: ", response);
-} catch (err) {
-    console.error(err.message);
+        }
+    ]
+});
+console.log(actionTable);
+
+// Create a Knowledge Table
+const knowledgeTable = await jamai.table.createKnowledgeTable({
+    id: "knowledge-simple",
+    cols: [],
+    embedding_model: "ellm/BAAI/bge-m3"
+});
+console.log(knowledgeTable);
+
+// Create a Chat Table
+const chatTable = await jamai.table.createChatTable({
+    id: "chat-simple",
+    cols: [
+        { id: "User", dtype: "str" },
+        {
+            id: "AI",
+            dtype: "str",
+            gen_config: {
+                model: "openai/gpt-4o-mini",  // Leave this out to use a default model
+                system_prompt: "You are a pirate.",
+                temperature: 0.001,
+                top_p: 0.001,
+                max_tokens: 100
+            }
+        }
+    ]
+});
+console.log(chatTable);
+```
+
+### Adding Rows
+
+Now that we have our tables, we can start adding rows to them and receive the LLM responses.
+
+First let's try adding to Action Table:
+
+```typescript
+const textA = 'Summarize this: "Arrival" is a 2016 science fiction drama film directed by Denis Villeneuve and adapted by Eric Heisserer.';
+const textB = 'Summarize this: "Dune: Part Two is a 2024 epic science fiction film directed by Denis Villeneuve."';
+const textC = "Identify the subject of the image.";
+
+// --- Action Table --- //
+// Streaming
+const streamCompletion = await jamai.table.addRowStream({
+    table_type: "action",
+    table_id: "action-simple",
+    data: [{ length: 5, question: textA }]
+});
+
+const reader = streamCompletion.getReader();
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+        console.log(value?.choices[0]?.message.content);
+    }
+}
+
+// Non-streaming
+const completion = await jamai.table.addRow({
+    table_type: "action",
+    table_id: "action-simple",
+    data: [{ length: 5, question: textB }],
+    concurrent: false
+});
+console.log(completion.rows[0].columns["answer"].text);
+
+// Streaming (with image input)
+const uploadResponse = await jamai.file.uploadFile({
+    file_path: "path/to/rabbit.jpeg"
+});
+const streamWithImage = await jamai.table.addRowStream({
+    table_type: "action",
+    table_id: "action-simple",
+    data: [{ image: uploadResponse.uri, length: 5, question: textC }]
+});
+
+const imageReader = streamWithImage.getReader();
+while (true) {
+    const { done, value } = await imageReader.read();
+    if (done) break;
+    console.log(value?.choices[0]?.message.content);
 }
 ```
 
-Example of adding row with streaming output
+Next let's try adding to Chat Table:
 
-```javascript
-try {
-    const stream = await jamai.table.addRowStream({
-        table_type: "action",
-        table_id: "action-table-example-1",
-        data: [
-            {
-                Name: "Albert Eistein"
-            }
-        ],
-        reindex: null,
-        concurrent: false
-    });
+```typescript
+// --- Chat Table --- //
+// Streaming
+const chatStream = await jamai.table.addRowStream({
+    table_type: "chat",
+    table_id: "chat-simple",
+    data: [{ User: "Who directed Arrival (2016)?" }]
+});
 
-    const reader = stream.getReader();
+const chatReader = chatStream.getReader();
+while (true) {
+    const { done, value } = await chatReader.read();
+    if (done) break;
+    console.log(value?.choices[0]?.message.content);
+}
 
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-            console.log("Done");
-            break;
-        }
-        console.log(value);
-        if (value) {
-            console.log(value?.choices[0]?.message.content);
-        }
-    }
-} catch (err) {}
+// Non-streaming
+const chatCompletion = await jamai.table.addRow({
+    table_type: "chat",
+    table_id: "chat-simple",
+    data: [{ User: "Who directed Dune (2024)?" }],
+    concurrent: false
+});
+console.log(chatCompletion.rows[0].columns["AI"].text);
 ```
 
-## Constructor Parameters for APIClient Configuration
+Finally we can add rows to Knowledge Table too:
 
-| Parameter | Type | Description | Default Value | Required / Optional |
-| --- | --- | --- | --- | --- |
-| `baseURL` | `string` | Base URL for the API requests. | `https://api.jamaibase.com` | optional |
-| `maxRetries` | `number` | Maximum number of retries for failed requests. | 0 | Optional |
-| `httpClient` | `AxiosInstance` | Axios instance for making HTTP requests. | `AxiosInstance` | Optional |
-| `timeout` | `number \| undefined` | Timeout for the requests. | `undefined` | Optional |
-| `apiKey` | `string \| undefined` | apiKey. | `undefined` | Rqruired if accessing cloud |
-| `projectId` | `string \| undefined` | projectId. | `undefined` | Optional if accessing cloud |
-| `dangerouslyAllowBrowser` | `boolean` | Allowing the insecure usage of JamAI API Key on client side. | `false` | Optional if accessing cloud |
+> [!TIP]
+> Uploading files is the main way to add data into a Knowledge Table. Having said so, adding rows works too!
 
-## Quick Start Guide
+```typescript
+// --- Knowledge Table --- //
+// Streaming
+const ktStream = await jamai.table.addRowStream({
+    table_type: "knowledge",
+    table_id: "knowledge-simple",
+    data: [{ Title: "Arrival (2016)", Text: textA }]
+});
+
+const ktReader = ktStream.getReader();
+while (true) {
+    const { done } = await ktReader.read();
+    if (done) break;
+}
+
+// Non-streaming
+const ktCompletion = await jamai.table.addRow({
+    table_type: "knowledge",
+    table_id: "knowledge-simple",
+    data: [{ Title: "Dune (2024)", Text: textB }],
+    concurrent: false
+});
+```
+
+### Retrieving Rows
+
+We can retrieve table rows by listing the rows or by fetching a specific row.
+
+```typescript
+// --- List rows -- //
+// Action
+const actionRows = await jamai.table.listRows({
+    table_type: "action",
+    table_id: "action-simple"
+});
+// Paginated items
+for (const row of actionRows.items) {
+    console.log(row["ID"], row["answer"]["value"]);
+}
+
+// Knowledge
+const ktRows = await jamai.table.listRows({
+    table_type: "knowledge",
+    table_id: "knowledge-simple"
+});
+for (const row of ktRows.items) {
+    console.log(row["ID"], row["Title"]["value"]);
+    console.log(row["Title Embed"]["value"].slice(0, 3));  // Knowledge Table has embeddings
+}
+
+// Chat
+const chatRows = await jamai.table.listRows({
+    table_type: "chat",
+    table_id: "chat-simple"
+});
+for (const row of chatRows.items) {
+    console.log(row["ID"], row["User"]["value"], row["AI"]["value"]);
+}
+
+// --- Fetch a specific row -- //
+const row = await jamai.table.getRow({
+    table_type: "chat",
+    table_id: "chat-simple",
+    row_id: chatRows.items[0]["ID"]
+});
+console.log(row["ID"], row["AI"]["value"]);
+
+// --- Filter using a search term -- //
+const filteredRows = await jamai.table.listRows({
+    table_type: "action",
+    table_id: "action-simple",
+    search_query: "Dune"
+});
+for (const row of filteredRows.items) {
+    console.log(row["ID"], row["answer"]["value"]);
+}
+
+// --- Only fetch specific columns -- //
+const specificCols = await jamai.table.listRows({
+    table_type: "action",
+    table_id: "action-simple",
+    columns: ["length"]
+});
+for (const row of specificCols.items) {
+    // "ID" and "Updated at" will always be fetched
+    console.log(row["ID"], row["length"]["value"]);
+}
+```
+
+### Retrieving Tables
+
+We can retrieve tables by listing the tables or by fetching a specific table.
+
+```typescript
+// --- List tables -- //
+// Action
+const actionTables = await jamai.table.listTables({
+    table_type: "action",
+    count_rows: true
+});
+// Paginated items
+for (const table of actionTables.items) {
+    console.log(`${table.id}, ${table.num_rows}`);
+}
+
+// Knowledge
+const ktTables = await jamai.table.listTables({
+    table_type: "knowledge"
+});
+for (const table of ktTables.items) {
+    console.log(`${table.id}, ${table.num_rows}`);
+}
+
+// Chat
+const chatTables = await jamai.table.listTables({
+    table_type: "chat"
+});
+for (const table of chatTables.items) {
+    console.log(`${table.id}, ${table.num_rows}`);
+}
+
+// --- Fetch a specific table -- //
+const specificTable = await jamai.table.getTable({
+    table_type: "action",
+    table_id: "action-simple"
+});
+console.log(`${specificTable.id}, ${specificTable.num_rows}`);
+```
+
+### Deleting Rows
+
+Now that you know how to add rows into tables, let's see how to delete them instead.
+
+```typescript
+// Get all rows
+const rows = await jamai.table.listRows({
+    table_type: "action",
+    table_id: "action-simple"
+});
+
+// Delete all rows
+const response = await jamai.table.deleteRows({
+    table_type: "action",
+    table_id: "action-simple",
+    row_ids: rows.items.map(row => row["ID"])
+});
+console.log(response.ok); // true
+
+// Assert that the table is empty
+const emptyRows = await jamai.table.listRows({
+    table_type: "action",
+    table_id: "action-simple"
+});
+console.log(emptyRows.items.length); // 0
+```
+
+### Deleting Tables
+
+Let's see how to delete tables.
+
+> [!TIP]
+> Deletion will return "OK" even if the table does not exist.
+
+```typescript
+// Delete tables
+let response = await jamai.table.deleteTable({
+    table_type: "action",
+    table_id: "action-simple"
+});
+console.log(response.ok); // true
+
+response = await jamai.table.deleteTable({
+    table_type: "knowledge",
+    table_id: "knowledge-simple"
+});
+console.log(response.ok); // true
+
+response = await jamai.table.deleteTable({
+    table_type: "chat",
+    table_id: "chat-simple"
+});
+console.log(response.ok); // true
+```
+
+We can combine this with the table list method to delete all tables without having to specify their names:
+
+```typescript
+const batchSize = 100;
+const tableTypes = ["action", "knowledge", "chat"];
+
+for (const tableType of tableTypes) {
+    let offset = 0;
+    let total = 1;
+
+    while (offset < total) {
+        const tables = await jamai.table.listTables({
+            table_type: tableType,
+            offset: offset,
+            limit: batchSize
+        });
+
+        for (const table of tables.items) {
+            await jamai.table.deleteTable({
+                table_type: tableType,
+                table_id: table.id
+            });
+        }
+
+        total = tables.total;
+        offset += batchSize;
+    }
+}
+```
+
+## Generative Tables (Advanced)
+
+### Duplicating Tables
+
+We can create copies of tables under the same project. By default, the method copies over both table schema and its data, but we can choose to exclude data when duplicating.
+
+```typescript
+// By default, both schema (like generation config) and data are included
+const duplicateTable = await jamai.table.duplicateTable({
+    table_type: "action",
+    table_id_src: "action-simple",
+    table_id_dst: "action-simple-copy",
+    include_data: true
+});
+console.log(duplicateTable.id); // "action-simple-copy"
+
+const rows = await jamai.table.listRows({
+    table_type: "action",
+    table_id: "action-simple-copy"
+});
+console.log(rows.total > 0); // true
+
+// We can also duplicate a table without its data
+const schemaOnlyTable = await jamai.table.duplicateTable({
+    table_type: "action",
+    table_id_src: "action-simple",
+    table_id_dst: "action-simple-schema-only",
+    include_data: false
+});
+console.log(schemaOnlyTable.id); // "action-simple-schema-only"
+
+const emptyRows = await jamai.table.listRows({
+    table_type: "action",
+    table_id: "action-simple-schema-only"
+});
+console.log(emptyRows.total); // 0
+```
+
+### Renaming Tables
+
+Tables can be renamed while preserving all their data and configuration.
+
+```typescript
+// Rename an Action Table
+const renamedTable = await jamai.table.renameTable({
+    table_type: "action",
+    table_id_src: "action-simple",
+    table_id_dst: "action-renamed"
+});
+console.log(renamedTable.id); // "action-renamed"
+
+// Rename a Knowledge Table
+const renamedKT = await jamai.table.renameTable({
+    table_type: "knowledge",
+    table_id_src: "knowledge-simple",
+    table_id_dst: "knowledge-renamed"
+});
+console.log(renamedKT.id); // "knowledge-renamed"
+```
+
+### Column Management
+
+You can add, rename, reorder, and drop columns from tables.
+
+```typescript
+// Add columns to Action Table
+const updatedTable = await jamai.table.addActionColumns({
+    id: "action-simple",
+    cols: [
+        { id: "new_column", dtype: "str" }
+    ]
+});
+
+// Rename columns
+const renamedCols = await jamai.table.renameColumns({
+    table_type: "action",
+    table_id: "action-simple",
+    column_map: {
+        question: "renamed_question"
+    }
+});
+
+// Reorder columns
+const reorderedTable = await jamai.table.reorderColumns({
+    table_type: "action",
+    table_id: "action-simple",
+    column_names: ["renamed_question", "answer", "new_column"]
+});
+
+// Drop columns
+const reducedTable = await jamai.table.dropColumns({
+    table_type: "action",
+    table_id: "action-simple",
+    column_names: ["new_column"]
+});
+
+// Update generation config
+const updatedGenConfig = await jamai.table.updateGenConfig({
+    table_type: "action",
+    table_id: "action-simple",
+    column_map: {
+        answer: {
+            model: "openai/gpt-4o-mini",
+            system_prompt: "Updated system prompt"
+        }
+    }
+});
+```
+
+### Updating Rows
+
+Update existing row data in tables.
+
+```typescript
+// Add some rows first
+const addedRows = await jamai.table.addRow({
+    table_type: "action",
+    table_id: "action-simple",
+    data: [
+        { question: "What is penguin?" },
+        { question: "What is help?" }
+    ],
+    concurrent: true
+});
+
+// List rows to get row IDs
+const rows = await jamai.table.listRows({
+    table_type: "action",
+    table_id: "action-simple",
+    limit: 2
+});
+
+const rowId = rows.items[0]["ID"];
+
+// Update a specific row
+const updateResponse = await jamai.table.updateRows({
+    table_type: "action",
+    table_id: "action-simple",
+    data: {
+        [rowId]: {
+            question: "How to update rows on jamaibase?",
+            answer: "References at https://embeddedllm.github.io/jamaibase-ts-docs/"
+        }
+    }
+});
+console.log(updateResponse.ok); // true
+```
+
+### Regenerating Rows
+
+Regenerate LLM outputs for existing rows.
+
+```typescript
+// Add rows
+await jamai.table.addRow({
+    table_type: "action",
+    table_id: "action-simple",
+    data: [
+        { question: "What is penguin?" },
+        { question: "What is help?" }
+    ],
+    concurrent: true
+});
+
+// List rows to get row IDs
+const rows = await jamai.table.listRows({
+    table_type: "action",
+    table_id: "action-simple"
+});
+
+const rowIds = rows.items.map(item => item["ID"]);
+
+// Regenerate rows (non-streaming)
+const regenResponse = await jamai.table.regenRow({
+    table_type: "action",
+    table_id: "action-simple",
+    row_ids: rowIds,
+    concurrent: true
+});
+
+// Regenerate rows (streaming)
+const regenStream = await jamai.table.regenRowStream({
+    table_type: "action",
+    table_id: "action-simple",
+    row_ids: rowIds,
+    concurrent: true
+});
+
+const regenReader = regenStream.getReader();
+while (true) {
+    const { done, value } = await regenReader.read();
+    if (done) break;
+    console.log(value);
+}
+```
+
+### Hybrid Search
+
+Perform hybrid search combining keyword-based and vector search.
+
+```typescript
+// Add rows with searchable content
+await jamai.table.addRow({
+    table_type: "action",
+    table_id: "action-simple",
+    data: [
+        { question: "What is penguin?" },
+        { question: "What is help?" },
+        { question: "What is kong?" }
+    ],
+    concurrent: true
+});
+
+// Perform hybrid search
+const searchResults = await jamai.table.hybridSearch({
+    table_type: "action",
+    table_id: "action-simple",
+    query: "kong",
+    limit: 3,
+    metric: "dot",
+    reranking_model: null
+});
+
+for (const result of searchResults.items) {
+    console.log(result);
+}
+```
+
+### Import/Export Data
+
+Import and export table data in CSV or TSV format.
+
+```typescript
+// Export table data to CSV
+const csvData = await jamai.table.exportTableData({
+    table_type: "action",
+    table_id: "action-simple"
+});
+// csvData is a Uint8Array containing CSV data
+
+// Export table data to TSV
+const tsvData = await jamai.table.exportTableData({
+    table_type: "action",
+    table_id: "action-simple",
+    delimiter: "\t"
+});
+
+// Import table data from CSV file
+const importResponse = await jamai.table.importTableData({
+    file_path: "/path/to/data.csv",
+    table_id: "action-simple",
+    table_type: "action"
+});
+console.log(importResponse.rows.length);
+
+// Import table data with streaming
+const importStream = await jamai.table.importTableDataStream({
+    file_path: "/path/to/data.csv",
+    table_id: "action-simple",
+    table_type: "action"
+});
+
+const importReader = importStream.getReader();
+while (true) {
+    const { done, value } = await importReader.read();
+    if (done) break;
+    console.log(value);
+}
+```
+
+## Retrieval Augmented Generation (RAG)
+
+We can upload files to Knowledge Table for Retrieval Augmented Generation (RAG). This allows LLM to generate answers that are grounded in the provided context and data.
+
+```typescript
+import { File } from "formdata-node";
+
+// Create a Knowledge Table
+const ktTable = await jamai.table.createKnowledgeTable({
+    id: "knowledge-rag",
+    cols: [],
+    embedding_model: "ellm/BAAI/bge-m3"
+});
+
+// Upload a file to the Knowledge Table
+const file = new File(["I bought a Mofusand book in 2024.\n\nI went to Italy in 2018."], "text.txt", {
+    type: "text/plain"
+});
+
+const embedResponse = await jamai.table.embedFile({
+    file: file,
+    table_id: "knowledge-rag"
+});
+console.log(embedResponse.ok); // true
+
+// Create an Action Table with RAG
+const ragTable = await jamai.table.createActionTable({
+    id: "action-rag",
+    cols: [
+        { id: "question", dtype: "str" },
+        {
+            id: "answer",
+            dtype: "str",
+            gen_config: {
+                model: "openai/gpt-4o-mini",
+                system_prompt: "You are a concise assistant.",
+                prompt: "${question}",
+                rag_params: {
+                    table_id: "knowledge-rag",
+                    k: 2
+                },
+                temperature: 0.001,
+                top_p: 0.001,
+                max_tokens: 100
+            }
+        }
+    ]
+});
+
+// Ask a question with streaming
+const ragStream = await jamai.table.addRowStream({
+    table_type: "action",
+    table_id: "action-rag",
+    data: [{ question: "Where did I go in 2018?" }]
+});
+
+const ragReader = ragStream.getReader();
+while (true) {
+    const { done, value } = await ragReader.read();
+    if (done) break;
+    console.log(value?.choices[0]?.message.content);
+}
+```
+
+## LLM Operations
+
+### Chat Completions
+
+Generate chat completions using various models. Supports streaming and non-streaming modes.
+
+```typescript
+// Streaming
+const streamRequest = {
+    model: "openai/gpt-4o-mini",
+    messages: [
+        { role: "system", content: "You are a concise assistant." },
+        { role: "user", content: "What is a llama?" }
+    ],
+    temperature: 0.001,
+    top_p: 0.001,
+    max_tokens: 10
+};
+
+const completionStream = await jamai.llm.generateChatCompletionsStream(streamRequest);
+const llmReader = completionStream.getReader();
+while (true) {
+    const { done, value } = await llmReader.read();
+    if (done) break;
+    console.log(value?.choices[0]?.delta?.content);
+}
+
+// Non-streaming
+const request = {
+    model: "openai/gpt-4o-mini",
+    messages: [
+        { role: "system", content: "You are a concise assistant." },
+        { role: "user", content: "What is a llama?" }
+    ],
+    temperature: 0.001,
+    top_p: 0.001,
+    max_tokens: 10
+};
+
+const completion = await jamai.llm.generateChatCompletions(request);
+console.log(completion.choices[0].message.content);
+```
+
+### Embeddings
+
+Generate embeddings for given input text.
+
+```typescript
+const texts = ["What is love?", "What is a llama?"];
+
+const embeddings = await jamai.llm.generateEmbeddings({
+    model: "ellm/BAAI/bge-m3",
+    type: "document",
+    input: texts
+});
+
+// Inspect one of the embeddings
+console.log(embeddings.data[0].embedding.slice(0, 3));
+
+// Print the text and its embedding
+for (let i = 0; i < texts.length; i++) {
+    console.log(texts[i], embeddings.data[i].embedding.slice(0, 3));
+}
+```
+
+### Model Information
+
+Retrieve information about available models.
+
+```typescript
+// Get all model info
+const models = await jamai.llm.modelInfo();
+const model = models.data[0];
+console.log(`Model: ${model.id}  Context length: ${model.context_length}`);
+
+// Get specific model info
+const specificModel = await jamai.llm.modelInfo({
+    model: "openai/gpt-4o"
+});
+console.log(specificModel.data[0]);
+
+// Filter based on capability: "chat", "embed", "rerank", "image"
+const chatModels = await jamai.llm.modelInfo({
+    capabilities: ["chat"]
+});
+for (const model of chatModels.data) {
+    console.log(model);
+}
+
+const embedModels = await jamai.llm.modelInfo({
+    capabilities: ["embed"]
+});
+for (const model of embedModels.data) {
+    console.log(model);
+}
+
+const rerankModels = await jamai.llm.modelInfo({
+    capabilities: ["rerank"]
+});
+for (const model of rerankModels.data) {
+    console.log(model);
+}
+
+// Get model IDs/names
+const modelNames = await jamai.llm.modelNames();
+console.log(modelNames);
+
+// Model IDs with the preferred model at the top if available
+const preferredModels = await jamai.llm.modelNames({
+    prefer: "openai/gpt-4o"
+});
+console.log(preferredModels[0]);
+
+// Filter based on capability
+const chatModelNames = await jamai.llm.modelNames({
+    capabilities: ["chat"]
+});
+console.log(chatModelNames);
+```
+
+## File Management
+
+Upload and manage files for use in tables and LLM inputs.
+
+```typescript
+// Upload a file by file path
+const uploadResponse = await jamai.file.uploadFile({
+    file_path: "/path/to/image.png"
+});
+console.log(uploadResponse.uri);
+
+// Get raw URLs for uploaded files
+const rawUrls = await jamai.file.getRawUrls({
+    uris: [uploadResponse.uri]
+});
+console.log(rawUrls);
+
+// Get thumbnail URLs for uploaded images
+const thumbUrls = await jamai.file.getThumbUrls({
+    uris: [uploadResponse.uri]
+});
+console.log(thumbUrls);
+
+// Upload audio file
+const audioUpload = await jamai.file.uploadFile({
+    file_path: "/path/to/audio.mp3"
+});
+console.log(audioUpload.uri);
+```
+
+## Organizations & Projects
+
+### Organizations
+
+Manage organizations, members, and organization-level settings.
+
+```typescript
+// Create organization
+const org = await jamai.organizations.createOrganization({
+    name: "My Organization"
+});
+console.log(org.id, org.name);
+
+// List organizations
+const orgs = await jamai.organizations.listOrganizations({});
+for (const org of orgs.items) {
+    console.log(org.id, org.name);
+}
+
+// List organizations with pagination
+const paginatedOrgs = await jamai.organizations.listOrganizations({
+    limit: 10,
+    offset: 0
+});
+
+// Get specific organization
+const specificOrg = await jamai.organizations.getOrganization(org.id);
+console.log(specificOrg);
+
+// Update organization
+const updatedOrg = await jamai.organizations.updateOrganization(org.id, {
+    name: "Updated Organization Name"
+});
+console.log(updatedOrg.name);
+
+// Delete organization
+const deleteResponse = await jamai.organizations.deleteOrganization(org.id);
+console.log(deleteResponse.ok); // true
+
+// List organization members
+const members = await jamai.organizations.listMembers(org.id, {});
+for (const member of members.items) {
+    console.log(member.user_id, member.role);
+}
+
+// Get specific member
+const currentUser = await jamai.users.getUser();
+const member = await jamai.organizations.getMember(currentUser.id, org.id);
+console.log(member.role);
+
+// Get model catalogue for organization
+const catalogue = await jamai.organizations.modelCatalogue(org.id, {});
+for (const model of catalogue.items) {
+    console.log(model.id);
+}
+
+// Create organization invite
+const invite = await jamai.organizations.createInvite({
+    user_email: "user@example.com",
+    organization_id: org.id,
+    role: "MEMBER",
+    valid_days: 7
+});
+console.log(invite.id);
+
+// List organization invites
+const invites = await jamai.organizations.listInvites(org.id, {});
+for (const invite of invites.items) {
+    console.log(invite.user_email, invite.role);
+}
+
+// Revoke organization invite
+const revokeResponse = await jamai.organizations.revokeInvite(invite.id);
+console.log(revokeResponse.ok); // true
+
+// Refresh organization quota
+const refreshedOrg = await jamai.organizations.refreshQuota(org.id);
+console.log(refreshedOrg.quota_reset_at);
+```
+
+### Projects
+
+Manage projects within organizations.
+
+```typescript
+// Create project
+const project = await jamai.projects.createProject({
+    organization_id: org.id,
+    name: "My Project"
+});
+console.log(project.id, project.name);
+
+// List projects
+const projects = await jamai.projects.listProjects(org.id, {});
+for (const project of projects.items) {
+    console.log(project.id, project.name);
+}
+
+// List projects with pagination
+const paginatedProjects = await jamai.projects.listProjects(org.id, {
+    limit: 10,
+    offset: 0
+});
+
+// Get specific project
+const specificProject = await jamai.projects.getProject(project.id);
+console.log(specificProject);
+
+// Update project
+const updatedProject = await jamai.projects.updateProject(project.id, {
+    name: "Updated Project Name",
+    description: "Updated description"
+});
+console.log(updatedProject.name, updatedProject.description);
+
+// Delete project
+const deleteProjectResponse = await jamai.projects.deleteProject(project.id);
+console.log(deleteProjectResponse.ok); // true
+
+// List project members
+const projectMembers = await jamai.projects.listMembers(project.id, {});
+for (const member of projectMembers.items) {
+    console.log(member.user_id, member.role);
+}
+
+// Get specific project member
+const projectMember = await jamai.projects.getMember(currentUser.id, project.id);
+console.log(projectMember.role);
+
+// Create project invite
+const projectInvite = await jamai.projects.createInvite({
+    user_email: "user@example.com",
+    project_id: project.id,
+    role: "MEMBER",
+    valid_days: 7
+});
+console.log(projectInvite.id);
+
+// List project invites
+const projectInvites = await jamai.projects.listInvites(project.id, {});
+for (const invite of projectInvites.items) {
+    console.log(invite.user_email, invite.role);
+}
+
+// Revoke project invite
+const revokeProjectInvite = await jamai.projects.revokeInvite(projectInvite.id);
+console.log(revokeProjectInvite.ok); // true
+
+// Export project
+const exportData = await jamai.projects.exportProject(project.id);
+// exportData is a Uint8Array containing the exported project data
+console.log(exportData.length);
+```
+
+## Users & Authentication
+
+Manage user accounts and authentication.
+
+```typescript
+// Get current user
+const currentUser = await jamai.users.getUser();
+console.log(currentUser.id, currentUser.name, currentUser.email);
+
+// List users
+const users = await jamai.users.listUsers({});
+for (const user of users.items) {
+    console.log(user.id, user.name);
+}
+
+// List users with pagination
+const paginatedUsers = await jamai.users.listUsers({
+    limit: 10,
+    offset: 0
+});
+
+// Update current user
+const updatedUser = await jamai.users.updateUser({
+    name: "Updated Name"
+});
+console.log(updatedUser.name);
+
+// Create personal access token (PAT)
+const pat = await jamai.users.createPat({
+    name: "My API Token"
+});
+console.log(pat.id, pat.name);
+
+// List personal access tokens
+const pats = await jamai.users.listPats({});
+for (const token of pats.items) {
+    console.log(token.id, token.name);
+}
+
+// Update personal access token
+const updatedPat = await jamai.users.updatePat(pat.id, {
+    name: "Updated Token Name"
+});
+console.log(updatedPat.name);
+
+// Delete personal access token
+const deletePat = await jamai.users.deletePat(pat.id);
+console.log(deletePat.ok); // true
+
+// Create email verification code
+const verificationCode = await jamai.users.createEmailVerificationCode();
+console.log(verificationCode.id);
+
+// List email verification codes
+const codes = await jamai.users.listEmailVerificationCodes({});
+for (const code of codes.items) {
+    console.log(code.id);
+}
+
+// Get specific email verification code
+const specificCode = await jamai.users.getEmailVerificationCode(verificationCode.id);
+console.log(specificCode);
+
+// Revoke email verification code
+const revokeCode = await jamai.users.revokeEmailVerificationCode(verificationCode.id);
+console.log(revokeCode.ok); // true
+```
+
+## Secrets Management
+
+Manage secrets and API keys at the organization level.
+
+```typescript
+// Create secret
+const secret = await jamai.secrets.createSecret(
+    {
+        name: "MY_API_KEY",
+        value: "secret-value-here"
+    },
+    org.id
+);
+console.log(secret.name, secret.organization_id);
+
+// Create secret with allowed projects
+const secretWithProjects = await jamai.secrets.createSecret(
+    {
+        name: "PROJECT_API_KEY",
+        value: "secret-value",
+        allowed_projects: [project.id]
+    },
+    org.id
+);
+
+// List secrets
+const secrets = await jamai.secrets.listSecrets(org.id, {});
+for (const secret of secrets.items) {
+    console.log(secret.name, secret.value); // value is masked
+}
+
+// List secrets with pagination
+const paginatedSecrets = await jamai.secrets.listSecrets(org.id, {
+    limit: 10,
+    offset: 0
+});
+
+// Get specific secret
+const specificSecret = await jamai.secrets.getSecret(org.id, "MY_API_KEY");
+console.log(specificSecret.value); // value is masked
+
+// Update secret
+const updatedSecret = await jamai.secrets.updateSecret(org.id, "MY_API_KEY", {
+    value: "new-secret-value"
+});
+console.log(updatedSecret.value); // value is unmasked on update
+
+// Delete secret
+const deleteSecret = await jamai.secrets.deleteSecret(org.id, "MY_API_KEY");
+console.log(deleteSecret.ok); // true
+```
+
+> [!NOTE]
+> Secret names must:
+> - Start with a letter or underscore
+> - Contain only alphanumeric characters and underscores
+> - Be uppercase (automatically converted)
+
+## Conversations
+
+Manage conversations with AI agents (Chat Tables).
+
+```typescript
+// Create a chat table (agent) first
+const agent = await jamai.table.createChatTable({
+    id: "my-agent",
+    cols: [
+        { id: "User", dtype: "str" },
+        {
+            id: "AI",
+            dtype: "str",
+            gen_config: {
+                model: "openai/gpt-4o-mini",
+                system_prompt: "You are a helpful assistant."
+            }
+        }
+    ]
+});
+
+// Create a conversation
+const conversationStream = await jamai.conversations.createConversation({
+    agent_id: "my-agent",
+    title: "My Conversation",
+    data: {}
+});
+
+// Read the stream to get conversation ID
+const convReader = conversationStream.getReader();
+let conversationId: string | null = null;
+
+while (true) {
+    const { done, value } = await convReader.read();
+    if (done) break;
+
+    if (value && "conversation_id" in value) {
+        conversationId = value.conversation_id as string;
+        break;
+    }
+}
+
+// List conversations
+const conversations = await jamai.conversations.listConversations({
+    agent_id: "my-agent"
+});
+for (const conv of conversations.items) {
+    console.log(conv.id, conv.title);
+}
+
+// Get specific conversation
+const conversation = await jamai.conversations.getConversation(conversationId);
+console.log(conversation.title);
+
+// Update conversation
+const updatedConv = await jamai.conversations.updateConversation(conversationId, {
+    title: "Updated Title"
+});
+console.log(updatedConv.title);
+
+// Continue conversation
+const continueStream = await jamai.conversations.continueConversation({
+    conversation_id: conversationId,
+    data: { User: "Hello, how are you?" }
+});
+
+const continueReader = continueStream.getReader();
+while (true) {
+    const { done, value } = await continueReader.read();
+    if (done) break;
+    console.log(value);
+}
+
+// Delete conversation
+const deleteConv = await jamai.conversations.deleteConversation(conversationId);
+console.log(deleteConv.ok); // true
+```
+
+## Framework Examples
 
 ### React JS
 
 To integrate JamAI into a React application, follow these steps:
 
-2.  Install React and Create a New Project
+1.  Install React and Create a New Project
 
 ```bash
     npx create-react-app my-app
@@ -286,7 +1589,7 @@ To integrate JamAI into a React application, follow these steps:
 
 3. Create and Use the JamAI Client in your React component
 
-```javascript
+```typescript
 // App.tsx
 
 import { useEffect, useState } from "react";
@@ -300,7 +1603,7 @@ export default function Home() {
         const fetchData = async () => {
             const jamai = new JamAI({
                 baseURL: process.env.NEXT_PUBLIC_JAMAI_BASEURL!,
-                apiKey: process.env.JAMAI_API_KEY,
+                token: process.env.JAMAI_API_KEY,
                 projectId: process.env.JAMAI_PROJECT_ID,
             });
             try {
@@ -311,8 +1614,8 @@ export default function Home() {
             } catch (err: any) {
                 console.error(err.message);
             }
-            fetchData();
         };
+        fetchData();
     }, []);
 
     return (
@@ -328,7 +1631,6 @@ export default function Home() {
                                 <li key={column.id}>
                                     <p>ID: {column.id}</p>
                                     <p>Data Type: {column.dtype}</p>
-                                    {/* Render other properties as needed */}
                                 </li>
                             ))}
                         </ul>
@@ -338,7 +1640,6 @@ export default function Home() {
         </div>
     );
 }
-
 ```
 
 ### Next JS
@@ -372,7 +1673,7 @@ JAMAI_PROJECT_ID=your_proj_id
 
 6. Create a route handler to fetch data.
 
-```javascript
+```typescript
 // src/app/api/list-tables/route.ts
 import JamAI from "jamaibase";
 import {
@@ -383,7 +1684,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const jamai = new JamAI({
     baseURL: process.env.NEXT_PUBLIC_JAMAI_BASEURL!,
-    apiKey: process.env.JAMAI_API_KEY,
+    token: process.env.JAMAI_API_KEY,
     projectId: process.env.JAMAI_PROJECT_ID,
 });
 
@@ -404,12 +1705,11 @@ export async function GET(request: NextRequest) {
         );
     }
 }
-
 ```
 
 7. Then, in your Next.js component, you can fetch this data from the API route and render it:
 
-```javascript
+```typescript
 // src/app/page.tsx
 
 "use client";
@@ -438,6 +1738,7 @@ export default function Home() {
         };
         fetchData();
     }, [tableType]);
+
     return (
         <main className="flex min-h-screen flex-col  p-24">
             <div className="max-w-sm mx-auto my-10 p-5 bg-white rounded-lg shadow-md">
@@ -550,7 +1851,7 @@ JAMAI_API_KEY=your_jamai_sk_api_key
 JAMAI_PROJECT_ID=your_proj_id
 ```
 
-6. reate a new file src/routes/create-table/+page.svelte and add the following code:
+6. Create a new file src/routes/create-table/+page.svelte and add the following code:
 
 ```javascript
 <script>
@@ -562,13 +1863,9 @@ JAMAI_PROJECT_ID=your_proj_id
     <h1>Create Action Table</h1>
 
     {#if form?.success}
-        <!-- this message is ephemeral; it exists because the page was rendered in
-		   response to a form submission. it will vanish if the user reloads -->
         <p>Successfully created the table.</p>
     {/if}
     {#if !form?.success}
-        <!-- this message is ephemeral; it exists because the page was rendered in
-		   response to a form submission. it will vanish if the user reloads -->
         <p>Sorry, something went wrong!</p>
     {/if}
 
@@ -582,7 +1879,7 @@ JAMAI_PROJECT_ID=your_proj_id
             <input name="column_name" />
         </label>
         <label>
-            Columng Data Type
+            Column Data Type
             <select name="column_d_type">
                 <option value="str">str</option>
                 <option value="int">int</option>
@@ -595,9 +1892,9 @@ JAMAI_PROJECT_ID=your_proj_id
 </main>
 ```
 
-7. Create a [form action](https://kit.svelte.dev/docs/form-actions) in the `+page.server.ts` file in the same path to accept post data from the form.
+7. Create a form action in the `+page.server.ts` file in the same path to accept post data from the form.
 
-```javascript
+```typescript
 import JamAI from "jamaibase";
 import { fail } from "@sveltejs/kit";
 import { PUBLIC_JAMAI_URL } from "$env/static/public";
@@ -605,7 +1902,7 @@ import { JAMAI_API_KEY, JAMAI_PROJECT_ID } from "$env/static/private";
 
 const jamai = new JamAI({
     baseURL: PUBLIC_JAMAI_URL,
-    apiKey: JAMAI_API_KEY,
+    token: JAMAI_API_KEY,
     projectId: JAMAI_PROJECT_ID,
 });
 
@@ -673,7 +1970,7 @@ JAMAI_PROJECT_ID=your_proj_id
 
 5. In the `nuxt.config.ts` file, add runtimeConfig to use the environment variables:
 
-```javascript
+```typescript
 runtimeConfig: {
         JAMAI_API_KEY: process.env.JAMAI_API_KEY,
         public: {
@@ -683,7 +1980,7 @@ runtimeConfig: {
     },
 ```
 
-6. create a new file /pages/index.vue and add the following code:
+6. Create a new file /pages/index.vue and add the following code:
 
 ```html
 <template>
@@ -751,99 +2048,9 @@ runtimeConfig: {
 </script>
 ```
 
-7. Add the following CSS to make the table look better:
+7. Create a server handler at `server/api/list-tables.js` and add the following code:
 
-```css
-
-<style scoped>
-/* Main layout styling */
-main {
-    display: flex;
-    flex-direction: column;
-    min-height: 100vh;
-    padding: 24px;
-}
-
-/* Container styling */
-.container {
-    max-width: 600px;
-    margin: 40px auto;
-    padding: 20px;
-    background-color: #fff;
-    border-radius: 8px;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-}
-
-/* Label and select input styling */
-label {
-    display: block;
-    margin-bottom: 8px;
-    font-size: 14px;
-    font-weight: 500;
-    color: #333;
-}
-
-select {
-    display: block;
-    width: 100%;
-    padding: 8px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    background-color: #fff;
-    margin-bottom: 20px;
-    font-size: 14px;
-}
-
-/* Table styling */
-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 20px;
-}
-
-th,
-td {
-    padding: 12px;
-    border: 1px solid #ddd;
-    text-align: left;
-}
-
-th {
-    background-color: #f4f4f4;
-    font-weight: 600;
-}
-
-tr:nth-child(even) {
-    background-color: #f9f9f9;
-}
-
-tr:hover {
-    background-color: #f1f1f1;
-}
-
-/* Responsive styling */
-@media (max-width: 600px) {
-    .container {
-        padding: 10px;
-    }
-
-    table,
-    th,
-    td {
-        font-size: 12px;
-    }
-
-    th,
-    td {
-        padding: 8px;
-    }
-}
-</style>
-```
-
-8. create a server handler at `server/api/list-tables.js` and add the following code:
-
-```javascript
+```typescript
 import JamAI from "jamaibase";
 
 const {
@@ -853,7 +2060,7 @@ const {
 
 const jamai = new JamAI({
     baseURL: JAMAI_BASEURL,
-    apiKey: JAMAI_API_KEY,
+    token: JAMAI_API_KEY,
     projectId: JAMAI_PROJECT_ID
 });
 
@@ -870,158 +2077,20 @@ export default defineEventHandler(async (event) => {
 });
 ```
 
-9. Now, create another page (`server/api/create-table.js`) to create new action table:
-
-```html
-<template>
-    <main>
-        <h1>Create Action Table</h1>
-
-        <div v-if="form.success">
-            <p>Successfully created the table.</p>
-        </div>
-        <div v-else-if="form.error">
-            <p>Sorry, something went wrong!</p>
-        </div>
-
-        <form @submit.prevent="submitForm">
-            <label>
-                Table ID
-                <input v-model="tableId" />
-            </label>
-            <label>
-                Column Name
-                <input v-model="columnName" />
-            </label>
-            <label>
-                Column Data Type
-                <select v-model="columnDType">
-                    <option value="str">str</option>
-                    <option value="int">int</option>
-                    <option value="float">float</option>
-                    <option value="bool">bool</option>
-                </select>
-            </label>
-            <button type="submit">Create</button>
-        </form>
-    </main>
-</template>
-
-<script setup>
-    import { ref } from "vue";
-    import { useRouter } from "vue-router";
-
-    const tableId = ref("");
-    const columnName = ref("");
-    const columnDType = ref("str");
-    const form = ref({ success: false, error: false });
-    const router = useRouter();
-
-    async function submitForm() {
-        const { data } = useFetch("/api/create-table", {
-            method: "post",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: {
-                table_id: tableId.value,
-                column_name: columnName.value,
-                column_d_type: columnDType.value
-            }
-        });
-
-        if (data.value?.success) {
-            form.value.success = true;
-            form.value.error = false;
-        } else {
-            form.value.success = false;
-            form.value.error = true;
-        }
-    }
-</script>
-```
-
-10. Create a server handler at `server/api/create-table.js` to accept the request and create a new table:
-
-```javascript
-import JamAI from "jamaibase";
-
-const {
-    JAMAI_API_KEY,
-    public: { JAMAI_BASEURL, JAMAI_PROJECT_ID }
-} = useRuntimeConfig();
-
-const jamai = new JamAI({
-    baseURL: JAMAI_BASEURL,
-    apiKey: JAMAI_API_KEY,
-    projectId: JAMAI_PROJECT_ID
-});
-
-export default defineEventHandler(async (event) => {
-    const { table_id, column_name, column_d_type } = await readBody(event);
-
-    try {
-        const response = await jamai.table.createActionTable({
-            id: table_id,
-            cols: [{ id: column_name, dtype: column_d_type }]
-        });
-
-        return { success: true, data: response };
-    } catch (error) {
-        console.error("error: ", error.response);
-        return { success: false, message: "Something went wrong!" };
-    }
-});
-```
-
-11. Finally, create a defalut layout (`layouts/defalut.vue`) to navigate between pages:
-
-```html
-<template>
-    <div>
-        <nav>
-            <ul>
-                <li><NuxtLink to="/">Home</NuxtLink></li>
-                <li><NuxtLink to="/create-table">Create Table</NuxtLink></li>
-            </ul>
-        </nav>
-        <slot />
-    </div>
-</template>
-
-<script setup></script>
-
-<style scoped>
-    nav {
-        background-color: #f8f9fa;
-        padding: 10px;
-    }
-
-    nav ul {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-        display: flex;
-        gap: 20px;
-    }
-
-    nav ul li {
-        display: inline;
-    }
-
-    nav a {
-        text-decoration: none;
-        color: #007bff;
-    }
-
-    nav a:hover {
-        text-decoration: underline;
-    }
-</style>
-```
-
-12. Start the app
+8. Start the app
 
 ```bash
 npm run dev
 ```
+
+## Constructor Parameters for APIClient Configuration
+
+| Parameter | Type | Description | Default Value | Required / Optional |
+| --- | --- | --- | --- | --- |
+| `baseURL` | `string` | Base URL for the API requests. | `https://api.jamaibase.com` | optional |
+| `maxRetries` | `number` | Maximum number of retries for failed requests. | 0 | Optional |
+| `httpClient` | `AxiosInstance` | Axios instance for making HTTP requests. | `AxiosInstance` | Optional |
+| `timeout` | `number \| undefined` | Timeout for the requests. | `undefined` | Optional |
+| `token` | `string \| undefined` | API token (Personal Access Token). | `undefined` | Required if accessing cloud |
+| `projectId` | `string \| undefined` | Project ID. | `undefined` | Optional if accessing cloud |
+| `dangerouslyAllowBrowser` | `boolean` | Allowing the insecure usage of JamAI API Key on client side. | `false` | Optional if accessing cloud |

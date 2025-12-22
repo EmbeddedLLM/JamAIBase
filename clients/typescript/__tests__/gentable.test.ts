@@ -19,6 +19,7 @@ import { File } from "formdata-node";
 import { promises as fs } from "fs";
 import { Readable } from "stream";
 import { v4 as uuidv4 } from "uuid";
+import { cleanupTestEnvironment, isApiKeyError, setupTestEnvironment, TestContext } from "./testUtils";
 
 dotenv.config({
     path: "__tests__/.env"
@@ -26,138 +27,51 @@ dotenv.config({
 
 let llmModel: string;
 let embeddingModel: string;
+let embeddingModels: string[];
 
 describe("APIClient Gentable", () => {
     let client: JamAI;
+    let testContext: TestContext;
     jest.setTimeout(30000);
     jest.retryTimes(1, {
         logErrorsBeforeRetry: true
     });
 
-    let myuuid = uuidv4();
-    let projectName = `unittest-project-${myuuid}`;
-
-    let projectId: string;
-    let organizationId: string;
-    let userId = `unittest-user-${myuuid}`;
-
     beforeAll(async () => {
-        // cloud
-        if (process.env["JAMAI_API_KEY"]) {
-            // create user
-            const responseUser = await fetch(`${process.env["BASEURL"]}/api/admin/backend/v1/users`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${process.env["JAMAI_API_KEY"]}`
-                },
-                body: JSON.stringify({
-                    id: userId,
-                    name: "TS SDK Tester",
-                    description: "I am a TS SDK Tester",
-                    email: "kamil.kzs2017@gmail.com"
-                })
-            });
-            const userData = await responseUser.json();
-            userId = userData.id;
+        // Setup test environment with table cleanup and model creation
+        testContext = await setupTestEnvironment({
+            createModels: true
+        });
+        client = testContext.client;
 
-            // create organization
-            const responseOrganization = await fetch(`${process.env["BASEURL"]}/api/admin/backend/v1/organizations`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${process.env["JAMAI_API_KEY"]}`
-                },
-                body: JSON.stringify({
-                    creator_user_id: userId,
-                    tier: "free",
-                    name: "Company",
-                    active: true,
-                    credit: 30.0,
-                    credit_grant: 1.0,
-                    llm_tokens_usage_mtok: 70,
-                    db_usage_gib: 2.0,
-                    file_usage_gib: 3.0,
-                    egress_usage_gib: 4.0
-                })
-            });
-            const organizationData = await responseOrganization.json();
-
-            organizationId = organizationData?.id;
+        // Use pre-created models from testContext
+        if (testContext.modelConfigs) {
+            llmModel = testContext.modelConfigs.completionModelId;
+            embeddingModel = testContext.modelConfigs.embeddingModelId;
+            embeddingModels = [embeddingModel];
         } else {
-            // OSS
-            // fetch organization
-            const responseOrganization = await fetch(`${process.env["BASEURL"]}/api/admin/backend/v1/organizations/default`);
+            // Fallback to dynamic model lookup (shouldn't happen if createModels: true)
+            const models = await client.llm.modelInfo();
 
-            const organizationData = await responseOrganization.json();
-            organizationId = organizationData?.id;
+            const selectedLlmModel = models.data.find((model) => model.capabilities.includes("chat"));
+            llmModel = selectedLlmModel?.id ? selectedLlmModel.id : "openai/gpt-4o-mini";
+
+            // Store all embedding models
+            const allEmbeddingModels = models.data.filter((model) => model.capabilities.includes("embed"));
+            embeddingModels = allEmbeddingModels.length > 0
+                ? allEmbeddingModels.map((model) => model.id)
+                : ["ellm/sentence-transformers/all-MiniLM-L6-v2"];
+
+            // Set the first one as default
+            embeddingModel = embeddingModels[0]!;
         }
-
-        // create project
-        const responseProject = await fetch(`${process.env["BASEURL"]}/api/admin/org/v1/projects`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${process.env["JAMAI_API_KEY"]}`
-            },
-            body: JSON.stringify({
-                name: projectName,
-                organization_id: organizationId
-            })
-        });
-
-        const projectData = await responseProject.json();
-        projectId = projectData?.id;
-
-        client = new JamAI({
-            baseURL: process.env["BASEURL"]!,
-            token: process.env["JAMAI_API_KEY"]!,
-            projectId: projectId
-        });
-
-        const models = await client.llm.modelInfo();
-
-        const selectedLlmModel = models.data.find((model) => model.capabilities.includes("chat"));
-        llmModel = selectedLlmModel?.id ? selectedLlmModel.id : "openai/gpt-4o-mini";
-
-        const selectedEmbeddingModel = models.data.find((model) => model.capabilities.includes("embed"));
-        embeddingModel = selectedEmbeddingModel?.id ? selectedEmbeddingModel.id : "ellm/sentence-transformers/all-MiniLM-L6-v2";
     });
 
     afterAll(async function () {
-        // delete project
-        const responseProject = await fetch(`${process.env["BASEURL"]}/api/admin/org/v1/projects/${projectId}`, {
-            method: "DELETE",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${process.env["JAMAI_API_KEY"]}`
-            }
-        });
-        const projectData = await responseProject.json();
-
-        if (process.env["JAMAI_API_KEY"]) {
-            // delete organization
-            const responseOrganization = await fetch(`${process.env["BASEURL"]}/api/admin/backend/v1/organizations/${organizationId}`, {
-                method: "DELETE",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${process.env["JAMAI_API_KEY"]}`
-                }
-            });
-            const organizationData = await responseOrganization.json();
-            // delete user
-            const responseUser = await fetch(`${process.env["BASEURL"]}/api/admin/backend/v1/users/${userId}`, {
-                method: "DELETE",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${process.env["JAMAI_API_KEY"]}`
-                }
-            });
-            const userData = await responseUser.json();
-        }
+        await cleanupTestEnvironment(testContext);
     });
 
-    async function* _getTable(tableType: string) {
+    async function* _getTable(tableType: string, customEmbeddingModel?: string) {
         // setup
         let myuuid = uuidv4();
         let table_id = `unittest-table-${myuuid}`;
@@ -197,7 +111,7 @@ describe("APIClient Gentable", () => {
             });
         } else if (tableType === "knowledge") {
             const response = await client.table.createKnowledgeTable({
-                embedding_model: embeddingModel,
+                embedding_model: customEmbeddingModel || embeddingModel,
                 id: table_id,
                 cols: []
             });
@@ -357,101 +271,162 @@ describe("APIClient Gentable", () => {
 
             const parsedData = PageListTableMetaResponseSchema.parse(response);
             expect(parsedData).toEqual(response);
-            let tableList: string[] = [];
-            for (const item of parsedData.items) {
-                if (item.id === table_id) {
-                    tableList.push(item.id);
-                }
-            }
-            expect(tableList.length).toEqual(1);
+
+            // Verify response structure
+            expect(parsedData).toHaveProperty("items");
+            expect(Array.isArray(parsedData.items)).toBe(true);
+            expect(parsedData).toHaveProperty("offset");
+            expect(parsedData).toHaveProperty("limit");
+            expect(parsedData).toHaveProperty("total");
+
+            // Verify the created table exists in the list
+            const foundTable = parsedData.items.find((item) => item.id === table_id);
+            expect(foundTable).toBeDefined();
+            expect(foundTable?.id).toEqual(table_id);
         }
     });
 
     it("list tables - action - with limit", async () => {
         for await (const { id: table_id } of _getTable("action")) {
+            const limit = 3;
             const response = await client.table.listTables({
                 table_type: "action",
-                limit: 3
+                limit: limit
             });
 
             const parsedData = PageListTableMetaResponseSchema.parse(response);
             expect(parsedData).toEqual(response);
-            let tableList: string[] = [];
-            for (const item of parsedData.items) {
-                if (item.id === table_id) {
-                    tableList.push(item.id);
-                }
-            }
-            expect(tableList.length).toEqual(1);
+
+            // Verify limit is respected
+            expect(parsedData.items.length).toBeLessThanOrEqual(limit);
+            expect(parsedData.limit).toEqual(limit);
+
+            // Verify the created table exists somewhere in the full list
+            const allTablesResponse = await client.table.listTables({
+                table_type: "action"
+            });
+            const foundTable = allTablesResponse.items.find((item) => item.id === table_id);
+            expect(foundTable).toBeDefined();
         }
     });
 
     it("list tables - action - with offset", async () => {
         for await (const { id: table_id } of _getTable("action")) {
+            const offset = 0;
             const response = await client.table.listTables({
                 table_type: "action",
-                offset: 3
+                offset: offset
             });
 
             const parsedData = PageListTableMetaResponseSchema.parse(response);
             expect(parsedData).toEqual(response);
+
+            // Verify offset is set correctly
+            expect(parsedData.offset).toEqual(offset);
+
+            // Verify response structure
+            expect(parsedData).toHaveProperty("items");
+            expect(Array.isArray(parsedData.items)).toBe(true);
+
+            // If offset is 0, should get tables from the beginning
+            if (offset === 0) {
+                const foundTable = parsedData.items.find((item) => item.id === table_id);
+                expect(foundTable).toBeDefined();
+            }
         }
     });
 
     it("list tables - action - with limit and offset", async () => {
         for await (const { id: table_id } of _getTable("action")) {
+            const limit = 5;
+            const offset = 0;
             const response = await client.table.listTables({
                 table_type: "action",
-                limit: 3,
-                offset: 1
+                limit: limit,
+                offset: offset
             });
 
             const parsedData = PageListTableMetaResponseSchema.parse(response);
             expect(parsedData).toEqual(response);
+
+            // Verify pagination parameters
+            expect(parsedData.limit).toEqual(limit);
+            expect(parsedData.offset).toEqual(offset);
+            expect(parsedData.items.length).toBeLessThanOrEqual(limit);
+
+            // Verify total is present and reasonable
+            expect(parsedData.total).toBeGreaterThanOrEqual(parsedData.items.length);
+
+            // Get second page to verify pagination works
+            if (parsedData.total > limit) {
+                const secondPageResponse = await client.table.listTables({
+                    table_type: "action",
+                    limit: limit,
+                    offset: limit
+                });
+
+                // Verify pages don't overlap
+                const firstPageIds = parsedData.items.map((item) => item.id);
+                const secondPageIds = secondPageResponse.items.map((item) => item.id);
+                const overlap = firstPageIds.filter((id) => secondPageIds.includes(id));
+                expect(overlap.length).toEqual(0);
+            }
         }
     });
 
     it("list tables - knowledge - with limit and offset", async () => {
-        try {
-            for await (const { id: table_id } of _getTable("knowledge")) {
-                const response = await client.table.listTables({
-                    table_type: "knowledge",
-                    limit: 3,
-                    offset: 0
-                });
+        for await (const { id: table_id } of _getTable("knowledge")) {
+            const limit = 3;
+            const offset = 0;
+            const response = await client.table.listTables({
+                table_type: "knowledge",
+                limit: limit,
+                offset: offset
+            });
 
-                const parsedData = PageListTableMetaResponseSchema.parse(response);
-                expect(parsedData).toEqual(response);
-                let tableList: string[] = [];
-                for (const item of parsedData.items) {
-                    if (item.id === table_id) {
-                        tableList.push(item.id);
-                    }
-                }
-                expect(tableList.length).toEqual(1);
-            }
-        } catch (err: any) {
-            console.log("------------------------------");
-            console.log("error: ", err.response.data);
+            const parsedData = PageListTableMetaResponseSchema.parse(response);
+            expect(parsedData).toEqual(response);
+
+            // Verify pagination parameters
+            expect(parsedData.limit).toEqual(limit);
+            expect(parsedData.offset).toEqual(offset);
+            expect(parsedData.items.length).toBeLessThanOrEqual(limit);
+
+            // Verify the created table exists in the full list
+            const allTablesResponse = await client.table.listTables({
+                table_type: "knowledge"
+            });
+            const foundTable = allTablesResponse.items.find((item) => item.id === table_id);
+            expect(foundTable).toBeDefined();
+            expect(foundTable?.id).toEqual(table_id);
         }
     });
 
     it("list tables - chat - with limit and offset", async () => {
         for await (const { id: table_id } of _getTable("chat")) {
+            const limit = 5;
+            const offset = 0;
             const response = await client.table.listTables({
                 table_type: "chat",
-                limit: 1
+                limit: limit,
+                offset: offset
             });
 
             const parsedData = PageListTableMetaResponseSchema.parse(response);
             expect(parsedData).toEqual(response);
-            let tableList: string[] = [];
-            for (const item of parsedData.items) {
-                if (item.id === table_id) {
-                    tableList.push(item.id);
-                }
-            }
-            expect(tableList.length).toEqual(1);
+
+            // Verify pagination parameters
+            expect(parsedData.limit).toEqual(limit);
+            expect(parsedData.offset).toEqual(offset);
+            expect(parsedData.items.length).toBeLessThanOrEqual(limit);
+
+            // Verify the created table exists in the full list
+            const allTablesResponse = await client.table.listTables({
+                table_type: "chat"
+            });
+            const foundTable = allTablesResponse.items.find((item) => item.id === table_id);
+            expect(foundTable).toBeDefined();
+            expect(foundTable?.id).toEqual(table_id);
         }
     });
 
@@ -504,7 +479,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: true,
                 concurrent: true
             });
 
@@ -526,7 +500,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
 
@@ -548,7 +521,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: true,
                 concurrent: true
             });
 
@@ -580,7 +552,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
 
@@ -618,7 +589,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
             const listRowResponse = await client.table.listRows({
@@ -651,7 +621,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
 
@@ -686,7 +655,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
 
@@ -721,7 +689,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
 
@@ -757,7 +724,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
 
@@ -792,7 +758,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
 
@@ -835,7 +800,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
 
@@ -882,7 +846,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
 
@@ -897,11 +860,10 @@ describe("APIClient Gentable", () => {
 
             // console.log(parsedData.items![0]!['ID']!);
 
-            const deleteRowResponse = await client.table.deleteRow({
+            const deleteRowResponse = await client.table.deleteRows({
                 table_id: table_id,
                 table_type: "action",
-                row_id: parsedData.items![0]!["ID"]!,
-                reindex: true
+                row_ids: [parsedData.items![0]!["ID"]!]
             });
 
             expect(deleteRowResponse).toHaveProperty("ok");
@@ -937,7 +899,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
 
@@ -958,11 +919,11 @@ describe("APIClient Gentable", () => {
 
             // console.log(parsedData.items![0]!['ID']!);
 
+            // Use row_ids instead of where clause, as "ID" is a reserved keyword and cannot be used in SQL where clauses
             const deleteRowsResponse = await client.table.deleteRows({
                 table_type: "action",
                 table_id: table_id,
-                where: `\`ID\` IN (${row_ids.map((i) => `'${i}'`).join(",")})`,
-                reindex: true
+                row_ids: row_ids
             });
 
             expect(deleteRowsResponse).toHaveProperty("ok");
@@ -1009,7 +970,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id_dst,
-                reindex: false,
                 concurrent: true
             });
 
@@ -1067,7 +1027,7 @@ describe("APIClient Gentable", () => {
         }
     });
 
-    it("duplicate table - withoutout destination id]", async () => {
+    it("duplicate table - without destination id", async () => {
         for await (const { id: table_id } of _getTable("action")) {
             const response = await client.table.duplicateTable({
                 table_id_src: table_id,
@@ -1090,8 +1050,9 @@ describe("APIClient Gentable", () => {
             const response = await client.table.getConversationThread({
                 table_id: table.id,
                 table_type: "chat",
-                column_id: table.cols.length ? table.cols[3]?.id! : ""
+                column_ids: table.cols.length && table.cols[3]?.id ? [table.cols[3].id] : undefined
             });
+
 
             const parsedData = GetConversationThreadResponseSchema.parse(response);
             expect(parsedData).toEqual(response);
@@ -1186,7 +1147,7 @@ describe("APIClient Gentable", () => {
                     }
                 }
             });
-
+            
             const parsedData = TableMetaResponseSchema.parse(response);
             expect(response).toEqual(parsedData);
         }
@@ -1211,7 +1172,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: true,
                 concurrent: true
             });
 
@@ -1237,7 +1197,6 @@ describe("APIClient Gentable", () => {
                 table_type: "action",
                 table_id: table_id,
                 row_ids: row_ids,
-                reindex: true,
                 concurrent: true
             });
 
@@ -1277,7 +1236,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: true,
                 concurrent: true
             });
 
@@ -1303,7 +1261,6 @@ describe("APIClient Gentable", () => {
                 table_type: "action",
                 table_id: table_id,
                 row_ids: row_ids,
-                reindex: null,
                 concurrent: true
             });
 
@@ -1339,7 +1296,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
             const listRowResponse = await client.table.listRows({
@@ -1352,15 +1308,17 @@ describe("APIClient Gentable", () => {
             expect(parsedData).toEqual(listRowResponse);
             expect(parsedData.items.length).toEqual(2);
 
-            const response = await client.table.updateRow({
+            const rowId = parsedData.items![0]!["ID"]!;
+
+            const response = await client.table.updateRows({
                 table_type: "action",
-                data: {
-                    question: "how to update rows on jamaibase?",
-                    suggestions: "References at https://embeddedllm.github.io/jamaisdk-ts-docs/index.html"
-                },
                 table_id: table_id,
-                row_id: parsedData.items![0]!["ID"]!,
-                reindex: true
+                data: {
+                    [rowId]: {
+                        question: "how to update rows on jamaibase?",
+                        suggestions: "References at https://embeddedllm.github.io/jamaisdk-ts-docs/index.html"
+                    }
+                }
             });
 
             expect(response).toHaveProperty("ok");
@@ -1387,18 +1345,14 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: true,
                 concurrent: true
             });
             const response = await client.table.hybridSearch({
                 table_type: "action",
                 table_id: table_id,
                 query: "kong",
-                where: null,
                 limit: 3,
                 metric: "dot",
-                nprobes: 50,
-                refine_factor: 50,
                 reranking_model: null
             });
             const prasedData = HybridSearchResponseSchema.parse(response);
@@ -1408,14 +1362,53 @@ describe("APIClient Gentable", () => {
 
     // @TODO test with api.jamaibase.com
     it("Embed file to knowledge table", async () => {
-        for await (const { id: table_id } of _getTable("knowledge")) {
-            const file = new File(["My aim in life by chatgpt"], "sample.txt", { type: "text/plain" });
-            const response = await client.table.embedFile({
-                file: file,
-                table_id: table_id
-            });
+        const file = new File(["My aim in life by chatgpt"], "sample.txt", { type: "text/plain" });
 
-            expect(response?.ok).toBeTruthy();
+        let lastError: any = null;
+        let allApiKeyErrors = true;
+        let success = false;
+
+        // Try all embedding models with API key error fallback
+        for (const model of embeddingModels) {
+            try {
+                console.log(`Attempting to embed file with model: ${model}`);
+
+                // Create knowledge table with the specific embedding model using _getTable
+                for await (const table of _getTable("knowledge", model)) {
+                    const response = await client.table.embedFile({
+                        file: file,
+                        table_id: table.id
+                    });
+
+                    expect(response?.ok).toBeTruthy();
+                    // Success! Update the global embeddingModel
+                    embeddingModel = model;
+                    console.log(`Successfully embedded file with model: ${model}`);
+                    success = true;
+                }
+
+                // If successful, break out of the model loop
+                if (success) {
+                    break;
+                }
+            } catch (error: any) {
+                console.log(`Failed to embed file with model ${model}:`, error?.message || error);
+                lastError = error;
+
+                if (!isApiKeyError(error)) {
+                    // If it's not an API key error, it's a real error - throw immediately
+                    allApiKeyErrors = false;
+                    throw error;
+                }
+                // If it's an API key error, try the next model
+            }
+        }
+
+        // If we tried all models and they all failed with API key errors, skip the test
+        if (!success && allApiKeyErrors && lastError) {
+            console.warn("All embedding models failed with API key errors. Skipping this test.");
+            // Skip this test iteration without failing
+            return;
         }
     });
 
@@ -1438,13 +1431,13 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
             const responseListRows = await client.table.listRows({
                 table_type: "action",
                 table_id: table_id
             });
+
 
             expect(responseAddRow.rows.length).toBe(responseListRows.items.length);
 
@@ -1459,7 +1452,7 @@ describe("APIClient Gentable", () => {
             expect(exportedRows.length).toBe(responseAddRow.rows.length);
 
             for (let i = 0; i < responseListRows.items.length; i++) {
-                const row = exportedRows[exportedRows.length - 1 - i];
+                const row = exportedRows[i];
                 const original = responseListRows.items[i];
                 for (const key in original) {
                     if (row && key !== "ID" && key !== "Updated at") {
@@ -1489,7 +1482,6 @@ describe("APIClient Gentable", () => {
                     }
                 ],
                 table_id: table_id,
-                reindex: false,
                 concurrent: true
             });
             const responseListRows = await client.table.listRows({
@@ -1511,7 +1503,7 @@ describe("APIClient Gentable", () => {
             expect(exportedRows.length).toBe(responseAddRow.rows.length);
 
             for (let i = 0; i < responseListRows.items.length; i++) {
-                const row = exportedRows[exportedRows.length - 1 - i];
+                const row = exportedRows[i];
                 const original = responseListRows.items[i];
                 for (const key in original) {
                     if (row && key !== "ID" && key !== "Updated at") {
@@ -1562,7 +1554,7 @@ describe("APIClient Gentable", () => {
 
             expect(Array.isArray(rows.items)).toBe(true);
 
-            for (const [row, d] of rows.items.reverse().map((row: any, i) => [row, data[i]])) {
+            for (const [row, d] of rows.items.map((row: any, i) => [row, data[i]])) {
                 for (const [k, v] of Object.entries(d!)) {
                     if (!(k in row!)) continue;
                     if (row && k in row) {

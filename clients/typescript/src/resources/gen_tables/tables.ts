@@ -16,7 +16,7 @@ export const QueryRequestParams = z.object({
 export const TableTypesSchema = z.enum(["action", "knowledge", "chat"]);
 
 export const IdSchema = z.string().regex(/^[A-Za-z0-9]([A-Za-z0-9 _-]{0,98}[A-Za-z0-9])?$/, "Invalid Id");
-export const TableIdSchema = z.string().regex(/^[A-Za-z0-9]([A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/, "Invalid Table Id");
+// export const TableIdSchema = z.string().regex(/^[A-Za-z0-9]([A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$/, "Invalid Table Id");
 
 const DtypeCreateEnumSchema = z.enum(["int", "float", "bool", "str", "image", "audio", "document"]);
 
@@ -48,12 +48,17 @@ export const CodeGenConfigSchema = z.object({
     source_column: z.string()
 });
 
+export const PythonGenConfigSchema = z.object({
+    object: z.literal("gen_config.python").default("gen_config.python"),
+    python_code: z.string()
+});
+
 export const ColumnSchemaSchema = z.object({
     id: z.string(),
     dtype: DtypeEnumSchema.default("str"),
     vlen: z.number().int().gte(0).default(0),
     index: z.boolean().default(true),
-    gen_config: z.union([LLMGenConfigSchema, EmbedGenConfigSchema, CodeGenConfigSchema, z.null()]).optional()
+    gen_config: z.union([LLMGenConfigSchema, EmbedGenConfigSchema, CodeGenConfigSchema, PythonGenConfigSchema, z.null()]).optional()
 });
 
 export const ColumnSchemaCreateSchema = ColumnSchemaSchema.extend({
@@ -62,7 +67,7 @@ export const ColumnSchemaCreateSchema = ColumnSchemaSchema.extend({
 });
 
 export const TableSchemaCreateSchema = z.object({
-    id: TableIdSchema,
+    id: z.string(),
     cols: z.array(ColumnSchemaCreateSchema)
 });
 
@@ -83,7 +88,7 @@ export const TableMetaResponseSchema = z.object({
     cols: z.array(ColumnSchemaSchema),
     parent_id: z.union([z.string(), z.null()]),
     title: z.string(),
-    created_by: z.string(),
+    created_by: z.string().nullable(),
     updated_at: z.string(),
     num_rows: z.number().int(),
     version: z.string()
@@ -91,12 +96,12 @@ export const TableMetaResponseSchema = z.object({
 
 export const TableMetaRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema
+    table_id: z.string()
 });
 
 export const ListTableRowsRequestSchema = QueryRequestParams.extend({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema,
+    table_id: z.string(),
     columns: z.array(IdSchema).nullable().optional(),
     search_query: z.string().default(""),
     float_decimals: z.number().int().default(0),
@@ -108,7 +113,7 @@ export const ListTableRowsResponseSchema = z.record(z.string(), z.any());
 
 export const GetRowRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema,
+    table_id: z.string(),
     row_id: z.string(),
     columns: z.array(IdSchema).nullable().optional(),
     float_decimals: z.number().int().optional(),
@@ -126,64 +131,64 @@ export const OkResponseSchema = z.object({
 
 export const DeleteTableRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema
+    table_id: z.string()
 });
 
 export const RenameTableRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id_src: TableIdSchema,
-    table_id_dst: TableIdSchema
+    table_id_src: z.string(),
+    table_id_dst: z.string()
 });
 
 export const DuplicateTableRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id_src: TableIdSchema,
-    table_id_dst: TableIdSchema.nullable().optional(),
+    table_id_src: z.string(),
+    table_id_dst: z.string().nullable().optional(),
     include_data: z.boolean().optional(),
     create_as_child: z.boolean().optional()
 });
 
 export const CreateChildTableRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id_src: TableIdSchema,
-    table_id_dst: TableIdSchema
+    table_id_src: z.string(),
+    table_id_dst: z.string()
 });
 
 export const RenameColumnsRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema,
+    table_id: z.string(),
     column_map: z.record(IdSchema, IdSchema)
 });
 
 export const ReorderColumnsRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema,
+    table_id: z.string(),
     column_names: z.array(IdSchema)
 });
 
 export const DropColumnsRequestSchema = ReorderColumnsRequestSchema;
 
 export const AddColumnRequestSchema = z.object({
-    id: TableIdSchema,
+    id: z.string(),
     cols: z.array(ColumnSchemaCreateSchema)
 });
 
 export const UpdateGenConfigRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema,
-    column_map: z.record(z.string(), z.union([LLMGenConfigSchema, EmbedGenConfigSchema, CodeGenConfigSchema, z.null()]))
+    table_id: z.string(),
+    column_map: z.record(z.string(), z.union([LLMGenConfigSchema, EmbedGenConfigSchema, CodeGenConfigSchema, PythonGenConfigSchema, z.null()]))
 });
 
 export const DeleteRowRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema,
+    table_id: z.string(),
     row_id: z.string(),
     reindex: z.boolean().default(true)
 });
 
 export const AddRowRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema,
+    table_id: z.string(),
     data: z.array(z.record(IdSchema, z.any())),
     concurrent: z.boolean().default(true)
     // stream: z.boolean()
@@ -191,7 +196,7 @@ export const AddRowRequestSchema = z.object({
 
 export const RegenRowRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema,
+    table_id: z.string(),
     row_ids: z.array(z.string()),
     regen_strategy: z.string().nullable().optional(),
     output_column_id: z.string().nullable().optional(),
@@ -201,20 +206,20 @@ export const RegenRowRequestSchema = z.object({
 
 export const UpdateRowRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema,
+    table_id: z.string(),
     data: z.record(z.string(), z.record(IdSchema, z.any())),
 });
 
 export const DeleteRowsRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema,
+    table_id: z.string(),
     row_ids: z.array(z.string()).nullable().optional(),
     where: z.string().optional(),
 });
 
 export const HybridSearchRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema,
+    table_id: z.string(),
     query: z.string(),
     // where: z.string().nullable().default(null).optional(),
     limit: z.number().gt(0).lte(1000).optional(),
@@ -236,14 +241,14 @@ export const CreateTableRequestSchema = z.object({
 export const ImportTableRequestSchema = z.object({
     file_path: z.string().optional(),
     file: z.any().optional(),
-    table_id: TableIdSchema,
+    table_id: z.string(),
     table_type: TableTypesSchema,
     delimiter: z.string().default(",").optional()
 });
 
 export const ExportTableRequestSchema = z.object({
     table_type: TableTypesSchema,
-    table_id: TableIdSchema,
+    table_id: z.string(),
     delimiter: z.string().default(","),
     columns: z.array(z.string()).nullable().optional()
 });

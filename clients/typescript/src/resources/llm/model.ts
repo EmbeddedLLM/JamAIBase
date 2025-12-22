@@ -10,16 +10,19 @@ export const ModelInfoRequestSchema = z.object({
 
 export const ModelInfoSchema = z.object({
     id: z.string().default("openai/gpt-4o-mini"),
-    object: z.string(),
+    type: z.string().optional(),
     name: z.string(),
+    owned_by: z.string(),
+    capabilities: z.array(z.enum(["completion", "chat", "image", "audio", "document", "tool", "embed", "rerank"])).default(["chat"]),
     context_length: z.number().default(16384),
     languages: z.array(z.string()),
-    capabilities: z.array(z.enum(["completion", "chat", "image", "audio", "document", "tool", "embed", "rerank"])).default(["chat"]),
-    owned_by: z.string()
+    max_output_tokens: z.number().nullable().optional(),
+    created_at: z.string().optional(),
+    updated_at: z.string().optional()
 });
 
 export const ModelInfoResponseSchema = z.object({
-    object: z.enum(["chat.model_info"]),
+    object: z.enum(["models.info"]),
     data: z.array(ModelInfoSchema)
 });
 

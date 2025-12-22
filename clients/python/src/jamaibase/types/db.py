@@ -729,7 +729,7 @@ class ModelConfigCreate(ModelConfigUpdate):
         ),
     )
     type: _ModelType = Field(
-        description="Model type. Can be completion, chat, embed, or rerank.",
+        description="Model type. Can be completion, llm, embed, or rerank.",
     )
     name: SanitisedNonEmptyStr = Field(
         max_length=255,

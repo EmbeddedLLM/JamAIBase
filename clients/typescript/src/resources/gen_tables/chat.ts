@@ -5,14 +5,21 @@ import { z } from "zod";
 export const GetConversationThreadRequestSchema = z.object({
     table_type: TableTypesSchema,
     table_id: IdSchema,
-    column_id: IdSchema,
+    column_ids: z.array(IdSchema).optional(),
     row_id: z.string().optional(),
-    include: z.boolean().optional()
+    include_row: z.boolean().optional()
+});
+
+export const ChatThreadResponseSchema = z.object({
+    object: z.enum(["chat.thread"]).describe("Type of API response object."),
+    thread: z.array(ChatEntrySchema).describe("List of chat messages.").default([]),
+    column_id: z.string().describe("Table column ID of this chat thread.").default("")
 });
 
 export const GetConversationThreadResponseSchema = z.object({
-    object: z.enum(["chat.thread"]).describe("Type of API response object."),
-    thread: z.array(ChatEntrySchema).describe("List of chat messages.").default([])
+    object: z.enum(["chat.threads"]).describe("Type of API response object."),
+    threads: z.record(z.string(), ChatThreadResponseSchema).describe("Dictionary of chat threads keyed by column_id."),
+    table_id: z.string().describe("Table ID of the chat threads.").default("")
 });
 
 export const GenTableChatCompletionChunksSchema = z.object({
@@ -41,6 +48,7 @@ export const CreateChatTableRequestSchema = TableSchemaCreateSchema;
 export type CreateChatTableRequest = z.input<typeof CreateChatTableRequestSchema>;
 
 export type GetConversationThreadRequest = z.input<typeof GetConversationThreadRequestSchema>;
+export type ChatThreadResponse = z.infer<typeof ChatThreadResponseSchema>;
 export type GetConversationThreadResponse = z.infer<typeof GetConversationThreadResponseSchema>;
 export type RowCompletionResponse = z.infer<typeof GenTableChatCompletionChunksSchema>;
 export type MultiRowCompletionResponse = z.infer<typeof MultiRowCompletionResponseSchema>;

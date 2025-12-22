@@ -43,6 +43,7 @@ import {
     GetRowResponse,
     GetRowResponseSchema,
     HybridSearchRequest,
+    HybridSearchRequestSchema,
     HybridSearchResponse,
     HybridSearchResponseSchema,
     ImportTableRequest,
@@ -224,9 +225,14 @@ export class GenTable extends Base {
     public async getConversationThread(params: GetConversationThreadRequest): Promise<GetConversationThreadResponse> {
         const parsedParams = GetConversationThreadRequestSchema.parse(params);
 
-        let getURL = `/api/v2/gen_tables/${parsedParams.table_type}/thread`;
+        let getURL = `/api/v2/gen_tables/${parsedParams.table_type}/threads`;
         const response = await this.httpClient.get(getURL, {
-            params: parsedParams
+            params: parsedParams,
+            paramsSerializer: (params) => {
+                return Object.entries(params)
+                    .flatMap(([key, value]) => (Array.isArray(value) ? value.map((val) => `${key}=${val}`) : `${key}=${value}`))
+                    .join("&");
+            }
         });
 
         return this.handleResponse(response, GetConversationThreadResponseSchema);
@@ -467,9 +473,10 @@ export class GenTable extends Base {
     }
 
     public async hybridSearch(params: HybridSearchRequest): Promise<HybridSearchResponse> {
-        const apiURL = `/api/v2/gen_tables/${params.table_type}/hybrid_search`;
+        const parsedParams = HybridSearchRequestSchema.parse(params);
+        const apiURL = `/api/v2/gen_tables/${parsedParams.table_type}/hybrid_search`;
 
-        const { table_type, ...requestBody } = params;
+        const { table_type, ...requestBody } = parsedParams;
 
         const response = await this.httpClient.post(apiURL, requestBody);
 
@@ -649,7 +656,11 @@ export class GenTable extends Base {
                 params: parsedParams,
                 paramsSerializer: (params) => {
                     return Object.entries(params)
-                        .flatMap(([key, value]) => (Array.isArray(value) ? value.map((val) => `${key}=${val}`) : `${key}=${value}`))
+                        .flatMap(([key, value]) =>
+                            Array.isArray(value)
+                                ? value.map((val) => `${encodeURIComponent(key)}=${encodeURIComponent(val)}`)
+                                : `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+                        )
                         .join("&");
                 },
                 responseType: "arraybuffer"
@@ -665,5 +676,63 @@ export class GenTable extends Base {
             }
             throw error;
         }
+    }
+
+    /**
+     * Get conversation threads (multi-column support)
+     * @param params Request parameters
+     * @returns Conversation threads
+     */
+    public async getConversationThreads(params: {
+        table_type: string;
+        table_id: string;
+        column_ids?: string[];
+        row_id?: string;
+        include_row?: boolean;
+    }): Promise<any> {
+        const response = await this.httpClient.get(`/api/v2/gen_tables/${params.table_type}/threads`, {
+            params: {
+                table_id: params.table_id,
+                column_ids: params.column_ids,
+                row_id: params.row_id,
+                include_row: params.include_row
+            }
+        });
+
+        return this.handleResponse(response);
+    }
+
+    /**
+     * Import table (schema and data) from parquet file
+     * @param tableType Table type
+     * @param params Import parameters
+     * @returns Table metadata or OK response
+     */
+    public async importTable(params: { table_type: string; file: File; table_id?: string; blocking?: boolean }): Promise<any> {
+        const formData = new FormData();
+        formData.append("file", params.file);
+        if (params.table_id) formData.append("table_id", params.table_id);
+        if (params.blocking !== undefined) formData.append("blocking", JSON.stringify(params.blocking));
+
+        const response = await this.httpClient.post(`/api/v2/gen_tables/${params.table_type}/import`, formData, {
+            headers: { "Content-Type": "multipart/form-data" }
+        });
+
+        return this.handleResponse(response);
+    }
+
+    /**
+     * Export table (schema and data) as parquet file
+     * @param tableType Table type
+     * @param tableId Table ID
+     * @returns Table file as bytes
+     */
+    public async exportTable(tableType: string, tableId: string): Promise<Uint8Array> {
+        const response = await this.httpClient.get(`/api/v2/gen_tables/${tableType}/export`, {
+            params: { table_id: tableId },
+            responseType: "arraybuffer"
+        });
+
+        return this.handleResponse(response);
     }
 }

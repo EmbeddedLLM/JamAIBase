@@ -733,7 +733,7 @@ class ModelInfo(_TableBase):
 class ModelConfig(ModelInfo, table=True):
     # --- All models --- #
     type: ModelType = SqlField(
-        description="Model type. Can be completion, chat, embed, or rerank.",
+        description="Model type. Can be completion, llm, embed, or rerank.",
     )
     name: str = SqlField(
         description="Model name that is more user friendly.",

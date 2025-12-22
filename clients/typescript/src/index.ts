@@ -1,12 +1,32 @@
+import { Auth } from "@/resources/auth";
 import { Base, TConfig } from "@/resources/base";
+import { Conversations } from "@/resources/conversations";
 import { Files } from "@/resources/files";
 import { GenTable } from "@/resources/gen_tables";
 import { LLM } from "@/resources/llm";
+import { Meters } from "@/resources/meters";
+import { Models } from "@/resources/models";
+import { Organizations } from "@/resources/organizations";
+import { Prices } from "@/resources/prices";
+import { Projects } from "@/resources/projects";
+import { Secrets } from "@/resources/secrets";
+import { Tasks } from "@/resources/tasks";
 import { Templates } from "@/resources/templates";
+import { Users } from "@/resources/users";
 import Agent from "agentkeepalive";
 import { AxiosResponse } from "axios";
 
 class JamAI extends Base {
+    public auth: Auth;
+    public users: Users;
+    public organizations: Organizations;
+    public projects: Projects;
+    public models: Models;
+    public conversations: Conversations;
+    public prices: Prices;
+    public meters: Meters;
+    public tasks: Tasks;
+    public secrets: Secrets;
     public table: GenTable;
     public llm: LLM;
     public template: Templates;
@@ -23,10 +43,22 @@ class JamAI extends Base {
      */
     constructor(config: TConfig) {
         super(config);
-        this.table = new GenTable(config);
-        this.llm = new LLM(config);
-        this.template = new Templates(config);
-        this.file = new Files(config);
+        // Share the parent's httpClient with all resource instances so header updates propagate
+        const sharedConfig = { ...config, httpClient: this.httpClient };
+        this.auth = new Auth(sharedConfig);
+        this.users = new Users(sharedConfig);
+        this.organizations = new Organizations(sharedConfig);
+        this.projects = new Projects(sharedConfig);
+        this.models = new Models(sharedConfig);
+        this.conversations = new Conversations(sharedConfig);
+        this.prices = new Prices(sharedConfig);
+        this.meters = new Meters(sharedConfig);
+        this.tasks = new Tasks(sharedConfig);
+        this.secrets = new Secrets(sharedConfig);
+        this.table = new GenTable(sharedConfig);
+        this.llm = new LLM(sharedConfig);
+        this.template = new Templates(sharedConfig);
+        this.file = new Files(sharedConfig);
     }
 
     public override setApiKey(token: string){
@@ -73,6 +105,10 @@ class JamAI extends Base {
         return await super.health()
     }
 }
+
+// Re-export useful constants and types
+export { PROGRESS_STATES } from "@/resources/tasks/types";
+export type { ProgressState, ProgressResponse, PollProgressParams } from "@/resources/tasks/types";
 
 // // Re-export types from internal modules for easier access
 // export * from "@/resources/base";

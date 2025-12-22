@@ -7,6 +7,17 @@ const config: Config = {
     verbose: true,
     moduleNameMapper: {
         "@/(.*)": "<rootDir>/src/$1"
+    },
+    transform: {
+        "^.+\\.tsx?$": [
+            "ts-jest",
+            {
+                tsconfig: {
+                    sourceMap: true,
+                    inlineSourceMap: true
+                }
+            }
+        ]
     }
 };
 

@@ -23,8 +23,8 @@ import {
 } from "./types";
 
 export class Templates extends Base {
-    public async listTemplates(params: IListTemplatesRequest = {}): Promise<IListTemplatesResponse> {
-        const parsedParams = ListTemplatesRequestSchema.parse(params);
+    public async listTemplates(params?: IListTemplatesRequest): Promise<IListTemplatesResponse> {
+        const parsedParams = ListTemplatesRequestSchema.parse(params ?? {});
 
         let getURL = `/api/v2/templates/list`;
 
@@ -77,5 +77,33 @@ export class Templates extends Base {
         });
 
         return this.handleResponse(response, ListTableRowsResponseSchema);
+    }
+
+    /**
+     * Get a specific row from a template table
+     * @param params Request parameters
+     * @returns Row data
+     */
+    public async getTableRow(params: {
+        template_id: string;
+        table_type: string;
+        table_id: string;
+        row_id: string;
+        columns?: string[];
+        float_decimals?: number;
+        vec_decimals?: number;
+    }): Promise<Record<string, any>> {
+        const response = await this.httpClient.get(`/api/v2/templates/gen_tables/${params.table_type}/rows`, {
+            params: {
+                template_id: params.template_id,
+                table_id: params.table_id,
+                row_id: params.row_id,
+                columns: params.columns,
+                float_decimals: params.float_decimals,
+                vec_decimals: params.vec_decimals
+            }
+        });
+
+        return this.handleResponse(response);
     }
 }
