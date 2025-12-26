@@ -11,11 +11,13 @@
 		projectSort as sortOptions,
 		uploadQueue
 	} from '$globalStore';
+	import { tagColors } from '$lib/constants';
 	import logger from '$lib/logger';
 	import type { Project } from '$lib/types';
 
-	import ProjectDialogs from './ProjectDialogs.svelte';
 	import ExportProjectButton from './ExportProjectButton.svelte';
+	import ProjectDialogs from './ProjectDialogs.svelte';
+	import ProjectsThumbsFetch from './ProjectsThumbsFetch.svelte';
 	import { m } from '$lib/paraglide/messages';
 	import { getLocale } from '$lib/paraglide/runtime';
 	import InputText from '$lib/components/InputText.svelte';
@@ -52,6 +54,8 @@
 		{ id: 'created_at', title: m['sortable.created_at'](), Icon: SortByIcon },
 		{ id: 'updated_at', title: m['sortable.updated_at'](), Icon: SortByIcon }
 	];
+
+	let projectsThumbs = $state<{ [projectID: string]: string }>({});
 
 	let searchQuery = $state('');
 	let isLoadingSearch = $state(false);
@@ -206,7 +210,13 @@
 		const offset = target.scrollHeight - target.clientHeight - target.scrollTop;
 		const LOAD_THRESHOLD = 1000;
 
-		if (offset < LOAD_THRESHOLD && !isLoadingProjects && !moreProjectsFinished) {
+		if (
+			orgProjects.length > 0 &&
+			offset < LOAD_THRESHOLD &&
+			!isLoadingProjects &&
+			!moreProjectsFinished
+		) {
+			fetchController?.abort('Duplicate');
 			await getProjects();
 		}
 	};
@@ -330,7 +340,7 @@
 
 			{#if !loadingProjectsError}
 				<div
-					style="grid-auto-rows: 128px;"
+					style="grid-auto-rows: 240px;"
 					class="grid grow grid-flow-row grid-cols-[minmax(15rem,1fr)] gap-4 px-1 pb-4 pt-1 sm:grid-cols-[repeat(auto-fill,_minmax(300px,_1fr))]"
 				>
 					{#if isLoadingProjects}
@@ -347,14 +357,53 @@
 								title={project.id}
 								class="flex flex-col rounded-lg border border-[#E5E5E5] bg-white transition-[transform,box-shadow] hover:-translate-y-0.5 hover:shadow-float data-dark:border-[#333] data-dark:bg-[#42464E]"
 							>
-								<div class="flex grow items-start justify-between p-3">
-									<div class="flex items-start gap-1.5">
-										<span class="rounded bg-[#FFEFF2] p-1">
-											<Clipboard class="h-4 w-4 flex-[0_0_auto] text-[#950048]" />
-										</span>
+								<div class="relative p-2">
+									{#if projectsThumbs[project.id]}
+										<!-- Temp fix for url -->
+										<img
+											src={projectsThumbs[project.id].replace('http://', 'https://')}
+											class="h-28 w-full rounded-md object-cover"
+											alt=""
+										/>
+									{:else if !project.cover_picture_url}
+										<div class="flex h-28 items-center justify-center rounded-md bg-secondary">
+											<Clipboard class="h-10 w-10 text-white" />
+										</div>
+									{:else}
+										<div class="flex h-28 items-center justify-center">
+											<LoadingSpinner class="h-4 w-4 text-secondary" />
+										</div>
+									{/if}
+
+									<div class="absolute right-0 top-0 flex flex-wrap justify-end gap-1 p-3">
+										{#each (project.tags ?? []).slice(0, 5) as tag, index}
+											<span
+												style="background-color: {tagColors[index % tagColors.length]};"
+												class="select-none rounded-md px-1.5 py-[3px] text-xs text-white"
+											>
+												{tag}
+											</span>
+										{/each}
+
+										{#if (project.tags ?? []).slice(5).length > 0}
+											<span
+												class="select-none rounded-md bg-black px-1.5 py-[3px] text-xs text-white"
+											>
+												+{(project.tags ?? []).slice(5).length}
+											</span>
+										{/if}
+									</div>
+								</div>
+
+								<div class="flex grow items-start justify-between px-3 pb-1 pt-1">
+									<div class="flex h-full flex-col items-start gap-1">
 										<span class="line-clamp-2 text-[#475467] [word-break:break-word]">
 											{project.name}
 										</span>
+
+										<p class="h-1 grow overflow-auto text-sm text-[#667085]">
+											{project.description ?? ''}
+										</p>
 									</div>
 
 									<DropdownMenu.Root>
@@ -456,3 +505,4 @@
 	{orgProjects}
 	{refetchProjects}
 />
+<ProjectsThumbsFetch {orgProjects} bind:projectsThumbs />

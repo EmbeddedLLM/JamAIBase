@@ -495,6 +495,7 @@ export type Project = {
 	updated_at: string;
 	id: string;
 	name: string;
+	description: string;
 	quotas: Record<string, unknown>;
 	tags: string[];
 	profile_picture_url: string | null;

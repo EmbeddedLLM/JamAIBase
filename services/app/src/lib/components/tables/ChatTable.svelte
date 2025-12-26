@@ -468,7 +468,7 @@
 										</p>
 									{/if}
 
-									{#if column.gen_config?.object === 'gen_config.llm' && column.dtype === 'str'}
+									{#if column.dtype === 'str'}
 										<div
 											class="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-focus-within/cell:opacity-100 group-hover/cell:opacity-100"
 										>

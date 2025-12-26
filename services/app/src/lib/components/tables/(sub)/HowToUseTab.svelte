@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { guideConverter as converter } from '$lib/showdown';
 	import type { GenTableCol } from '$lib/types';
-	import '$lib/showdown/showdown-theme.css';
 
 	import llmHowToUse from './guides/llm.md?raw';
 	import pythonHowToUse from './guides/python.md?raw';

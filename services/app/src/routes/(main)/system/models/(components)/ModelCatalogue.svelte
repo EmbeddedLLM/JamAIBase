@@ -86,16 +86,6 @@
 	) {
 		const filteredConfigs = filterModelConfigs(modelConfigs, query, filter);
 
-		// When search query or filter changes, always reset to page 1
-		if (query || filter !== 'all') {
-			// Only update if we're not already on page 1
-			if (currentPage !== 1) {
-				setTimeout(() => {
-					currentPage = 1;
-				}, 0);
-			}
-		}
-
 		const totalPages = Math.max(1, Math.ceil(filteredConfigs.length / perPage));
 		const safeCurrentPage = Math.min(currentPage, totalPages);
 
@@ -133,6 +123,7 @@
 			</div>
 			<Input
 				type="text"
+				oninput={() => (currentPage = 1)}
 				bind:value={searchQuery}
 				placeholder="Search models"
 				class="w-64 rounded-lg border border-gray-300 bg-gray-200/40 py-2 pl-10 pr-4"

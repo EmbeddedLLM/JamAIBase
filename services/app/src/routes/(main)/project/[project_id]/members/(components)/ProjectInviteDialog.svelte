@@ -6,10 +6,15 @@
 
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import InputText from '$lib/components/InputText.svelte';
-	import { Button } from '$lib/components/ui/button';
+	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { Label } from '$lib/components/ui/label';
+	import * as Command from '$lib/components/ui/command';
+	import * as Popover from '$lib/components/ui/popover';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Select from '$lib/components/ui/select';
+	import { cn } from '$lib/utils';
+	import { ChevronDown } from '@lucide/svelte';
+	import Fuse from 'fuse.js';
 
 	let {
 		isInvitingUser = $bindable(),
@@ -18,6 +23,15 @@
 
 	let isLoadingInvite = $state(false);
 
+	let searchQuery = $state('');
+	let fuse = $derived.by(
+		() =>
+			new Fuse(organizationMembers, {
+				keys: ['user_id', 'user.name', 'user.email'],
+				threshold: 0.4, // 0.0 = exact match, 1.0 = match all
+				includeScore: true
+			})
+	);
 	let userId = $state('');
 	let selectedUserRoleInvite = $state<(typeof userRoles)[number]>('GUEST');
 	let inviteValidity = $state('7');
@@ -78,7 +92,68 @@
 					name="user_id"
 				/>
 
-				<Select.Root type="single" bind:value={userId}>
+				<Popover.Root>
+					{@const selectedOrgMember = organizationMembers.find((v) => v.user_id === userId)}
+					<Popover.Trigger
+						class={cn(
+							buttonVariants({ variant: 'ghost', size: 'default' }),
+							selectedOrgMember ? '' : 'italic text-muted-foreground hover:text-muted-foreground',
+							'grid h-10 min-w-full grid-cols-[minmax(0,1fr)_min-content] gap-2 rounded-lg bg-[#F2F4F7] pl-3 pr-2'
+						)}
+					>
+						<span class="line-clamp-1 whitespace-nowrap text-left font-normal">
+							{#if userId}
+								{#if selectedOrgMember}
+									{selectedOrgMember.user.name}&nbsp;&nbsp;–&nbsp;
+									<span class="italic">
+										{selectedOrgMember.user.email}
+									</span>
+								{:else}
+									{userId}
+								{/if}
+							{:else}
+								Select organization member
+							{/if}
+						</span>
+
+						<ChevronDown class="size-4 flex-[0_0_auto]" />
+					</Popover.Trigger>
+					<Popover.Content class="w-[25rem] min-w-[var(--bits-popover-anchor-width)] p-0">
+						<Command.Root shouldFilter={false}>
+							<Command.Input bind:value={searchQuery} placeholder="Search users..." />
+							<Command.List>
+								{@const results =
+									searchQuery.trim() !== ''
+										? fuse.search(searchQuery).map((result) => result.item)
+										: organizationMembers}
+								{#if results.length === 0}
+									<Command.Empty forceMount>No users found.</Command.Empty>
+								{/if}
+								<Command.Group value="users">
+									{#each results as organizationMember}
+										<!-- TODO: simplify this -->
+										<Command.Item
+											value={organizationMember.user_id}
+											title="{organizationMember.user.name} - {organizationMember.user.email}"
+											onSelect={() => {
+												userId = organizationMember.user_id;
+												// open = false;
+											}}
+											class="flex cursor-pointer gap-1"
+										>
+											{organizationMember.user.name}&nbsp;&nbsp;–&nbsp;
+											<span class="italic">
+												{organizationMember.user.email}
+											</span>
+										</Command.Item>
+									{/each}
+								</Command.Group>
+							</Command.List>
+						</Command.Root>
+					</Popover.Content>
+				</Popover.Root>
+
+				<!-- <Select.Root type="single" bind:value={userId}>
 					<Select.Trigger
 						class="flex h-[38px] min-w-full items-center justify-between gap-2 pl-3 pr-2 sm:gap-8"
 					>
@@ -114,7 +189,7 @@
 							</Select.Item>
 						{/each}
 					</Select.Content>
-				</Select.Root>
+				</Select.Root> -->
 			</div>
 
 			<div class="flex w-full flex-col space-y-1 px-4 text-center sm:px-6">

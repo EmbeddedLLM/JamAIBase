@@ -45,11 +45,8 @@
 
 	const items = [
 		{
-			type: 'link',
-			title: m['left_dock.analytics'](),
-			href: '/analytics',
-			iconClass: '[&_path]:stroke-[1.7]',
-			Icon: ChartLine
+			type: 'category',
+			title: 'ORGANIZATION'
 		},
 		{
 			type: 'link',
@@ -61,9 +58,10 @@
 		},
 		{
 			type: 'link',
-			title: m['left_dock.organization'](),
-			href: '/organization',
-			Icon: PeopleIcon
+			title: m['left_dock.analytics'](),
+			href: '/analytics',
+			iconClass: '[&_path]:stroke-[1.7]',
+			Icon: ChartLine
 		},
 		{
 			type: 'link',
@@ -73,8 +71,14 @@
 			exclude: page.data.ossMode
 		},
 		{
+			type: 'link',
+			title: m['left_dock.organization'](),
+			href: '/organization',
+			Icon: PeopleIcon
+		},
+		{
 			type: 'category',
-			title: ''
+			title: 'SUPPORT'
 		},
 		{
 			type: 'link',
@@ -234,19 +238,14 @@
 				</div>
 			</a>
 
-			<hr
-				class:opacity-0={isInSystemPages}
-				class="my-1 border-[#E5E5E5] transition-[margin] data-dark:border-[#484C55]"
-			/>
-
 			{#each isInSystemPages ? systemItems : items as item}
 				{#if !item.exclude}
 					{#if item.type === 'category'}
 						{#if item.title}
 							<div
 								class="{$showDock || !bigScreen.current
-									? 'pl-5 [&:not(:first-child)]:mt-3 [&:not(:first-child)]:pt-3'
-									: 'pl-3 [&:not(:first-child)]:mt-0 [&:not(:first-child)]:pt-0'} mb-1 cursor-default border-[#E5E5E5] text-sm font-medium text-[#999] transition-[padding,margin] duration-200 data-dark:border-[#484C55] [&:not(:first-child)]:border-t"
+									? 'pl-3 [&:not(:first-child)]:mt-3 [&:not(:first-child)]:pt-3'
+									: 'pl-3 [&:not(:first-child)]:mt-0 [&:not(:first-child)]:pt-0'} mb-1 cursor-default border-[#E5E5E5] text-sm font-medium text-[#98A2B3] transition-[padding,margin] duration-200 data-dark:border-[#484C55]"
 							>
 								<span class="{$showDock ? 'opacity-100' : 'opacity-0'} transition-opacity">
 									{item.title}

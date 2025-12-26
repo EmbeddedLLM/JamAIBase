@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { activeProject, loadingProjectData } from '$globalStore';
+	import { projectState } from '../projectState.svelte';
 	import type { Project } from '$lib/types';
 
 	import ProjectDialogs from '../ProjectDialogs.svelte';
@@ -22,11 +23,11 @@
 	let { children }: Props = $props();
 
 	const tabItems = [
-		// {
-		// 	title: 'Overview',
-		// 	href: `/project/${page.params.project_id}/overview`,
-		// 	route: '/(main)/project/[project_id]/overview'
-		// },
+		{
+			title: 'Overview',
+			href: `/project/${page.params.project_id}/overview`,
+			route: '/(main)/project/[project_id]/overview'
+		},
 		{
 			title: 'Action Table',
 			href: `/project/${page.params.project_id}/action-table`,
@@ -50,7 +51,6 @@
 	];
 
 	let isEditingProjectName: Project | null = $state(null);
-	let isDeletingProject: string | null = $state(null);
 
 	let tabHighlightPos = $derived(
 		(tabItems.findIndex((t) => page.route.id === t.route) / tabItems.length) * 100
@@ -132,7 +132,7 @@
 						</DropdownMenu.Item>
 						<DropdownMenu.Separator />
 						<DropdownMenu.Item
-							onclick={() => (isDeletingProject = page.params.project_id ?? null)}
+							onclick={() => (projectState.isDeletingProject = page.params.project_id ?? null)}
 							class="text-destructive data-[highlighted]:text-destructive"
 						>
 							<Trash_2 class="mr-2 h-3.5 w-3.5" />
@@ -192,12 +192,12 @@
 	<ProjectDialogs
 		isAddingProject={false}
 		bind:isEditingProjectName
-		bind:isDeletingProject
+		bind:isDeletingProject={projectState.isDeletingProject}
 		orgProjects={[$activeProject]}
 		refetchProjects={async () => {
 			if (isEditingProjectName) {
 				location.reload();
-			} else if (isDeletingProject) {
+			} else if (projectState.isDeletingProject) {
 				await goto('/project');
 			}
 		}}

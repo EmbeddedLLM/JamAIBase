@@ -237,6 +237,18 @@ export const fileColumnFiletypes = [
 	{ ext: '.jsonl', type: 'document' }
 ];
 
+export const tagColors = [
+	'#e74d73',
+	'#4db2d6',
+	'#4d69e8',
+	'#e8b04d',
+	'#9b4de8',
+	'#e84d4d',
+	'#4de8e1',
+	'#6f4de8',
+	'#e84db8'
+];
+
 export const agentColors: { bg: string; text: string }[] = [
 	{
 		bg: '#FFD9E4',

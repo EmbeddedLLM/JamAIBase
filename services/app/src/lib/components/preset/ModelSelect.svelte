@@ -172,21 +172,24 @@
 		<Command.Root shouldFilter={false}>
 			<Command.Input bind:value={searchQuery} placeholder="Search models..." />
 			<Command.List>
-				<Command.Empty>No models found.</Command.Empty>
+				{@const results = (
+					searchQuery.trim() !== '' ? fuse.search(searchQuery).map((result) => result.item) : models
+				)
+					.filter((model) => {
+						if (!capabilityFilter || model.capabilities.includes(capabilityFilter)) {
+							return true;
+						}
+					})
+					.sort((a, b) => {
+						if (a.id === selectedModel) return -1;
+						if (b.id === selectedModel) return 1;
+						return 0;
+					})}
+				{#if results.length === 0}
+					<Command.Empty forceMount>No models found.</Command.Empty>
+				{/if}
 				<Command.Group value="models">
-					{#each (searchQuery.trim() !== '' ? fuse
-								.search(searchQuery)
-								.map((result) => result.item) : models)
-						.filter((model) => {
-							if (!capabilityFilter || model.capabilities.includes(capabilityFilter)) {
-								return true;
-							}
-						})
-						.sort((a, b) => {
-							if (a.id === selectedModel) return -1;
-							if (b.id === selectedModel) return 1;
-							return 0;
-						}) as { id, name, languages, capabilities, owned_by }}
+					{#each results as { id, name, languages, capabilities, owned_by }}
 						<!-- TODO: simplify this -->
 						{@const isDisabled =
 							(owned_by !== 'ellm' &&
