@@ -3386,7 +3386,7 @@ class _MeterClientAsync(_ClientAsync):
 
     async def get_usage_metrics(
         self,
-        type: Literal["llm", "embedding", "reranking"],
+        type: Literal["llm", "embedding", "reranking", "image"],
         from_: datetime,
         window_size: str,
         org_ids: list[str] | None = None,

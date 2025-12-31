@@ -699,7 +699,7 @@ class ModelInfo(_TableBase):
     )
     type: ModelType = SqlField(
         ModelType.LLM,
-        description="Model type. Can be completion, llm, embed, or rerank.",
+        description="Model type. Can be completion, llm, image_gen, embed, or rerank.",
     )
     name: str = SqlField(
         "",
@@ -733,7 +733,7 @@ class ModelInfo(_TableBase):
 class ModelConfig(ModelInfo, table=True):
     # --- All models --- #
     type: ModelType = SqlField(
-        description="Model type. Can be completion, llm, embed, or rerank.",
+        description="Model type. Can be completion, llm, image_gen, embed, or rerank.",
     )
     name: str = SqlField(
         description="Model name that is more user friendly.",
@@ -791,6 +791,15 @@ class ModelConfig(ModelInfo, table=True):
             "Cost in USD per million (mega) output / completion token. "
             "Can be zero. Negative values will be overridden with a default value."
         ),
+    )
+    # --- Image generation models --- #
+    image_input_cost_per_mtoken: float = SqlField(
+        -1.0,
+        description="Cost in USD per million (mega) image input tokens.",
+    )
+    image_output_cost_per_mtoken: float = SqlField(
+        -1.0,
+        description="Cost in USD per million (mega) image output tokens.",
     )
     # --- Embedding models --- #
     embedding_size: PositiveNonZeroInt | None = SqlField(
@@ -1201,6 +1210,14 @@ class Organization(_TableBase, table=True):
         sa_type=DateTime(timezone=True),
         description="Datetime of the last successful LLM token usage update (UTC).",
     )
+    image_tokens_quota_mtok: float | None = SqlField(
+        0.0,
+        description="Image token quota in millions of tokens.",
+    )
+    image_tokens_usage_mtok: float = SqlField(
+        0.0,
+        description="Image token usage in millions of tokens.",
+    )
     embedding_tokens_quota_mtok: float | None = SqlField(
         0.0,
         description="Embedding token quota in millions of tokens.",
@@ -1318,6 +1335,10 @@ class Organization(_TableBase, table=True):
             "llm_tokens": {
                 "quota": self.llm_tokens_quota_mtok,
                 "usage": self.llm_tokens_usage_mtok,
+            },
+            "image_tokens": {
+                "quota": self.image_tokens_quota_mtok,
+                "usage": self.image_tokens_usage_mtok,
             },
             "embedding_tokens": {
                 "quota": self.embedding_tokens_quota_mtok,

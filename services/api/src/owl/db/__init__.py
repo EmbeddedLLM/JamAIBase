@@ -1,3 +1,4 @@
+import json
 from contextlib import asynccontextmanager, contextmanager
 from functools import lru_cache
 from typing import AsyncGenerator, Callable, Generator
@@ -317,6 +318,113 @@ async def _add_project_description_column(engine: AsyncEngine) -> bool:
         return True
 
 
+async def _add_image_gen_quota_columns(engine: AsyncEngine) -> bool:
+    table_name = "Organization"
+    columns = [
+        ("image_tokens_quota_mtok", "DOUBLE PRECISION DEFAULT 0.0"),
+        ("image_tokens_usage_mtok", "DOUBLE PRECISION DEFAULT 0.0"),
+    ]
+    added = False
+    async with engine.connect() as conn:
+        for column_name, column_def in columns:
+            if await _check_column_exists(conn, table_name, column_name):
+                continue
+            await conn.execute(
+                text(
+                    f"""ALTER TABLE {SCHEMA}."{table_name}" ADD COLUMN {column_name} {column_def}"""
+                )
+            )
+            added = True
+        if added:
+            await conn.commit()
+            logger.success(f'Successfully added image gen quota columns to "{table_name}".')
+    return added
+
+
+async def _add_image_gen_cost_columns(engine: AsyncEngine) -> bool:
+    table_name = "ModelConfig"
+    columns = [
+        ("image_input_cost_per_mtoken", "DOUBLE PRECISION NOT NULL DEFAULT 0.0"),
+        ("image_output_cost_per_mtoken", "DOUBLE PRECISION NOT NULL DEFAULT 0.0"),
+    ]
+    added = False
+    async with engine.connect() as conn:
+        for column_name, column_def in columns:
+            if await _check_column_exists(conn, table_name, column_name):
+                continue
+            await conn.execute(
+                text(
+                    f"""ALTER TABLE {SCHEMA}."{table_name}" ADD COLUMN {column_name} {column_def}"""
+                )
+            )
+            added = True
+        if added:
+            await conn.commit()
+            logger.success(f'Successfully added image gen cost columns to "{table_name}".')
+    return added
+
+
+async def _backfill_price_plan_image_products(engine: AsyncEngine) -> bool:
+    updated = 0
+    async with engine.connect() as conn:
+        result = await conn.execute(text(f'SELECT id, products FROM {SCHEMA}."PricePlan";'))
+        rows = result.fetchall()
+        for row in rows:
+            plan_id = row[0]
+            products = row[1] or {}
+            if isinstance(products, str):
+                try:
+                    products = json.loads(products)
+                except Exception:
+                    products = {}
+            if "image_tokens" in products:
+                continue
+            image_input = products.get("image_input_tokens")
+            image_output = products.get("image_output_tokens")
+            image_tokens = {
+                "name": "Image tokens",
+                "included": {"unit_cost": 0.0, "up_to": 0.0},
+                "tiers": [],
+                "unit": "Million Tokens",
+            }
+
+            def _included_up_to(prod: dict | None) -> float:
+                if not isinstance(prod, dict):
+                    return 0.0
+                included = prod.get("included") or {}
+                try:
+                    return float(included.get("up_to") or 0.0)
+                except Exception:
+                    return 0.0
+
+            image_tokens["included"]["up_to"] = _included_up_to(image_input) + _included_up_to(
+                image_output
+            )
+
+            def _tiers(prod: dict | None) -> list:
+                if not isinstance(prod, dict):
+                    return []
+                tiers = prod.get("tiers") or []
+                return tiers if isinstance(tiers, list) else []
+
+            image_tokens["tiers"] = _tiers(image_input) + _tiers(image_output)
+            products["image_tokens"] = image_tokens
+            products.pop("image_input_tokens", None)
+            products.pop("image_output_tokens", None)
+            await conn.execute(
+                text(f'UPDATE {SCHEMA}."PricePlan" SET products = :products WHERE id = :id'),
+                parameters={"products": json.dumps(products), "id": plan_id},
+            )
+            updated += 1
+        if updated > 0:
+            await conn.commit()
+            logger.success(
+                f'Successfully backfilled image token products in "PricePlan": {updated} rows.'
+            )
+            return True
+    return False
+
+
 async def _grant_auditor_privilege(engine: AsyncEngine) -> bool:
     """
     Apply the necessary grants to allow the auditor role to audit the database.
@@ -499,6 +607,9 @@ async def migrate_db():
         await _create_pg_functions(engine),
         await _add_egress_updated_at_column(engine),
         await _add_project_description_column(engine),
+        await _add_image_gen_quota_columns(engine),
+        await _add_image_gen_cost_columns(engine),
+        await _backfill_price_plan_image_products(engine),
         await _migrate_verification_codes(engine),
         await _migrate_reasoning_jsonb_keys(engine),
     ]

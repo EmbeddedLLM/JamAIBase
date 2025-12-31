@@ -208,6 +208,7 @@ async def chat_completion(
         response = await llm.chat_completion(messages=body.messages, **body.hyperparams)
         if references is not None:
             response.references = references
+        return response
         # NOTE: Do not create egress events here as it is handled in the middleware
     return response
 

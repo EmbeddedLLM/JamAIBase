@@ -25,6 +25,7 @@ from jamaibase.types.lm import (
     ChatRequestBase,
     References,
 )
+from jamaibase.utils.exceptions import BadInputError
 from jamaibase.utils.types import StrEnum
 
 
@@ -130,6 +131,34 @@ class LLMGenConfig(ChatRequestBase):
         return data
 
 
+class ImageGenConfig(BaseModel):
+    object: Literal["gen_config.image"] = Field(
+        "gen_config.image",
+        description='The object type, which is always "gen_config.image".',
+        examples=["gen_config.image"],
+    )
+    model: str = Field(
+        "",
+        description='ID of the model to use. Defaults to "".',
+    )
+    prompt: str = Field(
+        "",
+        description="Prompt for the image generation/edit model.",
+    )
+    size: Literal["auto", "1024x1024", "1536x1024", "1024x1536"] | None = Field(
+        None,
+        description="Image size/aspect ratio hint. Defaults to None (provider default).",
+    )
+    quality: Literal["low", "medium", "high", "auto"] | None = Field(
+        None,
+        description="Image quality hint. Defaults to None (provider default).",
+    )
+    style: str | None = Field(
+        None,
+        description="Image style hint. Generation-only; ignored for edits.",
+    )
+
+
 class EmbedGenConfig(BaseModel):
     object: Literal["gen_config.embed"] = Field(
         "gen_config.embed",
@@ -179,6 +208,8 @@ def _gen_config_discriminator(x: Any) -> str | None:
     if isinstance(x, dict):
         if "object" in x:
             return x["object"]
+        if any(k in x for k in ("size", "quality", "style")):
+            raise BadInputError('ImageGenConfig requires explicit `object="gen_config.image"`.')
         if "embedding_model" in x:
             return "gen_config.embed"
         if "source_column" in x:
@@ -196,6 +227,7 @@ DiscriminatedGenConfig = Annotated[
         Annotated[PythonGenConfig, Tag("gen_config.python")],
         Annotated[LLMGenConfig, Tag("gen_config.llm")],
         Annotated[LLMGenConfig, Tag("gen_config.chat")],
+        Annotated[ImageGenConfig, Tag("gen_config.image")],
         Annotated[EmbedGenConfig, Tag("gen_config.embed")],
     ],
     Discriminator(_gen_config_discriminator),

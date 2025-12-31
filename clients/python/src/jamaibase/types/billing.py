@@ -50,6 +50,36 @@ class LlmUsageData(_BaseUsageData):
     )
 
 
+class ImageGenUsageData(_BaseUsageData):
+    model: str = Field(
+        description="Model used.",
+    )
+    text_input_token: int = Field(
+        description="Number of text input tokens used.",
+    )
+    text_output_token: int = Field(
+        description="Number of text output tokens used.",
+    )
+    image_input_token: int = Field(
+        description="Number of image input tokens used.",
+    )
+    image_output_token: int = Field(
+        description="Number of image output tokens used.",
+    )
+    text_input_cost: float = Field(
+        description="Cost in USD per million text input tokens.",
+    )
+    text_output_cost: float = Field(
+        description="Cost in USD per million text output tokens.",
+    )
+    image_input_cost: float = Field(
+        description="Cost in USD per million image input tokens.",
+    )
+    image_output_cost: float = Field(
+        description="Cost in USD per million image output tokens.",
+    )
+
+
 class EmbedUsageData(_BaseUsageData):
     model: str = Field(
         description="Model used.",
@@ -94,6 +124,7 @@ class DBStorageUsageData(_BaseUsageData):
 
 class UsageData(BaseModel):
     llm_usage: list[LlmUsageData] = []
+    image_gen_usage: list[ImageGenUsageData] = []
     embed_usage: list[EmbedUsageData] = []
     rerank_usage: list[RerankUsageData] = []
     egress_usage: list[EgressUsageData] = []
@@ -105,6 +136,7 @@ class UsageData(BaseModel):
         """Returns a dictionary of lists, where each key is a usage type and the value is a list of lists."""
         return {
             "llm_usage": [usage.as_list() for usage in self.llm_usage],
+            "image_gen_usage": [usage.as_list() for usage in self.image_gen_usage],
             "embed_usage": [usage.as_list() for usage in self.embed_usage],
             "rerank_usage": [usage.as_list() for usage in self.rerank_usage],
             "egress_usage": [usage.as_list() for usage in self.egress_usage],
@@ -117,6 +149,7 @@ class UsageData(BaseModel):
         """Returns the total number of usage events across all types."""
         return (
             len(self.llm_usage)
+            + len(self.image_gen_usage)
             + len(self.embed_usage)
             + len(self.rerank_usage)
             + len(self.egress_usage)
@@ -128,6 +161,7 @@ class UsageData(BaseModel):
         """Overload the + operator to combine two UsageData objects."""
         combined = UsageData()
         combined.llm_usage = self.llm_usage + other.llm_usage
+        combined.image_gen_usage = self.image_gen_usage + other.image_gen_usage
         combined.embed_usage = self.embed_usage + other.embed_usage
         combined.rerank_usage = self.rerank_usage + other.rerank_usage
         combined.egress_usage = self.egress_usage + other.egress_usage

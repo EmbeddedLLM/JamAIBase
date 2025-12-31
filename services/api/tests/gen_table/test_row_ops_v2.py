@@ -19,9 +19,11 @@ from jamaibase.types import (
     ChatCompletionChunkResponse,
     ChatCompletionResponse,
     ColumnSchemaCreate,
+    DeploymentCreate,
     GenConfigUpdateRequest,
     GetURLResponse,
     LLMGenConfig,
+    ModelConfigCreate,
     MultiRowAddRequest,
     MultiRowCompletionResponse,
     MultiRowUpdateRequest,
@@ -61,8 +63,6 @@ from owl.utils.test import (
     RERANK_ENGLISH_v3_SMALL_DEPLOYMENT,
     add_table_rows,
     assert_is_vector_or_none,
-    create_deployment,
-    create_model_config,
     create_organization,
     create_project,
     create_table,
@@ -113,6 +113,7 @@ class ServingContext:
     echo_model_id: str
     embed_model_id: str
     rerank_model_id: str
+    image_gen_model_id: str
 
 
 @pytest.fixture(scope="module")
@@ -130,111 +131,131 @@ def setup():
         ) as p0,
     ):
         assert superorg.id == "0"
-        # Create models
-        with (
-            create_model_config(GPT_41_MINI_CONFIG) as gpt_llm_config,
-            create_model_config(GPT_5_MINI_CONFIG) as gpt_llm_reasoning_config,
-            create_model_config(ELLM_DESCRIBE_CONFIG) as desc_llm_config,
-            create_model_config(
-                dict(
-                    id="ellm/lorem-ttft-20-tpot-10",  # TTFT 20 ms, TPOT 10 ms
-                    type=ModelType.LLM,
-                    name="ELLM Lorem Ipsum Generator",
-                    capabilities=[
-                        ModelCapability.CHAT,
-                        ModelCapability.REASONING,
-                        ModelCapability.IMAGE,
-                        ModelCapability.AUDIO,
-                    ],
-                    context_length=128000,
-                    languages=["en"],
-                    owned_by="ellm",
-                )
-            ) as lorem_llm_config,
-            create_model_config(
-                dict(
-                    # Max context length = 10
-                    id="ellm/lorem-context-10",
-                    type=ModelType.LLM,
-                    name="Short-Context Chat Model",
-                    capabilities=[ModelCapability.CHAT],
-                    context_length=5,
-                    languages=["en"],
-                    owned_by="ellm",
-                )
-            ) as short_llm_config,
-            create_model_config(
-                dict(
-                    id="ellm/echo-prompt",
-                    type=ModelType.LLM,
-                    name="Echo Prompt Model",
-                    capabilities=[ModelCapability.CHAT],
-                    context_length=1000000,
-                    languages=["en"],
-                    owned_by="ellm",
-                )
-            ) as echo_config,
-            create_model_config(TEXT_EMBEDDING_3_SMALL_CONFIG) as embed_config,
-            create_model_config(RERANK_ENGLISH_v3_SMALL_CONFIG) as rerank_config,
-        ):
-            # Create deployments
-            with (
-                create_deployment(GPT_41_MINI_DEPLOYMENT),
-                create_deployment(GPT_5_MINI_DEPLOYMENT),
-                create_deployment(ELLM_DESCRIBE_DEPLOYMENT),
-                create_deployment(
-                    dict(
-                        model_id=lorem_llm_config.id,
-                        name=f"{lorem_llm_config.name} Deployment",
-                        provider=CloudProvider.ELLM,
-                        routing_id=lorem_llm_config.id,
-                        api_base=ENV_CONFIG.test_llm_api_base,
-                    )
-                ),
-                create_deployment(
-                    dict(
-                        model_id=short_llm_config.id,
-                        name="Short chat Deployment",
-                        provider=CloudProvider.ELLM,
-                        routing_id=short_llm_config.id,
-                        api_base=ENV_CONFIG.test_llm_api_base,
-                    )
-                ),
-                create_deployment(
-                    dict(
-                        model_id=echo_config.id,
-                        name="Echo Prompt Deployment",
-                        provider=CloudProvider.ELLM,
-                        routing_id=echo_config.id,
-                        api_base=ENV_CONFIG.test_llm_api_base,
-                    )
-                ),
-                create_deployment(TEXT_EMBEDDING_3_SMALL_DEPLOYMENT),
-                create_deployment(RERANK_ENGLISH_v3_SMALL_DEPLOYMENT),
-            ):
-                client = JamAI(user_id=superuser.id, project_id=p0.id)
-                image_uri = upload_file(client, FILES["rabbit.jpeg"]).uri
-                audio_uri = upload_file(client, FILES["gutter.mp3"]).uri
-                document_uri = upload_file(
-                    client, FILES["LLMs as Optimizers [DeepMind ; 2023].pdf"]
-                ).uri
-                yield ServingContext(
-                    superuser_id=superuser.id,
-                    superorg_id=superorg.id,
-                    project_id=p0.id,
-                    embedding_size=embed_config.final_embedding_size,
-                    image_uri=image_uri,
-                    audio_uri=audio_uri,
-                    document_uri=document_uri,
-                    gpt_llm_model_id=gpt_llm_config.id,
-                    gpt_llm_reasoning_config_id=gpt_llm_reasoning_config.id,
-                    desc_llm_model_id=desc_llm_config.id,
-                    lorem_llm_model_id=lorem_llm_config.id,
-                    short_llm_model_id=short_llm_config.id,
-                    echo_model_id=echo_config.id,
-                    embed_model_id=embed_config.id,
-                    rerank_model_id=rerank_config.id,
-                )
+        admin_client = JamAI(user_id=superuser.id, token=ENV_CONFIG.service_key_plain)
+        gpt_llm_config = admin_client.models.create_model_config(GPT_41_MINI_CONFIG)
+        gpt_llm_reasoning_config = admin_client.models.create_model_config(GPT_5_MINI_CONFIG)
+        desc_llm_config = admin_client.models.create_model_config(ELLM_DESCRIBE_CONFIG)
+        lorem_llm_config = admin_client.models.create_model_config(
+            ModelConfigCreate(
+                id="ellm/lorem-ttft-20-tpot-10",  # TTFT 20 ms, TPOT 10 ms
+                type=ModelType.LLM,
+                name="ELLM Lorem Ipsum Generator",
+                capabilities=[
+                    ModelCapability.CHAT,
+                    ModelCapability.REASONING,
+                    ModelCapability.IMAGE,
+                    ModelCapability.AUDIO,
+                ],
+                context_length=128000,
+                languages=["en"],
+                owned_by="ellm",
+            )
+        )
+        short_llm_config = admin_client.models.create_model_config(
+            ModelConfigCreate(
+                # Max context length = 10
+                id="ellm/lorem-context-10",
+                type=ModelType.LLM,
+                name="Short-Context Chat Model",
+                capabilities=[ModelCapability.CHAT],
+                context_length=5,
+                languages=["en"],
+                owned_by="ellm",
+            )
+        )
+        echo_config = admin_client.models.create_model_config(
+            ModelConfigCreate(
+                id="ellm/echo-prompt",
+                type=ModelType.LLM,
+                name="Echo Prompt Model",
+                capabilities=[ModelCapability.CHAT],
+                context_length=1000000,
+                languages=["en"],
+                owned_by="ellm",
+            )
+        )
+        image_gen_config = admin_client.models.create_model_config(
+            ModelConfigCreate(
+                id="ellm/mock-image-gen",
+                type=ModelType.IMAGE_GEN,
+                name="Mock Image Gen Model",
+                capabilities=[ModelCapability.IMAGE_OUT, ModelCapability.IMAGE],
+                context_length=8192,
+                languages=["en"],
+                owned_by="ellm",
+                llm_input_cost_per_mtoken=0.0,
+                llm_output_cost_per_mtoken=0.0,
+                image_input_cost_per_mtoken=0.0,
+                image_output_cost_per_mtoken=0.0,
+            )
+        )
+        embed_config = admin_client.models.create_model_config(TEXT_EMBEDDING_3_SMALL_CONFIG)
+        rerank_config = admin_client.models.create_model_config(RERANK_ENGLISH_v3_SMALL_CONFIG)
+
+        admin_client.models.create_deployment(GPT_41_MINI_DEPLOYMENT)
+        admin_client.models.create_deployment(GPT_5_MINI_DEPLOYMENT)
+        admin_client.models.create_deployment(ELLM_DESCRIBE_DEPLOYMENT)
+        admin_client.models.create_deployment(
+            DeploymentCreate(
+                model_id=lorem_llm_config.id,
+                name=f"{lorem_llm_config.name} Deployment",
+                provider=CloudProvider.ELLM,
+                routing_id=lorem_llm_config.id,
+                api_base=ENV_CONFIG.test_llm_api_base,
+            )
+        )
+        admin_client.models.create_deployment(
+            DeploymentCreate(
+                model_id=short_llm_config.id,
+                name="Short chat Deployment",
+                provider=CloudProvider.ELLM,
+                routing_id=short_llm_config.id,
+                api_base=ENV_CONFIG.test_llm_api_base,
+            )
+        )
+        admin_client.models.create_deployment(
+            DeploymentCreate(
+                model_id=echo_config.id,
+                name="Echo Prompt Deployment",
+                provider=CloudProvider.ELLM,
+                routing_id=echo_config.id,
+                api_base=ENV_CONFIG.test_llm_api_base,
+            )
+        )
+        admin_client.models.create_deployment(
+            DeploymentCreate(
+                model_id=image_gen_config.id,
+                name="Mock Image Gen Deployment",
+                provider=CloudProvider.ELLM,
+                routing_id=image_gen_config.id,
+                api_base=ENV_CONFIG.test_llm_api_base,
+            )
+        )
+        admin_client.models.create_deployment(TEXT_EMBEDDING_3_SMALL_DEPLOYMENT)
+        admin_client.models.create_deployment(RERANK_ENGLISH_v3_SMALL_DEPLOYMENT)
+
+        client = JamAI(user_id=superuser.id, project_id=p0.id)
+        image_uri = upload_file(client, FILES["rabbit.jpeg"]).uri
+        audio_uri = upload_file(client, FILES["gutter.mp3"]).uri
+        document_uri = upload_file(client, FILES["LLMs as Optimizers [DeepMind ; 2023].pdf"]).uri
+        yield ServingContext(
+            superuser_id=superuser.id,
+            superorg_id=superorg.id,
+            project_id=p0.id,
+            embedding_size=embed_config.final_embedding_size,
+            image_uri=image_uri,
+            audio_uri=audio_uri,
+            document_uri=document_uri,
+            gpt_llm_model_id=gpt_llm_config.id,
+            gpt_llm_reasoning_config_id=gpt_llm_reasoning_config.id,
+            desc_llm_model_id=desc_llm_config.id,
+            lorem_llm_model_id=lorem_llm_config.id,
+            short_llm_model_id=short_llm_config.id,
+            echo_model_id=echo_config.id,
+            embed_model_id=embed_config.id,
+            rerank_model_id=rerank_config.id,
+            image_gen_model_id=image_gen_config.id,
+        )
 
 
 @dataclass(slots=True)

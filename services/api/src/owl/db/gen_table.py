@@ -72,6 +72,7 @@ from owl.types import (
     DatetimeUTC,
     DiscriminatedGenConfig,
     EmbedGenConfig,
+    ImageGenConfig,
     LLMGenConfig,
     ModelCapability,
     ModelConfig_,
@@ -938,6 +939,91 @@ class GenerativeTableCore:
                                 organization_id=project.organization_id,
                             )
                             gen_config.rag_params.reranking_model = model.id
+            elif isinstance(gen_config, ImageGenConfig):
+                if col.is_vector_column:
+                    raise BadInputError(
+                        f'Table "{table_id}": '
+                        f'Image output column "{col.column_id}" must not be a vector column.'
+                    )
+                if not col.is_image_column:
+                    raise BadInputError(
+                        f'Table "{table_id}": '
+                        f'Image output column "{col.column_id}" must be an image column.'
+                    )
+                if set_default_prompts and not gen_config.prompt:
+                    _input_cols = [c for c in available_cols if c.gen_config is None]
+                    _text_cols = "\n\n".join(
+                        f"{c.column_id}: ${{{c.column_id}}}"
+                        for c in _input_cols
+                        if not (c.is_image_column or c.is_audio_column)
+                    )
+                    _image_cols = " ".join(
+                        f"${{{c.column_id}}}" for c in _input_cols if c.is_image_column
+                    )
+                    gen_config.prompt = (
+                        f"{_image_cols}\n\n"
+                        f'Table name: "{table_id}"\n\n'
+                        f"{_text_cols}"
+                        f'Generate an image for column "{col.column_id}" using the provided information.'
+                    ).strip()
+                ref_cols = re.findall(GEN_CONFIG_VAR_PATTERN, gen_config.prompt)
+                if allow_nonexistent_refs:
+                    ref_cols = [c for c in ref_cols if c in column_map]
+                if len(invalid_cols := [c for c in ref_cols if c not in valid_col_ids]) > 0:
+                    raise BadInputError(
+                        (
+                            f'Table "{table_id}": '
+                            f'Image Generation prompt of column "{col.column_id}" referenced '
+                            f"invalid source columns: {invalid_cols}. "
+                            "Make sure you only reference non-vector columns on its left. "
+                            f"Available columns: {valid_col_ids}."
+                        )
+                    )
+                ref_image_cols = [c for c in ref_cols if column_map[c].is_image_column]
+                ref_audio_cols = [c for c in ref_cols if column_map[c].is_audio_column]
+                if len(ref_audio_cols) > 0:
+                    raise BadInputError(
+                        f'Table "{table_id}": '
+                        f'Image Generation prompt of column "{col.column_id}" referenced '
+                        f"audio columns: {ref_audio_cols}."
+                    )
+                capabilities = [ModelCapability.IMAGE_OUT]
+                if len(ref_image_cols) > 0:
+                    capabilities.append(ModelCapability.IMAGE)
+                image_model = gen_config.model.strip()
+                if image_model:
+                    try:
+                        model = await cls._fetch_model(gen_config.model, project.organization_id)
+                        unsupported = list(set(capabilities) - set(model.capabilities))
+                        if len(unsupported) > 0:
+                            raise ModelCapabilityError(
+                                (
+                                    f'Table "{table_id}": Model "{model.id}" used in Image column "{col.column_id}" '
+                                    f"lack these capabilities: {', '.join(unsupported)}."
+                                )
+                            )
+                    except ModelCapabilityError:
+                        if replace_unavailable_models:
+                            image_model = ""
+                        else:
+                            raise
+                    except ResourceNotFoundError as e:
+                        if replace_unavailable_models:
+                            image_model = ""
+                        else:
+                            raise BadInputError(
+                                f'Table "{table_id}": '
+                                f'Image model "{gen_config.model}" used by column "{col.column_id}" is not found.'
+                            ) from e
+                if not image_model:
+                    try:
+                        model = await cls._fetch_model_with_capabilities(
+                            capabilities=capabilities,
+                            organization_id=project.organization_id,
+                        )
+                    except ModelCapabilityError as e:
+                        raise ModelCapabilityError(f'Table "{table_id}": {e}') from e
+                    gen_config.model = model.id
             elif isinstance(gen_config, CodeGenConfig):
                 if col.is_vector_column:
                     raise BadInputError(

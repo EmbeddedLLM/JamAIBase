@@ -1,21 +1,22 @@
 import asyncio
 import itertools
+import os
 import random
-from base64 import b64encode
+from base64 import b64decode, b64encode
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import timedelta
 from textwrap import dedent
 from time import perf_counter, time
-from typing import Any, AsyncGenerator
+from typing import IO, Any, AsyncGenerator, Literal
 
 import httpx
 import litellm
 import numpy as np
 import openai
 from fastapi import Request
-from litellm import acompletion, aembedding, arerank
+from litellm import acompletion, aembedding, aimage_edit, aimage_generation, arerank
 from litellm.llms.base_llm.chat.transformation import BaseLLMException
 from litellm.types.rerank import RerankResponse
 from litellm.types.utils import (
@@ -122,6 +123,185 @@ class _Logger:
         logger.bind(**kwargs).log(log_level, message)
 
 
+def _decode_data_uri(data_uri: str) -> tuple[bytes, str | None]:
+    if not data_uri.startswith("data:"):
+        raise BadInputError("Image output is not a data URI.")
+    header, _, payload = data_uri.partition(",")
+    if not payload:
+        raise BadInputError("Image output data URI is missing payload.")
+    mime = header[5:].split(";", 1)[0].strip().lower() if ";" in header else None
+    if "base64" not in header:
+        raise BadInputError("Image output data URI is not base64 encoded.")
+    try:
+        return b64decode(payload), mime or None
+    except Exception as e:
+        raise BadInputError("Failed to decode image data URI.") from e
+
+
+def _extract_image_data_uri(message: Any) -> str | None:
+    if message is None:
+        return None
+    images = getattr(message, "images", None)
+    if images is None and isinstance(message, dict):
+        images = message.get("images")
+    if not images:
+        return None
+    first = images[0]
+    if isinstance(first, dict):
+        image_url = first.get("image_url")
+    else:
+        image_url = getattr(first, "image_url", None)
+    if isinstance(image_url, dict):
+        return image_url.get("url")
+    if hasattr(image_url, "url"):
+        return image_url.url
+    if isinstance(image_url, str):
+        return image_url
+    return None
+
+
+def _get_usage_value(obj: Any, key: str) -> Any:
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _ensure_text_usage_details(usage: ChatCompletionUsage) -> ChatCompletionUsage:
+    if usage.prompt_tokens_details is None:
+        usage.prompt_tokens_details = PromptUsageDetails()
+    if usage.completion_tokens_details is None:
+        usage.completion_tokens_details = CompletionUsageDetails()
+    usage.prompt_tokens_details.text_tokens = None
+    usage.prompt_tokens_details.image_tokens = None
+    usage.completion_tokens_details.text_tokens = None
+    usage.completion_tokens_details.image_tokens = None
+    return usage
+
+
+def _image_usage_to_chat_usage(
+    usage: Usage | None,
+    *,
+    source: Literal["image_endpoint", "completion"],
+) -> ChatCompletionUsage:
+    if usage is None:
+        return ChatCompletionUsage(
+            prompt_tokens_details=PromptUsageDetails(),
+            completion_tokens_details=CompletionUsageDetails(),
+        )
+
+    if source == "image_endpoint":
+        input_details = _get_usage_value(usage, "input_tokens_details")
+        prompt_tokens = _get_usage_value(usage, "input_tokens") or 0
+        prompt_text_tokens = _get_usage_value(input_details, "text_tokens")
+        if prompt_text_tokens is None:
+            prompt_text_tokens = prompt_tokens
+        prompt_image_tokens = _get_usage_value(input_details, "image_tokens") or 0
+        prompt_cached_tokens = _get_usage_value(input_details, "cached_tokens") or 0
+        prompt_audio_tokens = _get_usage_value(input_details, "audio_tokens") or 0
+
+        completion_tokens = _get_usage_value(usage, "output_tokens") or 0
+        completion_image_tokens = completion_tokens
+        total_tokens = _get_usage_value(usage, "total_tokens") or (
+            prompt_tokens + completion_tokens
+        )
+
+        return ChatCompletionUsage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            prompt_tokens_details=PromptUsageDetails(
+                text_tokens=int(prompt_text_tokens or 0),
+                image_tokens=int(prompt_image_tokens or 0),
+                cached_tokens=int(prompt_cached_tokens or 0),
+                audio_tokens=int(prompt_audio_tokens or 0),
+            ),
+            completion_tokens_details=CompletionUsageDetails(
+                text_tokens=0,
+                image_tokens=int(completion_image_tokens or 0),
+                audio_tokens=0,
+                reasoning_tokens=0,
+                accepted_prediction_tokens=0,
+                rejected_prediction_tokens=0,
+            ),
+        )
+
+    prompt_details = _get_usage_value(usage, "prompt_tokens_details")
+    completion_details = _get_usage_value(usage, "completion_tokens_details")
+    prompt_text_tokens = _get_usage_value(prompt_details, "text_tokens")
+    prompt_tokens = _get_usage_value(usage, "prompt_tokens") or 0
+    prompt_image_tokens = _get_usage_value(prompt_details, "image_tokens") or 0
+    prompt_cached_tokens = _get_usage_value(prompt_details, "cached_tokens") or 0
+    prompt_audio_tokens = _get_usage_value(prompt_details, "audio_tokens") or 0
+
+    completion_text_tokens = _get_usage_value(completion_details, "text_tokens") or 0
+    completion_image_tokens = _get_usage_value(completion_details, "image_tokens") or 0
+    completion_reasoning_tokens = _get_usage_value(completion_details, "reasoning_tokens") or 0
+    completion_audio_tokens = _get_usage_value(completion_details, "audio_tokens") or 0
+    completion_accepted_tokens = (
+        _get_usage_value(completion_details, "accepted_prediction_tokens") or 0
+    )
+    completion_rejected_tokens = (
+        _get_usage_value(completion_details, "rejected_prediction_tokens") or 0
+    )
+    completion_tokens = _get_usage_value(usage, "completion_tokens") or 0
+    total_tokens = _get_usage_value(usage, "total_tokens") or (prompt_tokens + completion_tokens)
+
+    return ChatCompletionUsage(
+        prompt_tokens=int(prompt_tokens or 0),
+        completion_tokens=int(completion_tokens or 0),
+        total_tokens=int(total_tokens or 0),
+        prompt_tokens_details=PromptUsageDetails(
+            text_tokens=int(prompt_text_tokens or 0),
+            image_tokens=int(prompt_image_tokens or 0),
+            cached_tokens=int(prompt_cached_tokens or 0),
+            audio_tokens=int(prompt_audio_tokens or 0),
+        ),
+        completion_tokens_details=CompletionUsageDetails(
+            text_tokens=int(completion_text_tokens or 0),
+            image_tokens=int(completion_image_tokens or 0),
+            audio_tokens=int(completion_audio_tokens or 0),
+            reasoning_tokens=int(completion_reasoning_tokens or 0),
+            accepted_prediction_tokens=int(completion_accepted_tokens or 0),
+            rejected_prediction_tokens=int(completion_rejected_tokens or 0),
+        ),
+    )
+
+
+def _openai_responses_usage_to_chat_usage(
+    usage: Any,
+    usage_stats: dict[str, int] | None,
+) -> ChatCompletionUsage:
+    input_details = _get_usage_value(usage, "input_tokens_details")
+    output_details = _get_usage_value(usage, "output_tokens_details")
+    prompt_tokens = _get_usage_value(usage, "input_tokens") or 0
+    completion_tokens = _get_usage_value(usage, "output_tokens") or 0
+    total_tokens = _get_usage_value(usage, "total_tokens") or (prompt_tokens + completion_tokens)
+    result = ChatCompletionUsage(
+        prompt_tokens=int(prompt_tokens or 0),
+        completion_tokens=int(completion_tokens or 0),
+        total_tokens=int(total_tokens or 0),
+        prompt_tokens_details=PromptUsageDetails(
+            cached_tokens=int(_get_usage_value(input_details, "cached_tokens") or 0),
+            audio_tokens=int(_get_usage_value(input_details, "audio_tokens") or 0),
+        ),
+        completion_tokens_details=CompletionUsageDetails(
+            audio_tokens=int(_get_usage_value(output_details, "audio_tokens") or 0),
+            reasoning_tokens=int(_get_usage_value(output_details, "reasoning_tokens") or 0),
+            accepted_prediction_tokens=int(
+                _get_usage_value(output_details, "accepted_prediction_tokens") or 0
+            ),
+            rejected_prediction_tokens=int(
+                _get_usage_value(output_details, "rejected_prediction_tokens") or 0
+            ),
+        ),
+    )
+    if usage_stats is not None:
+        result.tool_usage_details = ToolUsageDetails(**usage_stats)
+    return result
+
+
 @dataclass(slots=True)
 class DeploymentContext:
     deployment: Deployment
@@ -130,6 +310,32 @@ class DeploymentContext:
     inference_provider: str
     is_reasoning_model: bool
     use_openai_responses: bool = False
+
+
+ImageInput = bytes | IO[bytes] | os.PathLike
+
+
+@dataclass(slots=True)
+class ImageBytesResult:
+    bytes: bytes
+    mime_type: str | None
+    usage: Usage | None
+    model_id: str
+    chat_usage: ChatCompletionUsage | None = None
+
+
+@dataclass(slots=True)
+class ImageProviderResult:
+    bytes: bytes
+    mime_type: str | None
+    usage: Usage | None
+    source: Literal["image_endpoint", "completion"]
+
+
+GEMINI_IMAGE_PREVIEW_ALLOWLIST = {
+    "gemini/gemini-3-pro-image-preview",
+    "gemini/gemini-2.5-flash-image",
+}
 
 
 class DeploymentRouter:
@@ -704,25 +910,14 @@ class DeploymentRouter:
                     final_usage = chunk.response.usage
 
         if final_usage:
-            usage = ChatCompletionUsage(
-                prompt_tokens=final_usage.input_tokens,
-                completion_tokens=final_usage.output_tokens,
-                total_tokens=final_usage.total_tokens,
-                prompt_tokens_details=PromptUsageDetails(
-                    cached_tokens=final_usage.input_tokens_details.cached_tokens
-                    if final_usage.input_tokens_details
-                    else 0
-                ),
-                completion_tokens_details=CompletionUsageDetails(
-                    reasoning_tokens=final_usage.output_tokens_details.reasoning_tokens
-                    if final_usage.output_tokens_details
-                    else 0
-                ),
-                tool_usage_details=ToolUsageDetails(**usage_stats),
-            )
+            usage = _openai_responses_usage_to_chat_usage(final_usage, usage_stats)
         else:
             # Fallback if usage is not in the final chunk for some reason
-            usage = ChatCompletionUsage(tool_usage_details=ToolUsageDetails(**usage_stats))
+            usage = ChatCompletionUsage(
+                prompt_tokens_details=PromptUsageDetails(),
+                completion_tokens_details=CompletionUsageDetails(),
+                tool_usage_details=ToolUsageDetails(**usage_stats),
+            )
 
         final_chunk = self._stream_delta(delta=Delta(), finish_reason="stop")
         final_chunk.usage = Usage(**usage.model_dump())
@@ -771,24 +966,13 @@ class DeploymentRouter:
         final_result = "\n\n".join(part for part in result_parts if part)
 
         if response.usage:
+            usage = _openai_responses_usage_to_chat_usage(response.usage, usage_stats)
+        else:
             usage = ChatCompletionUsage(
-                prompt_tokens=response.usage.input_tokens,
-                completion_tokens=response.usage.output_tokens,
-                total_tokens=response.usage.total_tokens,
-                prompt_tokens_details=PromptUsageDetails(
-                    cached_tokens=response.usage.input_tokens_details.cached_tokens
-                    if response.usage.input_tokens_details
-                    else 0
-                ),
-                completion_tokens_details=CompletionUsageDetails(
-                    reasoning_tokens=response.usage.output_tokens_details.reasoning_tokens
-                    if response.usage.output_tokens_details
-                    else 0
-                ),
+                prompt_tokens_details=PromptUsageDetails(),
+                completion_tokens_details=CompletionUsageDetails(),
                 tool_usage_details=ToolUsageDetails(**usage_stats),
             )
-        else:
-            usage = ChatCompletionUsage(tool_usage_details=ToolUsageDetails(**usage_stats))
 
         return ModelResponse(
             id=self.id,
@@ -891,6 +1075,182 @@ class DeploymentRouter:
             return self._completion_stream(messages, **hyperparams)
         else:
             return await self._completion(messages, **hyperparams)
+
+    async def image_generation(
+        self,
+        *,
+        messages: list[ChatEntry],
+        prompt: str,
+        size: str | None = None,
+        quality: str | None = None,
+        style: str | None = None,
+    ) -> ImageProviderResult:
+        async for attempt in AsyncRetrying(**self.retry_policy):
+            with attempt:
+                async with self._get_deployment(
+                    messages=messages,
+                    prompt=prompt,
+                    size=size,
+                    quality=quality,
+                    style=style,
+                ) as ctx:
+                    if ctx.routing_id in GEMINI_IMAGE_PREVIEW_ALLOWLIST:
+                        messages_payload, _ = await self._prepare_chat(
+                            messages=messages,
+                            hyperparams={},
+                            modalities=["image", "text"],
+                            stream=False,
+                        )
+                        response = await acompletion(
+                            timeout=self.config.timeout,
+                            api_key=ctx.api_key,
+                            base_url=ctx.deployment.api_base,
+                            model=ctx.routing_id,
+                            messages=messages_payload,
+                            stream=False,
+                            modalities=["image", "text"],
+                        )
+                        if response is None:
+                            raise ModelOverloadError(
+                                f'Model provider for "{self._model_display_id}" is overloaded. '
+                                "Please try again later."
+                            )
+                        response.model = self.config.id
+                        data_uri = _extract_image_data_uri(response.choices[0].message)
+                        if not data_uri:
+                            raise BadInputError(
+                                f'Model "{self.config.id}" returned no image output.'
+                            )
+                        image_bytes, mime = _decode_data_uri(data_uri)
+                        return ImageProviderResult(
+                            bytes=image_bytes,
+                            mime_type=mime,
+                            usage=response.usage,
+                            source="completion",
+                        )
+
+                    image_params: dict[str, Any] = {}
+                    if size is not None:
+                        image_params["size"] = size
+                    if quality is not None:
+                        image_params["quality"] = quality
+                    if style is not None:
+                        image_params["style"] = style
+                    response = await aimage_generation(
+                        timeout=self.config.timeout,
+                        api_key=ctx.api_key,
+                        api_base=ctx.deployment.api_base or None,
+                        model=ctx.routing_id,
+                        prompt=prompt,
+                        n=1,
+                        **image_params,
+                    )
+                    if response is None:
+                        raise ModelOverloadError(
+                            f'Model provider for "{self._model_display_id}" is overloaded. '
+                            "Please try again later."
+                        )
+                    response.model = self.config.id
+                    try:
+                        b64_json = response.data[0].b64_json
+                    except Exception as e:
+                        raise BadInputError(
+                            f'Model "{self.config.id}" returned no image output.'
+                        ) from e
+                    image_bytes = b64decode(b64_json)
+                    output_format = getattr(response, "output_format", None)
+                    mime = f"image/{output_format}" if output_format else None
+                    return ImageProviderResult(
+                        bytes=image_bytes,
+                        mime_type=mime,
+                        usage=response.usage,
+                        source="image_endpoint",
+                    )
+
+    async def image_edit(
+        self,
+        *,
+        messages: list[ChatEntry],
+        prompt: str,
+        images: list[ImageInput],
+        size: str | None = None,
+    ) -> ImageProviderResult:
+        async for attempt in AsyncRetrying(**self.retry_policy):
+            with attempt:
+                async with self._get_deployment(
+                    messages=messages,
+                    prompt=prompt,
+                    size=size,
+                ) as ctx:
+                    if ctx.routing_id in GEMINI_IMAGE_PREVIEW_ALLOWLIST:
+                        messages_payload, _ = await self._prepare_chat(
+                            messages=messages,
+                            hyperparams={},
+                            modalities=["image", "text"],
+                            stream=False,
+                        )
+                        response = await acompletion(
+                            timeout=self.config.timeout,
+                            api_key=ctx.api_key,
+                            base_url=ctx.deployment.api_base,
+                            model=ctx.routing_id,
+                            messages=messages_payload,
+                            stream=False,
+                            modalities=["image", "text"],
+                        )
+                        if response is None:
+                            raise ModelOverloadError(
+                                f'Model provider for "{self._model_display_id}" is overloaded. '
+                                "Please try again later."
+                            )
+                        response.model = self.config.id
+                        data_uri = _extract_image_data_uri(response.choices[0].message)
+                        if not data_uri:
+                            raise BadInputError(
+                                f'Model "{self.config.id}" returned no image output.'
+                            )
+                        image_bytes, mime = _decode_data_uri(data_uri)
+                        return ImageProviderResult(
+                            bytes=image_bytes,
+                            mime_type=mime,
+                            usage=response.usage,
+                            source="completion",
+                        )
+
+                    image_params: dict[str, Any] = {}
+                    if size is not None:
+                        image_params["size"] = size
+                    response = await aimage_edit(
+                        timeout=self.config.timeout,
+                        api_key=ctx.api_key,
+                        api_base=ctx.deployment.api_base or None,
+                        model=ctx.routing_id,
+                        prompt=prompt,
+                        image=images,
+                        n=1,
+                        **image_params,
+                    )
+                    if response is None:
+                        raise ModelOverloadError(
+                            f'Model provider for "{self._model_display_id}" is overloaded. '
+                            "Please try again later."
+                        )
+                    response.model = self.config.id
+                    try:
+                        b64_json = response.data[0].b64_json
+                    except Exception as e:
+                        raise BadInputError(
+                            f'Model "{self.config.id}" returned no image output.'
+                        ) from e
+                    image_bytes = b64decode(b64_json)
+                    output_format = getattr(response, "output_format", None)
+                    mime = f"image/{output_format}" if output_format else None
+                    return ImageProviderResult(
+                        bytes=image_bytes,
+                        mime_type=mime,
+                        usage=response.usage,
+                        source="image_endpoint",
+                    )
 
     ### --- Embedding --- ###
 
@@ -1134,6 +1494,20 @@ class LMEngine:
             # We raise TypeError here since this is a programming error
             raise TypeError("`messages` must be a list of `ChatEntry`.")
 
+    @staticmethod
+    def _image_prompt_from_messages(messages: list[ChatEntry]) -> str:
+        if not messages:
+            return ""
+        message = messages[-1]
+        if isinstance(message.content, str):
+            return message.content.strip()
+        if isinstance(message.content, list):
+            parts = [
+                c.text.strip() for c in message.content if isinstance(c, TextContent) and c.text
+            ]
+            return "\n\n".join(p for p in parts if p).strip()
+        return ""
+
     async def _get_default_model(
         self,
         model: str,
@@ -1209,6 +1583,26 @@ class LMEngine:
                 except Exception as e:
                     logger.warning(f"Failed to create LLM events due to error: {repr(e)}")
 
+    @asynccontextmanager
+    async def _setup_image_gen(
+        self,
+        model: str,
+        *,
+        requires_image_input: bool,
+    ):
+        capabilities = [str(ModelCapability.IMAGE_OUT)]
+        if requires_image_input:
+            capabilities.append(str(ModelCapability.IMAGE))
+        model_config = await self._get_default_model(model, capabilities)
+        model = model_config.id
+        router = DeploymentRouter(
+            request=self.request,
+            config=model_config,
+            organization=self.organization,
+            is_browser=self.is_browser,
+        )
+        yield router, model
+
     async def chat_completion_stream(
         self,
         *,
@@ -1235,8 +1629,11 @@ class LMEngine:
                 **hyperparams,
             )
             async for chunk in completion:
-                if hasattr(chunk, "usage"):
-                    self._chat_usage = ChatCompletionUsage.model_validate(chunk.usage.model_dump())
+                if hasattr(chunk, "usage") and chunk.usage is not None:
+                    usage = ChatCompletionUsage.model_validate(chunk.usage.model_dump())
+                    usage = _ensure_text_usage_details(usage)
+                    self._chat_usage = usage
+                    chunk.usage = Usage(**usage.model_dump())
                 yield ChatCompletionChunkResponse(
                     **chunk.model_dump(exclude_unset=True, exclude_none=True)
                 )
@@ -1269,6 +1666,7 @@ class LMEngine:
             completion = ChatCompletionResponse.model_validate(
                 completion.model_dump(exclude_unset=True, exclude_none=True)
             )
+            completion.usage = _ensure_text_usage_details(completion.usage)
             self._chat_usage = completion.usage
             return completion
 
@@ -1654,6 +2052,132 @@ class LMEngine:
             [TextContent(text=context_prompt)] + multimodal_contents + [TextContent(text=prompt)]
         )
         return prompt
+
+    def _record_image_usage(
+        self,
+        *,
+        model_id: str,
+        usage: Usage | None,
+        source: Literal["image_endpoint", "completion"],
+    ) -> None:
+        if self.billing is None or usage is None:
+            return
+
+        if source == "image_endpoint":
+            input_details = _get_usage_value(usage, "input_tokens_details")
+            text_input_token = _get_usage_value(input_details, "text_tokens")
+            if text_input_token is None:
+                text_input_token = _get_usage_value(usage, "input_tokens") or 0
+            image_input_token = _get_usage_value(input_details, "image_tokens") or 0
+            text_output_token = 0
+            image_output_token = _get_usage_value(usage, "output_tokens") or 0
+        else:
+            prompt_details = _get_usage_value(usage, "prompt_tokens_details")
+            completion_details = _get_usage_value(usage, "completion_tokens_details")
+            text_input_token = _get_usage_value(prompt_details, "text_tokens")
+            if text_input_token is None:
+                text_input_token = _get_usage_value(usage, "prompt_tokens") or 0
+            image_input_token = _get_usage_value(prompt_details, "image_tokens") or 0
+            text_output_token = (_get_usage_value(completion_details, "text_tokens") or 0) + (
+                _get_usage_value(completion_details, "reasoning_tokens") or 0
+            )
+            image_output_token = _get_usage_value(completion_details, "image_tokens") or 0
+
+        text_input_token = int(text_input_token or 0)
+        text_output_token = int(text_output_token or 0)
+        image_input_token = int(image_input_token or 0)
+        image_output_token = int(image_output_token or 0)
+        if (
+            text_input_token <= 0
+            and text_output_token <= 0
+            and image_input_token <= 0
+            and image_output_token <= 0
+        ):
+            return
+        try:
+            self.billing.create_image_gen_events(
+                model_id=model_id,
+                text_input_token=text_input_token,
+                text_output_token=text_output_token,
+                image_input_token=image_input_token,
+                image_output_token=image_output_token,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to create image gen events due to error: {repr(e)}")
+
+    async def image_generation(
+        self,
+        *,
+        model: str,
+        messages: list[ChatEntry],
+        size: str | None = None,
+        quality: str | None = None,
+        style: str | None = None,
+    ) -> ImageBytesResult:
+        self._check_messages_type(messages)
+        prompt = self._image_prompt_from_messages(messages) or "."
+        async with self._setup_image_gen(
+            model,
+            requires_image_input=False,
+        ) as (router, resolved_model):
+            provider_result = await router.image_generation(
+                messages=messages,
+                prompt=prompt,
+                size=size,
+                quality=quality,
+                style=style,
+            )
+            self._record_image_usage(
+                model_id=resolved_model,
+                usage=provider_result.usage,
+                source=provider_result.source,
+            )
+            chat_usage = _image_usage_to_chat_usage(
+                provider_result.usage, source=provider_result.source
+            )
+            return ImageBytesResult(
+                bytes=provider_result.bytes,
+                mime_type=provider_result.mime_type,
+                usage=provider_result.usage,
+                model_id=resolved_model,
+                chat_usage=chat_usage,
+            )
+
+    async def image_edit(
+        self,
+        *,
+        model: str,
+        messages: list[ChatEntry],
+        images: list[ImageInput],
+        size: str | None = None,
+    ) -> ImageBytesResult:
+        self._check_messages_type(messages)
+        prompt = self._image_prompt_from_messages(messages) or "."
+        async with self._setup_image_gen(
+            model,
+            requires_image_input=True,
+        ) as (router, resolved_model):
+            provider_result = await router.image_edit(
+                messages=messages,
+                prompt=prompt,
+                images=images,
+                size=size,
+            )
+            self._record_image_usage(
+                model_id=resolved_model,
+                usage=provider_result.usage,
+                source=provider_result.source,
+            )
+            chat_usage = _image_usage_to_chat_usage(
+                provider_result.usage, source=provider_result.source
+            )
+            return ImageBytesResult(
+                bytes=provider_result.bytes,
+                mime_type=provider_result.mime_type,
+                usage=provider_result.usage,
+                model_id=resolved_model,
+                chat_usage=chat_usage,
+            )
 
     ### --- Embedding --- ###
 

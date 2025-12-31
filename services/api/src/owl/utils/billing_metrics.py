@@ -51,6 +51,28 @@ class LlmTable(_BaseTable):
 
 
 @dataclass(frozen=True, slots=True)
+class ImageGenTable(_BaseTable):
+    table_id: str = "image_gen_usage"
+    text_input_token_col: str = "text_input_token"
+    text_output_token_col: str = "text_output_token"
+    image_input_token_col: str = "image_input_token"
+    image_output_token_col: str = "image_output_token"
+    text_input_cost_col: str = "text_input_cost"
+    text_output_cost_col: str = "text_output_cost"
+    image_input_cost_col: str = "image_input_cost"
+    image_output_cost_col: str = "image_output_cost"
+    cost_col: str = "cost"
+    result_text_input: str = "text_input"
+    result_text_output: str = "text_output"
+    result_image_input: str = "image_input"
+    result_image_output: str = "image_output"
+    result_total_token: str = "total_token"
+
+    def valid_group_by_cols(self) -> list[str]:
+        return _BaseTable().valid_group_by_cols() + ["type"]
+
+
+@dataclass(frozen=True, slots=True)
 class EmbedTable(_BaseTable):
     table_id: str = "embed_usage"
     value_col: str = "num_token"
@@ -114,6 +136,7 @@ class DBStorageTable(_BaseTable):
 @dataclass(frozen=True, slots=True)
 class CostTable(_BaseTable):
     llm_table: LlmTable = LlmTable()
+    image_table: ImageGenTable = ImageGenTable()
     embed_table: EmbedTable = EmbedTable()
     rerank_table: RerankTable = RerankTable()
     egress_table: EgressTable = EgressTable()
@@ -122,9 +145,14 @@ class CostTable(_BaseTable):
     category_total: str = "cost"
     category_llm_input: str = "input_cost"
     category_llm_output: str = "output_cost"
+    category_image_text_input: str = "text_input_cost"
+    category_image_text_output: str = "text_output_cost"
+    category_image_image_input: str = "image_input_cost"
+    category_image_image_output: str = "image_output_cost"
     llm_input_type: str = "input"
     llm_output_type: str = "output"
     category_llm: str = ProductType.LLM_TOKENS.value
+    category_image: str = ProductType.IMAGE_TOKENS.value
     category_embed: str = ProductType.EMBEDDING_TOKENS.value
     category_rerank: str = ProductType.RERANKER_SEARCHES.value
     category_egress: str = ProductType.EGRESS.value
@@ -144,28 +172,32 @@ class CostTable(_BaseTable):
         # HACK: the egress table does not have model_col, put model as 'bandwidth'
         # HACK: the file_storage and db_storage table does not have model_col, put model as 'file_storage' and 'db_storage'
         return f"""(
-        SELECT {self.llm_table.org_col}, {self.llm_table.proj_col}, {self.llm_table.model_col}, {self.llm_table.ts_col},  {self.llm_table.input_cost_col},  {self.llm_table.output_cost_col},  {self.llm_table.input_cost_col} + {self.llm_table.output_cost_col} as {self.category_llm}, 0 as {self.category_embed}, 0 as {self.category_rerank}, 0 as {self.category_egress}, 0 as {self.category_file_storage}, 0 as {self.category_db_storage}
+        SELECT {self.llm_table.org_col}, {self.llm_table.proj_col}, {self.llm_table.model_col}, {self.llm_table.ts_col}, {self.llm_table.input_cost_col}, {self.llm_table.output_cost_col}, 0 as {self.category_image_text_input}, 0 as {self.category_image_text_output}, 0 as {self.category_image_image_input}, 0 as {self.category_image_image_output}, {self.llm_table.input_cost_col} + {self.llm_table.output_cost_col} as {self.category_llm}, 0 as {self.category_image}, 0 as {self.category_embed}, 0 as {self.category_rerank}, 0 as {self.category_egress}, 0 as {self.category_file_storage}, 0 as {self.category_db_storage}
             FROM {self.llm_table.table_id}
             {base_where}
         UNION ALL
-        SELECT {self.embed_table.org_col}, {self.embed_table.proj_col}, {self.embed_table.model_col}, {self.embed_table.ts_col}, 0 as {self.llm_table.input_cost_col},  0 as {self.llm_table.output_cost_col}, 0 as {self.category_llm}, {self.embed_table.cost_col} as {self.category_embed}, 0 as {self.category_rerank}, 0 as {self.category_egress}, 0 as {self.category_file_storage}, 0 as {self.category_db_storage}
+        SELECT {self.embed_table.org_col}, {self.embed_table.proj_col}, {self.embed_table.model_col}, {self.embed_table.ts_col}, 0 as {self.llm_table.input_cost_col}, 0 as {self.llm_table.output_cost_col}, 0 as {self.category_image_text_input}, 0 as {self.category_image_text_output}, 0 as {self.category_image_image_input}, 0 as {self.category_image_image_output}, 0 as {self.category_llm}, 0 as {self.category_image}, {self.embed_table.cost_col} as {self.category_embed}, 0 as {self.category_rerank}, 0 as {self.category_egress}, 0 as {self.category_file_storage}, 0 as {self.category_db_storage}
             FROM {self.embed_table.table_id}
             {base_where}
         UNION ALL
-        SELECT {self.rerank_table.org_col}, {self.rerank_table.proj_col}, {self.rerank_table.model_col}, {self.rerank_table.ts_col}, 0 as {self.llm_table.input_cost_col},  0 as {self.llm_table.output_cost_col}, 0 as {self.category_llm}, 0 as {self.category_embed}, {self.rerank_table.cost_col} as {self.category_rerank}, 0 as {self.category_egress}, 0 as {self.category_file_storage}, 0 as {self.category_db_storage}
+        SELECT {self.rerank_table.org_col}, {self.rerank_table.proj_col}, {self.rerank_table.model_col}, {self.rerank_table.ts_col}, 0 as {self.llm_table.input_cost_col}, 0 as {self.llm_table.output_cost_col}, 0 as {self.category_image_text_input}, 0 as {self.category_image_text_output}, 0 as {self.category_image_image_input}, 0 as {self.category_image_image_output}, 0 as {self.category_llm}, 0 as {self.category_image}, 0 as {self.category_embed}, {self.rerank_table.cost_col} as {self.category_rerank}, 0 as {self.category_egress}, 0 as {self.category_file_storage}, 0 as {self.category_db_storage}
             FROM {self.rerank_table.table_id}
             {base_where}
         UNION ALL
-        SELECT {self.egress_table.org_col}, {self.egress_table.proj_col}, '{self.egress_table.model_col}' as {_BaseTable().model_col}, {self.egress_table.ts_col}, 0 as {self.llm_table.input_cost_col},  0 as {self.llm_table.output_cost_col}, 0 as {self.category_llm}, 0 as {self.category_embed}, {self.rerank_table.cost_col} as {self.category_rerank}, {self.egress_table.cost_col} as {self.category_egress}, 0 as {self.category_file_storage}, 0 as {self.category_db_storage}
+        SELECT {self.egress_table.org_col}, {self.egress_table.proj_col}, '{self.egress_table.model_col}' as {_BaseTable().model_col}, {self.egress_table.ts_col}, 0 as {self.llm_table.input_cost_col}, 0 as {self.llm_table.output_cost_col}, 0 as {self.category_image_text_input}, 0 as {self.category_image_text_output}, 0 as {self.category_image_image_input}, 0 as {self.category_image_image_output}, 0 as {self.category_llm}, 0 as {self.category_image}, 0 as {self.category_embed}, {self.rerank_table.cost_col} as {self.category_rerank}, {self.egress_table.cost_col} as {self.category_egress}, 0 as {self.category_file_storage}, 0 as {self.category_db_storage}
             FROM {self.egress_table.table_id}
             {base_where}
         UNION ALL
-        SELECT {self.file_storage_table.org_col}, {self.file_storage_table.proj_col}, '{self.file_storage_table.model_col}' as {_BaseTable().model_col}, {self.file_storage_table.ts_col}, 0 as {self.llm_table.input_cost_col},  0 as {self.llm_table.output_cost_col}, 0 as {self.category_llm}, 0 as {self.category_embed}, {self.rerank_table.cost_col} as {self.category_rerank}, 0 as {self.category_egress}, {self.file_storage_table.cost_col} as {self.category_file_storage}, 0 as {self.category_db_storage}
+        SELECT {self.file_storage_table.org_col}, {self.file_storage_table.proj_col}, '{self.file_storage_table.model_col}' as {_BaseTable().model_col}, {self.file_storage_table.ts_col}, 0 as {self.llm_table.input_cost_col}, 0 as {self.llm_table.output_cost_col}, 0 as {self.category_image_text_input}, 0 as {self.category_image_text_output}, 0 as {self.category_image_image_input}, 0 as {self.category_image_image_output}, 0 as {self.category_llm}, 0 as {self.category_image}, 0 as {self.category_embed}, {self.rerank_table.cost_col} as {self.category_rerank}, 0 as {self.category_egress}, {self.file_storage_table.cost_col} as {self.category_file_storage}, 0 as {self.category_db_storage}
             FROM {self.file_storage_table.table_id}
             {base_where}
         UNION ALL
-        SELECT {self.db_storage_table.org_col}, {self.db_storage_table.proj_col}, '{self.db_storage_table.model_col}' as {_BaseTable().model_col}, {self.db_storage_table.ts_col}, 0 as {self.llm_table.input_cost_col},  0 as {self.llm_table.output_cost_col}, 0 as {self.category_llm}, 0 as {self.category_embed}, {self.rerank_table.cost_col} as {self.category_rerank}, 0 as {self.category_egress}, 0 as {self.category_file_storage}, {self.db_storage_table.cost_col} as {self.category_db_storage}
+        SELECT {self.db_storage_table.org_col}, {self.db_storage_table.proj_col}, '{self.db_storage_table.model_col}' as {_BaseTable().model_col}, {self.db_storage_table.ts_col}, 0 as {self.llm_table.input_cost_col}, 0 as {self.llm_table.output_cost_col}, 0 as {self.category_image_text_input}, 0 as {self.category_image_text_output}, 0 as {self.category_image_image_input}, 0 as {self.category_image_image_output}, 0 as {self.category_llm}, 0 as {self.category_image}, 0 as {self.category_embed}, {self.rerank_table.cost_col} as {self.category_rerank}, 0 as {self.category_egress}, 0 as {self.category_file_storage}, {self.db_storage_table.cost_col} as {self.category_db_storage}
             FROM {self.db_storage_table.table_id}
+            {base_where}
+        UNION ALL
+        SELECT {self.image_table.org_col}, {self.image_table.proj_col}, {self.image_table.model_col}, {self.image_table.ts_col}, 0 as {self.llm_table.input_cost_col}, 0 as {self.llm_table.output_cost_col}, {self.image_table.text_input_cost_col} as {self.category_image_text_input}, {self.image_table.text_output_cost_col} as {self.category_image_text_output}, {self.image_table.image_input_cost_col} as {self.category_image_image_input}, {self.image_table.image_output_cost_col} as {self.category_image_image_output}, 0 as {self.category_llm}, {self.image_table.cost_col} as {self.category_image}, 0 as {self.category_embed}, 0 as {self.category_rerank}, 0 as {self.category_egress}, 0 as {self.category_file_storage}, 0 as {self.category_db_storage}
+            FROM {self.image_table.table_id}
             {base_where}
         )"""
 
@@ -235,7 +267,37 @@ _METRICS: tuple[MetricDef, ...] = (
         {"category": CostTable().category_llm, "type": CostTable().llm_output_type},
         "common",
     ),
+    MetricDef(
+        "image_text_input",
+        CostTable().category_image_text_input,
+        {"category": CostTable().category_image, "type": "text_input"},
+        "common",
+    ),
+    MetricDef(
+        "image_text_output",
+        CostTable().category_image_text_output,
+        {"category": CostTable().category_image, "type": "text_output"},
+        "common",
+    ),
+    MetricDef(
+        "image_image_input",
+        CostTable().category_image_image_input,
+        {"category": CostTable().category_image, "type": "image_input"},
+        "common",
+    ),
+    MetricDef(
+        "image_image_output",
+        CostTable().category_image_image_output,
+        {"category": CostTable().category_image, "type": "image_output"},
+        "common",
+    ),
     MetricDef("llm", CostTable().category_llm, {"category": CostTable().category_llm}, "common"),
+    MetricDef(
+        "image",
+        CostTable().category_image,
+        {"category": CostTable().category_image},
+        "common",
+    ),
     MetricDef("total", CostTable().category_total, {}, "common"),
 )
 
@@ -286,7 +348,20 @@ def _get_active_metrics(has_category: bool, has_type: bool) -> list[MetricDef]:
     if not has_category:
         if has_type:
             # not has_category and has_type
-            return [m for m in _METRICS if m.name in {"llm_input", "llm_output", "total"}]
+            return [
+                m
+                for m in _METRICS
+                if m.name
+                in {
+                    "llm_input",
+                    "llm_output",
+                    "image_text_input",
+                    "image_text_output",
+                    "image_image_input",
+                    "image_image_output",
+                    "total",
+                }
+            ]
         # has_category and has_type
         return [m for m in _METRICS if m.name == "total"]
     if has_type:
@@ -294,10 +369,27 @@ def _get_active_metrics(has_category: bool, has_type: bool) -> list[MetricDef]:
         return [
             m
             for m in _METRICS
-            if m.name in {"embed", "rerank", "egress", "llm_input", "llm_output", "file", "db"}
+            if m.name
+            in {
+                "embed",
+                "rerank",
+                "egress",
+                "llm_input",
+                "llm_output",
+                "image_text_input",
+                "image_text_output",
+                "image_image_input",
+                "image_image_output",
+                "file",
+                "db",
+            }
         ]
     # has_category and not has_type
-    return [m for m in _METRICS if m.name in {"embed", "rerank", "egress", "file", "db", "llm"}]
+    return [
+        m
+        for m in _METRICS
+        if m.name in {"embed", "rerank", "egress", "file", "db", "llm", "image"}
+    ]
 
 
 ###############################################################################
@@ -305,6 +397,7 @@ def _get_active_metrics(has_category: bool, has_type: bool) -> list[MetricDef]:
 ###############################################################################
 def _build_time_bucket_query(
     spec: LlmTable
+    | ImageGenTable
     | EmbedTable
     | RerankTable
     | EgressTable
@@ -350,19 +443,65 @@ def _build_time_bucket_query(
             value_expr = f"SUM({spec.input_col}) as {spec.result_input_token}, SUM({spec.output_col}) as {spec.result_output_token}"
         else:
             value_expr = f"SUM({spec.input_col} + {spec.output_col}) AS {spec.result_total_token}"
+    elif isinstance(spec, ImageGenTable):
+        if has_type:
+            value_expr = (
+                f"SUM({spec.text_input_token_col}) AS {spec.result_text_input}, "
+                f"SUM({spec.text_output_token_col}) AS {spec.result_text_output}, "
+                f"SUM({spec.image_input_token_col}) AS {spec.result_image_input}, "
+                f"SUM({spec.image_output_token_col}) AS {spec.result_image_output}"
+            )
+        else:
+            value_expr = (
+                f"SUM({spec.text_input_token_col} + {spec.text_output_token_col} + "
+                f"{spec.image_input_token_col} + {spec.image_output_token_col}) AS {spec.result_total_token}"
+            )
     elif isinstance(spec, FileStorageTable) or isinstance(spec, DBStorageTable):
         value_expr = f"MAX({spec.snapshot_col}) AS {spec.snapshot_col}"
     elif isinstance(spec, CostTable):
         if has_category:
             if has_type:
-                value_expr = f"SUM({spec.category_llm_input}) AS {spec.category_llm_input}, SUM({spec.category_llm_output}) AS {spec.category_llm_output}, SUM({spec.category_embed}) AS {spec.category_embed}, SUM({spec.category_rerank}) AS {spec.category_rerank}, SUM({spec.category_egress}) AS {spec.category_egress}, SUM({spec.category_file_storage}) AS {spec.category_file_storage}, SUM({spec.category_db_storage}) AS {spec.category_db_storage}"
+                value_expr = (
+                    f"SUM({spec.category_llm_input}) AS {spec.category_llm_input}, "
+                    f"SUM({spec.category_llm_output}) AS {spec.category_llm_output}, "
+                    f"SUM({spec.category_image_text_input}) AS {spec.category_image_text_input}, "
+                    f"SUM({spec.category_image_text_output}) AS {spec.category_image_text_output}, "
+                    f"SUM({spec.category_image_image_input}) AS {spec.category_image_image_input}, "
+                    f"SUM({spec.category_image_image_output}) AS {spec.category_image_image_output}, "
+                    f"SUM({spec.category_embed}) AS {spec.category_embed}, "
+                    f"SUM({spec.category_rerank}) AS {spec.category_rerank}, "
+                    f"SUM({spec.category_egress}) AS {spec.category_egress}, "
+                    f"SUM({spec.category_file_storage}) AS {spec.category_file_storage}, "
+                    f"SUM({spec.category_db_storage}) AS {spec.category_db_storage}"
+                )
             else:
-                value_expr = f"SUM({spec.category_llm}) AS {spec.category_llm}, SUM({spec.category_embed}) AS {spec.category_embed}, SUM({spec.category_rerank}) AS {spec.category_rerank}, SUM({spec.category_egress}) AS {spec.category_egress}, SUM({spec.category_file_storage}) AS {spec.category_file_storage}, SUM({spec.category_db_storage}) AS {spec.category_db_storage}"
+                value_expr = (
+                    f"SUM({spec.category_llm}) AS {spec.category_llm}, "
+                    f"SUM({spec.category_image}) AS {spec.category_image}, "
+                    f"SUM({spec.category_embed}) AS {spec.category_embed}, "
+                    f"SUM({spec.category_rerank}) AS {spec.category_rerank}, "
+                    f"SUM({spec.category_egress}) AS {spec.category_egress}, "
+                    f"SUM({spec.category_file_storage}) AS {spec.category_file_storage}, "
+                    f"SUM({spec.category_db_storage}) AS {spec.category_db_storage}"
+                )
         else:
             if has_type:
-                value_expr = f"SUM({spec.category_llm_input}) as {spec.category_llm_input}, SUM({spec.category_llm_output}) as {spec.category_llm_output}, SUM({spec.category_embed} + {spec.category_rerank} + {spec.category_egress} + {spec.category_file_storage} + {spec.category_db_storage}) AS {spec.category_total}"
+                value_expr = (
+                    f"SUM({spec.category_llm_input}) AS {spec.category_llm_input}, "
+                    f"SUM({spec.category_llm_output}) AS {spec.category_llm_output}, "
+                    f"SUM({spec.category_image_text_input}) AS {spec.category_image_text_input}, "
+                    f"SUM({spec.category_image_text_output}) AS {spec.category_image_text_output}, "
+                    f"SUM({spec.category_image_image_input}) AS {spec.category_image_image_input}, "
+                    f"SUM({spec.category_image_image_output}) AS {spec.category_image_image_output}, "
+                    f"SUM({spec.category_embed} + {spec.category_rerank} + {spec.category_egress} + "
+                    f"{spec.category_file_storage} + {spec.category_db_storage}) AS {spec.category_total}"
+                )
             else:
-                value_expr = f"SUM({spec.category_llm} + {spec.category_embed} + {spec.category_rerank} + {spec.category_egress} + {spec.category_file_storage} + {spec.category_db_storage}) AS {spec.category_total}"
+                value_expr = (
+                    f"SUM({spec.category_llm} + {spec.category_image} + {spec.category_embed} + "
+                    f"{spec.category_rerank} + {spec.category_egress} + "
+                    f"{spec.category_file_storage} + {spec.category_db_storage}) AS {spec.category_total}"
+                )
     else:
         value_expr = f"SUM({spec.value_col}) AS {spec.value_col}"
     select_cols.append(value_expr)
@@ -454,6 +593,89 @@ class BillingMetrics:
                             r.get(table.result_output_token),
                         ],
                         {**r, "type": table.result_output_token},
+                        interval,
+                        group_by,
+                    )
+                )
+        else:
+            usages = [
+                Usage.from_result(
+                    [
+                        int((r.get(table.ts_interval) + interval).timestamp()),
+                        r.get(table.result_total_token),
+                    ],
+                    r,
+                    interval,
+                    group_by,
+                )
+                for r in rows
+            ]
+        return UsageResponse(
+            windowSize=window_size,
+            data=usages,
+            start=from_.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            end=to.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+
+    async def query_image_usage(
+        self,
+        filtered_by_org_id: list[str] | None,
+        filtered_by_proj_id: list[str] | None,
+        from_: datetime,
+        to: datetime | None,
+        group_by: list[str],
+        window_size: str,
+    ) -> UsageResponse:
+        table = ImageGenTable()
+        to = to or datetime.now(timezone.utc)
+        group_by = self._process_group_by(group_by)
+        sql, interval = _build_time_bucket_query(
+            table, filtered_by_org_id, filtered_by_proj_id, from_, to, group_by.copy(), window_size
+        )
+        rows = await self._query(sql)
+        if "type" in group_by:
+            usages = []
+            for r in rows:
+                usages.append(
+                    Usage.from_result(
+                        [
+                            int((r.get(table.ts_interval) + interval).timestamp()),
+                            r.get(table.result_text_input),
+                        ],
+                        {**r, "type": "text_input"},
+                        interval,
+                        group_by,
+                    )
+                )
+                usages.append(
+                    Usage.from_result(
+                        [
+                            int((r.get(table.ts_interval) + interval).timestamp()),
+                            r.get(table.result_text_output),
+                        ],
+                        {**r, "type": "text_output"},
+                        interval,
+                        group_by,
+                    )
+                )
+                usages.append(
+                    Usage.from_result(
+                        [
+                            int((r.get(table.ts_interval) + interval).timestamp()),
+                            r.get(table.result_image_input),
+                        ],
+                        {**r, "type": "image_input"},
+                        interval,
+                        group_by,
+                    )
+                )
+                usages.append(
+                    Usage.from_result(
+                        [
+                            int((r.get(table.ts_interval) + interval).timestamp()),
+                            r.get(table.result_image_output),
+                        ],
+                        {**r, "type": "image_output"},
                         interval,
                         group_by,
                     )

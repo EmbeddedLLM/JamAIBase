@@ -20,6 +20,7 @@ from owl.types import (
     EgressUsageData,
     EmbedUsageData,
     FileStorageUsageData,
+    ImageGenUsageData,
     LlmUsageData,
     ModelConfigRead,
     OrganizationRead,
@@ -160,6 +161,42 @@ class ClickHouseAsyncClient:
             return result
         except Exception as e:
             self._log_error(f"Failed to insert data into table: llm_usage. Error: {e}")
+            raise
+
+    async def _insert_image_gen_usage(self, usages: list[ImageGenUsageData]):
+        await self._get_client()
+        try:
+            usages_list = [usage.as_list() for usage in usages]
+            result = await self.client.insert(
+                table="image_gen_usage",
+                data=usages_list,
+                column_names=[
+                    "id",
+                    "org_id",
+                    "proj_id",
+                    "user_id",
+                    "timestamp",
+                    "cost",
+                    "model",
+                    "text_input_token",
+                    "text_output_token",
+                    "image_input_token",
+                    "image_output_token",
+                    "text_input_cost",
+                    "text_output_cost",
+                    "image_input_cost",
+                    "image_output_cost",
+                ],
+                settings={
+                    "async_insert": 1,
+                    "wait_for_async_insert": 1,
+                    "async_insert_busy_timeout_ms": 1000,
+                    "async_insert_use_adaptive_busy_timeout": 1,
+                },
+            )
+            return result
+        except Exception as e:
+            self._log_error(f"Failed to insert data into table: image_gen_usage. Error: {e}")
             raise
 
     async def _insert_embed_usage(self, usages: list[EmbedUsageData]):
@@ -313,6 +350,7 @@ class ClickHouseAsyncClient:
     )
     async def insert_usage(self, usage: UsageData):
         llm_result = await self._insert_llm_usage(usage.llm_usage)
+        image_gen_result = await self._insert_image_gen_usage(usage.image_gen_usage)
         embed_result = await self._insert_embed_usage(usage.embed_usage)
         rerank_result = await self._insert_rerank_usage(usage.rerank_usage)
         egress_result = await self._insert_egress_usage(usage.egress_usage)
@@ -320,6 +358,7 @@ class ClickHouseAsyncClient:
         db_storage_result = await self._insert_db_storage_usage(usage.db_storage_usage)
         return (
             llm_result,
+            image_gen_result,
             embed_result,
             rerank_result,
             egress_result,
@@ -439,6 +478,7 @@ class BillingManager:
         self._deltas: dict[ProductType, float] = defaultdict(float)
         self._values: dict[ProductType, float] = defaultdict(float)
         self._llm_usage_events: list[LlmUsageData] = []
+        self._image_gen_usage_events: list[ImageGenUsageData] = []
         self._embed_usage_events: list[EmbedUsageData] = []
         self._rerank_usage_events: list[RerankUsageData] = []
         self._egress_usage_events: list[EgressUsageData] = []
@@ -546,6 +586,65 @@ class BillingManager:
                     output_token=output_tokens,
                     input_cost=0.0,
                     output_cost=0.0,
+                    cost=0.0,
+                )
+            )
+
+    def create_image_gen_events(
+        self,
+        model_id: str,
+        *,
+        text_input_token: int,
+        text_output_token: int,
+        image_input_token: int,
+        image_output_token: int,
+        create_usage: bool = True,
+    ) -> None:
+        text_input_token = int(text_input_token)
+        text_output_token = int(text_output_token)
+        image_input_token = int(image_input_token)
+        image_output_token = int(image_output_token)
+        if (
+            text_input_token <= 0
+            and text_output_token <= 0
+            and image_input_token <= 0
+            and image_output_token <= 0
+        ):
+            return
+        self._check_project_id()
+        # Analytics: Image token usage
+        self._events += [
+            self._cloud_event(
+                {"type": ProductType.IMAGE_TOKENS},
+                {
+                    "model": model_id,
+                    "tokens": v,
+                    "type": t,
+                    "proj_id": self.project_id,  # Update to proj_id to align with Clickhouse Column
+                },
+            )
+            for t, v in [
+                ("text_input", text_input_token),
+                ("text_output", text_output_token),
+                ("image_input", image_input_token),
+                ("image_output", image_output_token),
+            ]
+        ]
+        if create_usage:
+            self._image_gen_usage_events.append(
+                ImageGenUsageData(
+                    org_id=self.org.id,
+                    proj_id=self.project_id,
+                    user_id=self.user_id,
+                    model=model_id,
+                    text_input_token=text_input_token,
+                    text_output_token=text_output_token,
+                    image_input_token=image_input_token,
+                    image_output_token=image_output_token,
+                    text_input_cost=0.0,
+                    text_output_cost=0.0,
+                    image_input_cost=0.0,
+                    image_output_cost=0.0,
                     cost=0.0,
                 )
             )
@@ -721,6 +820,7 @@ class BillingManager:
         # Push usage to redis for queue if buffer less than 10000
         usage_data = UsageData(
             llm_usage=self._llm_usage_events,
+            image_gen_usage=self._image_gen_usage_events,
             embed_usage=self._embed_usage_events,
             rerank_usage=self._rerank_usage_events,
             egress_usage=self._egress_usage_events,
@@ -763,6 +863,12 @@ class BillingManager:
                     counter.add(1, attributes["data"])
                 elif event_type == ProductType.LLM_TOKENS:
                     counter = OPENTELEMETRY_CLIENT.get_counter(name="llm_token_usage")
+                    counter.add(
+                        attributes["data"]["tokens"],
+                        {k: v for k, v in attributes["data"].items() if k != "tokens"},
+                    )
+                elif event_type == ProductType.IMAGE_TOKENS:
+                    counter = OPENTELEMETRY_CLIENT.get_counter(name="image_token_usage")
                     counter.add(
                         attributes["data"]["tokens"],
                         {k: v for k, v in attributes["data"].items() if k != "tokens"},

@@ -19,6 +19,28 @@ ENGINE=MergeTree
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (org_id, timestamp, model)"
 
+clickhouse-client --query="CREATE TABLE IF NOT EXISTS jamaibase_owl.image_gen_usage
+(
+    \`id\` UUID,
+    \`org_id\` String,
+    \`proj_id\` String,
+    \`user_id\` String,
+    \`timestamp\` DateTime64(6, 'UTC'),
+    \`model\` String,
+    \`text_input_token\` UInt32,
+    \`text_output_token\` UInt32,
+    \`image_input_token\` UInt32,
+    \`image_output_token\` UInt32,
+    \`text_input_cost\` Decimal128(12),
+    \`text_output_cost\` Decimal128(12),
+    \`image_input_cost\` Decimal128(12),
+    \`image_output_cost\` Decimal128(12),
+    \`cost\` Decimal128(12)
+)
+ENGINE=MergeTree
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (org_id, timestamp, model)"
+
 clickhouse-client --query="CREATE TABLE IF NOT EXISTS jamaibase_owl.embed_usage
 (
     \`id\` UUID,

@@ -168,6 +168,9 @@ class Products(BaseModel):
     llm_tokens: Product = Field(
         description="LLM token quota to this plan or tier.",
     )
+    image_tokens: Product = Field(
+        description="Image token quota to this plan or tier.",
+    )
     embedding_tokens: Product = Field(
         description="Embedding token quota to this plan or tier.",
     )
@@ -188,6 +191,7 @@ class Products(BaseModel):
     def null(cls):
         return cls(
             llm_tokens=Product.null("ELLM tokens", "Million Tokens"),
+            image_tokens=Product.null("Image tokens", "Million Tokens"),
             embedding_tokens=Product.null("Embedding tokens", "Million Tokens"),
             reranker_searches=Product.null("Reranker searches", "Thousand Searches"),
             db_storage=Product.null("Database storage", "GiB"),
@@ -199,6 +203,7 @@ class Products(BaseModel):
     def unlimited(cls, unit_cost: float = 0.0):
         return cls(
             llm_tokens=Product.unlimited("ELLM tokens", "Million Tokens", unit_cost),
+            image_tokens=Product.unlimited("Image tokens", "Million Tokens", unit_cost),
             embedding_tokens=Product.unlimited("Embedding tokens", "Million Tokens", unit_cost),
             reranker_searches=Product.unlimited(
                 "Reranker searches", "Thousand Searches", unit_cost
@@ -213,6 +218,7 @@ _product2column = dict(
     credit=("credit",),
     credit_grant=("credit_grant",),
     llm_tokens=("llm_tokens_quota_mtok", "llm_tokens_usage_mtok"),
+    image_tokens=("image_tokens_quota_mtok", "image_tokens_usage_mtok"),
     embedding_tokens=(
         "embedding_tokens_quota_mtok",
         "embedding_tokens_usage_mtok",
@@ -228,6 +234,7 @@ class ProductType(StrEnum):
     CREDIT = "credit"
     CREDIT_GRANT = "credit_grant"
     LLM_TOKENS = "llm_tokens"
+    IMAGE_TOKENS = "image_tokens"
     EMBEDDING_TOKENS = "embedding_tokens"
     RERANKER_SEARCHES = "reranker_searches"
     DB_STORAGE = "db_storage"
@@ -304,6 +311,12 @@ class PricePlanUpdate(_BaseModel):
             products=Products(
                 llm_tokens=Product(
                     name="ELLM tokens",
+                    included=PriceTier(unit_cost=0.5, up_to=0.75),
+                    tiers=[],
+                    unit="Million Tokens",
+                ),
+                image_tokens=Product(
+                    name="Image tokens",
                     included=PriceTier(unit_cost=0.5, up_to=0.75),
                     tiers=[],
                     unit="Million Tokens",
@@ -514,6 +527,7 @@ class DeploymentRead(Deployment_):
 class ModelType(StrEnum):
     COMPLETION = "completion"
     LLM = "llm"
+    IMAGE_GEN = "image_gen"
     EMBED = "embed"
     RERANK = "rerank"
 
@@ -527,6 +541,7 @@ class ModelCapability(StrEnum):
     CHAT = "chat"
     TOOL = "tool"
     IMAGE = "image"  # TODO: Maybe change to "image_in" & "image_out"
+    IMAGE_OUT = "image_out"
     AUDIO = "audio"
     EMBED = "embed"
     RERANK = "rerank"
@@ -548,7 +563,7 @@ class ModelInfo(_BaseModel):
     )
     type: _ModelType = Field(
         "",
-        description="Model type. Can be completion, llm, embed, or rerank.",
+        description="Model type. Can be completion, llm, image_gen, embed, or rerank.",
         examples=[ModelType.LLM],
     )
     name: SanitisedNonEmptyStr = Field(
@@ -645,6 +660,15 @@ class ModelConfigUpdate(ModelInfo):
         -1.0,
         description="Cost in USD per million (mega) output / completion token.",
     )
+    # --- Image generation models --- #
+    image_input_cost_per_mtoken: float = Field(
+        -1.0,
+        description="Cost in USD per million (mega) image input tokens.",
+    )
+    image_output_cost_per_mtoken: float = Field(
+        -1.0,
+        description="Cost in USD per million (mega) image output tokens.",
+    )
     # --- Embedding models --- #
     embedding_size: PositiveNonZeroInt | None = Field(
         None,
@@ -704,6 +728,14 @@ class ModelConfigUpdate(ModelInfo):
         return self
 
     @model_validator(mode="after")
+    def check_image_cost_per_mtoken(self) -> Self:
+        if self.image_input_cost_per_mtoken < 0:
+            self.image_input_cost_per_mtoken = 0.0
+        if self.image_output_cost_per_mtoken < 0:
+            self.image_output_cost_per_mtoken = 0.0
+        return self
+
+    @model_validator(mode="after")
     def check_embed_cost_per_mtoken(self) -> Self:
         # OpenAI text-embedding-3-small pricing (2024-09-09)
         if self.embedding_cost_per_mtoken < 0:
@@ -729,7 +761,7 @@ class ModelConfigCreate(ModelConfigUpdate):
         ),
     )
     type: _ModelType = Field(
-        description="Model type. Can be completion, llm, embed, or rerank.",
+        description="Model type. Can be completion, llm, image_gen, embed, or rerank.",
     )
     name: SanitisedNonEmptyStr = Field(
         max_length=255,
@@ -1086,6 +1118,12 @@ class Organization_(OrganizationCreate, _TableBase):
     )
     llm_tokens_usage_mtok: float = Field(
         description="LLM token usage in millions of tokens.",
+    )
+    image_tokens_quota_mtok: float | None = Field(
+        description="Image token quota in millions of tokens.",
+    )
+    image_tokens_usage_mtok: float = Field(
+        description="Image token usage in millions of tokens.",
     )
     embedding_tokens_quota_mtok: float | None = Field(
         description="Embedding token quota in millions of tokens.",

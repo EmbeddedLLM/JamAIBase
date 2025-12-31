@@ -50,7 +50,7 @@ async def _check_permissions(
 
 @router.get(
     "/v2/meters/usages",
-    summary="Get the usage metrics of the specified type (llm, embedding, reranking).",
+    summary="Get the usage metrics of the specified type (llm, embedding, reranking, image).",
     description=(
         "Permissions: `system.MEMBER` to retrieve metrics for all organizations or all projects; "
         "`organization.MEMBER` to retrieve metrics for a specific organization; "
@@ -62,10 +62,13 @@ async def _check_permissions(
 async def get_usage_metrics(
     user: Annotated[UserAuth, Depends(auth_user_service_key)],
     type: Annotated[
-        Literal["llm", "embedding", "reranking"],
+        Literal["llm", "embedding", "reranking", "image"],
         Query(
             min_length=1,
-            description="Type of usage data to query. Must be one of: 'llm', 'embedding', or 'reranking'.",
+            description=(
+                "Type of usage data to query. Must be one of: 'llm', 'embedding', 'reranking', "
+                "or 'image'."
+            ),
         ),
     ],
     from_: Annotated[
@@ -140,7 +143,7 @@ async def get_usage_metrics(
 
     Raises:
         BadInputError: If the 'type' parameter is invalid (not one of 'llm',
-          'embedding', or 'reranking').
+          'embedding', 'reranking', or 'image').
     """
     # RBAC
     await _check_permissions(user, org_ids, proj_ids)
@@ -163,7 +166,11 @@ async def get_usage_metrics(
         return await metrics_client.query_reranking_usage(
             org_ids, proj_ids, from_, to, group_by, window_size
         )
-    raise BadInputError(f"type: {type} invalid. Must be one of: llm, embedding, reranking")
+    elif type == "image":
+        return await metrics_client.query_image_usage(
+            org_ids, proj_ids, from_, to, group_by, window_size
+        )
+    raise BadInputError(f"type: {type} invalid. Must be one of: llm, embedding, reranking, image")
 
 
 @router.get(

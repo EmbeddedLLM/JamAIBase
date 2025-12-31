@@ -80,6 +80,8 @@ from jamaibase.types import (  # noqa: F401
     Host,
     ImageContent,
     ImageContentData,
+    ImageGenConfig,
+    ImageGenUsageData,
     JSONInput,
     JSONInputBin,
     JSONOutput,

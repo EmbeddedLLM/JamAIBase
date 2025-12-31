@@ -185,6 +185,28 @@ def _describe_text(text_content: str | TextContent) -> str:
     return f"There is a text with [{num_tokens:,d}] tokens."
 
 
+def _parse_image_size(size: str | None) -> tuple[int, int]:
+    if not size or size == "auto":
+        return (64, 64)
+    match = re.match(r"^(\d+)x(\d+)$", size)
+    if match:
+        width = min(int(match.group(1)), 256)
+        height = min(int(match.group(2)), 256)
+        return (width, height)
+    return (64, 64)
+
+
+def _generate_image_bytes(prompt: str, size: str | None) -> tuple[bytes, str]:
+    width, height = _parse_image_size(size)
+    prompt = prompt or ""
+    seed = int(hashlib.blake2b(prompt.encode("utf-8")).hexdigest()[:6], 16)
+    color = ((seed >> 16) & 0xFF, (seed >> 8) & 0xFF, seed & 0xFF)
+    img = Image.new("RGB", (width, height), color=color)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return buffer.getvalue(), "png"
+
+
 def _execute_python(code: str, context: dict[str, Any] | None = None) -> Any:
     """
     Execute a string containing Python code and return its return value.
@@ -398,7 +420,10 @@ async def chat_completion(body: ChatCompletionRequest):
                     prompt_tokens=num_input_tokens,
                     completion_tokens=num_completion_tokens,
                     total_tokens=num_input_tokens + num_completion_tokens,
-                    prompt_tokens_details=PromptUsageDetails(cached_tokens=0, audio_tokens=0),
+                    prompt_tokens_details=PromptUsageDetails(
+                        cached_tokens=0,
+                        audio_tokens=0,
+                    ),
                     completion_tokens_details=CompletionUsageDetails(
                         audio_tokens=0,
                         reasoning_tokens=0,
@@ -445,6 +470,16 @@ async def chat_completion(body: ChatCompletionRequest):
             prompt_tokens=num_input_tokens,
             completion_tokens=num_completion_tokens,
             total_tokens=num_input_tokens + num_completion_tokens,
+            prompt_tokens_details=PromptUsageDetails(
+                cached_tokens=0,
+                audio_tokens=0,
+            ),
+            completion_tokens_details=CompletionUsageDetails(
+                audio_tokens=0,
+                reasoning_tokens=0,
+                accepted_prediction_tokens=0,
+                rejected_prediction_tokens=0,
+            ),
         ),
     )
     return response
@@ -516,6 +551,60 @@ async def embeddings(body: EmbeddingRequest) -> EmbeddingResponse:
             prompt_tokens=prompt_token_count,
             total_tokens=prompt_token_count,
         ),
+    )
+
+
+@app.post("/v1/images/generations")
+async def image_generations(request: Request) -> ORJSONResponse:
+    body = await request.json()
+    prompt = body.get("prompt", "") if isinstance(body, dict) else ""
+    size = body.get("size", None) if isinstance(body, dict) else None
+    image_bytes, output_format = _generate_image_bytes(prompt, size)
+    b64_json = base64.b64encode(image_bytes).decode("ascii")
+    input_tokens = max(1, len(prompt.split())) if isinstance(prompt, str) else 1
+    return ORJSONResponse(
+        status_code=200,
+        content={
+            "created": int(time()),
+            "data": [{"b64_json": b64_json}],
+            "output_format": output_format,
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": 1,
+                "total_tokens": input_tokens + 1,
+                "input_tokens_details": {"text_tokens": input_tokens, "image_tokens": 0},
+                "output_tokens_details": {"image_tokens": 1},
+            },
+        },
+    )
+
+
+@app.post("/v1/images/edits")
+async def image_edits(request: Request) -> ORJSONResponse:
+    form = await request.form()
+    prompt = form.get("prompt", "")
+    size = form.get("size", None)
+    if not isinstance(prompt, str):
+        prompt = ""
+    if not isinstance(size, str):
+        size = None
+    image_bytes, output_format = _generate_image_bytes(prompt, size)
+    b64_json = base64.b64encode(image_bytes).decode("ascii")
+    input_tokens = max(1, len(prompt.split())) if isinstance(prompt, str) else 1
+    return ORJSONResponse(
+        status_code=200,
+        content={
+            "created": int(time()),
+            "data": [{"b64_json": b64_json}],
+            "output_format": output_format,
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": 1,
+                "total_tokens": input_tokens + 1,
+                "input_tokens_details": {"text_tokens": input_tokens, "image_tokens": 1},
+                "output_tokens_details": {"image_tokens": 1},
+            },
+        },
     )
 
 

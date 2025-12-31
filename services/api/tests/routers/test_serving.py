@@ -527,6 +527,20 @@ def test_chat_completion(setup: ServingContext, stream: bool):
 
 
 @pytest.mark.parametrize("stream", **STREAM_PARAMS)
+def test_chat_completion_usage_details_text_only(setup: ServingContext, stream: bool):
+    setup = deepcopy(setup)
+    client = JamAI(user_id=setup.user_id, project_id=setup.project_ids[0])
+    response = _test_chat_completion(client, setup.chat_request, stream)
+    usage = response.usage
+    assert usage.prompt_tokens_details is not None
+    assert usage.completion_tokens_details is not None
+    assert usage.prompt_tokens_details.text_tokens is None
+    assert usage.prompt_tokens_details.image_tokens is None
+    assert usage.completion_tokens_details.text_tokens is None
+    assert usage.completion_tokens_details.image_tokens is None
+
+
+@pytest.mark.parametrize("stream", **STREAM_PARAMS)
 def test_chat_completion_text_array(setup: ServingContext, stream: bool):
     setup = deepcopy(setup)
     if stream:

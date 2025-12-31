@@ -318,6 +318,27 @@ class Telemetry(VictoriaMetricsAsync):
             window_size,
         )
 
+    async def query_image_usage(
+        self,
+        filtered_by_org_id: list[str] | None,
+        filtered_by_proj_id: list[str] | None,
+        from_: datetime,
+        to: datetime | None,
+        group_by: list[str],
+        window_size: str,
+    ) -> UsageResponse:
+        return await self.query_usage(
+            "increase_pure",
+            "sum",
+            "image_token_usage",
+            filtered_by_org_id,
+            filtered_by_proj_id,
+            from_,
+            to,
+            group_by,
+            window_size,
+        )
+
     async def query_embedding_usage(
         self,
         filtered_by_org_id: list[str] | None,

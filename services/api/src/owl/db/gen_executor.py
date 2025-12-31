@@ -1,4 +1,5 @@
 import base64
+import mimetypes
 import re
 from asyncio import Queue, TaskGroup
 from collections import defaultdict, deque
@@ -6,6 +7,7 @@ from os.path import basename, splitext
 from time import perf_counter, time
 from typing import Any, AsyncGenerator, Literal, Sequence
 
+import filetype
 import numpy as np
 from async_lru import alru_cache
 from fastapi import Request
@@ -40,16 +42,19 @@ from owl.types import (
     Chunk,
     CodeGenConfig,
     ColumnDtype,
+    CompletionUsageDetails,
     DiscriminatedGenConfig,
     EmbedGenConfig,
     ImageContent,
     ImageContentData,
+    ImageGenConfig,
     LLMGenConfig,
     MultiRowAddRequest,
     MultiRowCompletionResponse,
     MultiRowRegenRequest,
     OrganizationRead,
     ProjectRead,
+    PromptUsageDetails,
     PythonGenConfig,
     References,
     RegenStrategy,
@@ -58,7 +63,7 @@ from owl.types import (
     RowRegen,
     TextContent,
 )
-from owl.utils import mask_string, uuid7_draft2_str
+from owl.utils import mask_string, uuid7_draft2_str, uuid7_str
 from owl.utils.billing import BillingManager
 from owl.utils.code import code_executor
 from owl.utils.concurrency import determine_concurrent_batches
@@ -68,7 +73,7 @@ from owl.utils.exceptions import (
     ResourceNotFoundError,
     UpStreamError,
 )
-from owl.utils.io import open_uri_async
+from owl.utils.io import open_uri_async, s3_upload
 from owl.utils.lm import LMEngine
 
 
@@ -197,7 +202,7 @@ class _Executor:
             dependencies = cls._extract_all_upstream_columns_from(columns, column.column_id)
         elif isinstance(gen_config, (CodeGenConfig, EmbedGenConfig)):
             dependencies = [gen_config.source_column]
-        elif isinstance(gen_config, LLMGenConfig):
+        elif isinstance(gen_config, (LLMGenConfig, ImageGenConfig)):
             dependencies = cls._parse_prompt_dependencies(gen_config.prompt)
         else:
             dependencies = []
@@ -624,6 +629,8 @@ class GenExecutor(_Executor):
         match task.body:
             case LLMGenConfig():
                 inputs = self._extract_upstream_columns(task.body.prompt)
+            case ImageGenConfig():
+                inputs = self._extract_upstream_columns(task.body.prompt)
             case EmbedGenConfig() | CodeGenConfig():
                 inputs = [task.body.source_column]
             case PythonGenConfig():
@@ -640,6 +647,8 @@ class GenExecutor(_Executor):
         match task.body:
             case LLMGenConfig():
                 await self._execute_chat_task(task, q)
+            case ImageGenConfig():
+                await self._execute_image_task(task, q)
             case EmbedGenConfig():
                 await self._execute_embed_task(task, q)
             case CodeGenConfig():
@@ -724,7 +733,7 @@ class GenExecutor(_Executor):
             messages = [await self._load_files(m) for m in messages]
             req = ChatRequest(
                 id=self._request_id,
-                messages=[ChatEntry.model_validate(m.model_dump()) for m in messages],
+                messages=messages,
                 **body.model_dump(),
             )
             req, references = await self._setup_rag(req)
@@ -834,6 +843,163 @@ class GenExecutor(_Executor):
             await self._signal_task_completion(task, result)
             self.log(f'Streamed completion for column "{output_column}": <{mask_string(result)}>.')
 
+    async def _execute_image_task(self, task: Task, q: Queue[ResultT | None]) -> None:
+        output_column = task.output_column_name
+        body: ImageGenConfig = task.body
+        # Check if a value is provided
+        try:
+            result = self._column_dict[output_column]
+            await q.put(None)
+            await self._signal_task_completion(task, result)
+            return
+        except KeyError:
+            pass
+
+        state_col = f"{task.output_column_name}_"
+        state: dict[str, Any] = self._column_dict.get(state_col, {})
+        result = ""
+        try:
+            self._check_upstream_error(self._extract_upstream_columns(body.prompt))
+            message = ChatThreadEntry.user(
+                content=self.table.interpolate_column(
+                    body.prompt if body.prompt else ".", self._column_dict
+                )
+            )
+            loaded = await self._load_files(message)
+            if isinstance(loaded.content, list) and any(
+                isinstance(c, AudioContent) for c in loaded.content
+            ):
+                raise BadInputError(
+                    f'Table "{self._table_id}": Audio inputs are not supported for image output columns.'
+                )
+
+            ref_cols = self._extract_upstream_columns(body.prompt)
+            ref_image_cols = [
+                col
+                for col in ref_cols
+                if col in self._col_map and self._col_map[col].is_image_column
+            ]
+            images: list[bytes] = []
+            if ref_image_cols:
+                images = _image_bytes_from_message(loaded)
+                if len(images) == 0:
+                    raise BadInputError(
+                        f'Table "{self._table_id}": No image inputs found for image edit.'
+                    )
+                image_result = await self.lm.image_edit(
+                    model=body.model,
+                    messages=[loaded],
+                    images=images,
+                    size=body.size,
+                )
+            else:
+                image_result = await self.lm.image_generation(
+                    model=body.model,
+                    messages=[loaded],
+                    size=body.size,
+                    quality=body.quality,
+                    style=body.style,
+                )
+
+            image_bytes = image_result.bytes
+            mime_type, extension = _resolve_image_output_type(image_bytes, image_result.mime_type)
+            filename = f"{uuid7_str()}{extension}"
+            result = await s3_upload(
+                organization_id=self.organization.id,
+                project_id=self.project.id,
+                content=image_bytes,
+                content_type=mime_type,
+                filename=filename,
+            )
+
+            response_kwargs = dict(
+                id=self._request_id,
+                created=int(time()),
+                model=body.model,
+                usage=(
+                    image_result.chat_usage
+                    if image_result.chat_usage is not None
+                    else ChatCompletionUsage(
+                        prompt_tokens_details=PromptUsageDetails(
+                            text_tokens=0,
+                            image_tokens=0,
+                            cached_tokens=0,
+                            audio_tokens=0,
+                        ),
+                        completion_tokens_details=CompletionUsageDetails(
+                            text_tokens=0,
+                            image_tokens=0,
+                            audio_tokens=0,
+                            reasoning_tokens=0,
+                            accepted_prediction_tokens=0,
+                            rejected_prediction_tokens=0,
+                        ),
+                    )
+                ),
+                choices=[
+                    ChatCompletionChoice(
+                        message=ChatCompletionMessage(content=str(result)),
+                        index=0,
+                    )
+                ],
+            )
+            response = (
+                CellCompletionResponse(
+                    **response_kwargs, output_column_name=output_column, row_id=self._row_id
+                )
+                if self._stream
+                else ChatCompletionResponse(**response_kwargs)
+            )
+            await q.put(
+                TaskResult(
+                    response=response,
+                    output_column_name=output_column,
+                    row_id=self._row_id,
+                )
+            )
+            self.log(f'Generated image for column "{output_column}": <{mask_string(result)}>.')
+        except Exception as e:
+            result = None
+            response_kwargs = dict(
+                id=self._request_id,
+                created=int(time()),
+                model=body.model,
+                usage=ChatCompletionUsage(),
+                choices=[
+                    ChatCompletionChoice(
+                        message=ChatCompletionMessage(content=f"[ERROR] {str(e)}"),
+                        index=0,
+                        finish_reason="error",
+                    )
+                ],
+            )
+            response = (
+                CellCompletionResponse(
+                    **response_kwargs, output_column_name=output_column, row_id=self._row_id
+                )
+                if self._stream
+                else ChatCompletionResponse(**response_kwargs)
+            )
+            await q.put(
+                TaskResult(
+                    response=response,
+                    output_column_name=output_column,
+                    row_id=self._row_id,
+                )
+            )
+            state["error"] = {"message": f"[ERROR] {str(e)}"}
+            self._error_columns.append(output_column)
+            self.log_exception(
+                f'Table "{self._table_id}": Failed to generate image for column "{output_column}": {repr(e)}',
+                e,
+            )
+        else:
+            state.pop("error", None)
+        finally:
+            await q.put(None)
+            self._column_dict[state_col] = state
+            await self._signal_task_completion(task, result)
+
     async def _execute_embed_task(self, task: Task, q: Queue[ResultT | None]) -> None:
         output_column = task.output_column_name
         # Check if a value is provided
@@ -931,7 +1097,8 @@ class GenExecutor(_Executor):
             for k, v in row_data.items():
                 col = next((col for col in self.table.column_metadata if col.column_id == k), None)
                 if col and (col.dtype == ColumnDtype.AUDIO or col.dtype == ColumnDtype.IMAGE):
-                    row_data[k] = await _load_uri_as_bytes(v)
+                    file_binary, _ = await _load_uri_as_bytes(v)
+                    row_data[k] = file_binary
 
             if source_code:
                 result = await code_executor(
@@ -1081,7 +1248,8 @@ class GenExecutor(_Executor):
             for k, v in row_data.items():
                 col = next((col for col in self.table.column_metadata if col.column_id == k), None)
                 if col and (col.dtype == ColumnDtype.AUDIO or col.dtype == ColumnDtype.IMAGE):
-                    row_data[k] = await _load_uri_as_bytes(v)
+                    file_binary, _ = await _load_uri_as_bytes(v)
+                    row_data[k] = file_binary
 
             if body.python_code:
                 result = await code_executor(
@@ -1173,11 +1341,11 @@ class GenExecutor(_Executor):
         task.status = "done"
         await self._task_signal.put(None)
 
-    async def _load_files(self, message: ChatThreadEntry) -> ChatThreadEntry | ChatEntry:
+    async def _load_files(self, message: ChatThreadEntry) -> ChatEntry:
         if not isinstance(message, ChatThreadEntry):
             raise TypeError(f"Unexpected message type: {type(message)}")
         if message.role != ChatRole.USER:
-            return message
+            return ChatEntry.model_validate(message.model_dump())
         ### Text-only
         if isinstance(message.content, str):
             # logger.error(f"{message.content=}")
@@ -1355,28 +1523,84 @@ class GenExecutor(_Executor):
 
 
 @alru_cache(maxsize=ENV_CONFIG.max_file_cache_size, ttl=ENV_CONFIG.document_loader_cache_ttl_sec)
-async def _load_uri_as_bytes(uri: str | None) -> bytes | None:
+async def _load_uri_as_bytes(uri: str | None) -> tuple[bytes | None, str | None]:
     """
-    Loads a file from URI as raw bytes.
+    Loads a file from URI as raw bytes plus best-effort MIME type.
     Args:
         uri (str): The URI of the file.
     Returns:
         content (bytes | None): The raw file content as bytes, or None if loading fails.
+        mime (str | None): Best-effort MIME type, or None if unavailable.
     Raises:
         BadInputError: If the URI is invalid or file cannot be accessed.
     """
     if not uri:
-        return None
-
+        return None, None
     try:
-        async with open_uri_async(str(uri)) as (file_handle, _):
+        async with open_uri_async(str(uri)) as (file_handle, mime):
             file_binary = await file_handle.read()
-            return file_binary
+            return file_binary, mime
     except (BadInputError, ResourceNotFoundError):
         raise
     except Exception as e:
         logger.warning(f'Failed to load file "{uri}" due to error: {repr(e)}')
+        return None, None
+
+
+def _extension_from_mime(mime: str | None) -> str | None:
+    if not mime:
         return None
+    mime = mime.split(";")[0].strip().lower()
+    ext = mimetypes.guess_extension(mime)
+    if ext == ".jpe":
+        ext = ".jpg"
+    return ext
+
+
+def _decode_data_uri(data_uri: str | None) -> tuple[bytes | None, str | None]:
+    if not data_uri:
+        return None, None
+    if not data_uri.startswith("data:"):
+        return None, None
+    header, _, payload = data_uri.partition(",")
+    if not payload:
+        return None, None
+    mime = header[5:].split(";")[0].strip().lower() if header else None
+    try:
+        return base64.b64decode(payload), mime or None
+    except Exception:
+        return None, mime or None
+
+
+def _image_bytes_from_message(message: ChatEntry) -> list[bytes]:
+    if isinstance(message.content, str):
+        return []
+    seen: set[str] = set()
+    images: list[bytes] = []
+    for part in message.content:
+        if not isinstance(part, ImageContent):
+            continue
+        data_uri = part.image_url.url if part.image_url else ""
+        if not data_uri or data_uri in seen:
+            continue
+        seen.add(data_uri)
+        img_bytes, _ = _decode_data_uri(data_uri)
+        if img_bytes is not None:
+            images.append(img_bytes)
+    return images
+
+
+def _resolve_image_output_type(image_bytes: bytes, mime_type: str | None) -> tuple[str, str]:
+    mime = (mime_type or "").split(";")[0].strip().lower() or None
+    extension = _extension_from_mime(mime)
+    if extension not in IMAGE_FILE_EXTENSIONS:
+        guessed = filetype.guess(image_bytes)
+        if guessed:
+            extension = f".{guessed.extension}"
+            mime = mime or guessed.mime
+    if extension not in IMAGE_FILE_EXTENSIONS:
+        return "image/png", ".png"
+    return mime or "image/png", extension
 
 
 async def _load_uri_as_base64(uri: str | None) -> str | AudioContent | ImageContent | None:
@@ -1394,10 +1618,20 @@ async def _load_uri_as_base64(uri: str | None) -> str | AudioContent | ImageCont
     """
     if not uri:
         return None
-    file_binary = await _load_uri_as_bytes(uri)
+    file_binary, mime = await _load_uri_as_bytes(uri)
     if file_binary is None:
         return None
     extension = splitext(uri)[1].lower()
+    if extension and extension not in (
+        DOCUMENT_FILE_EXTENSIONS + AUDIO_FILE_EXTENSIONS + IMAGE_FILE_EXTENSIONS
+    ):
+        extension = ""
+    if not extension:
+        extension = _extension_from_mime(mime) or ""
+    if not extension:
+        guessed = filetype.guess(file_binary)
+        if guessed is not None:
+            extension = f".{guessed.extension}"
     try:
         # Load as document
         if extension in DOCUMENT_FILE_EXTENSIONS:

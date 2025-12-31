@@ -272,6 +272,8 @@ def _check_quotas(org: OrganizationRead, new_org: OrganizationRead):
     assert new_org.credit == org.credit
     # LLM
     assert new_org.llm_tokens_quota_mtok == org.llm_tokens_quota_mtok
+    # Image
+    assert new_org.image_tokens_quota_mtok == org.image_tokens_quota_mtok
     # Embed
     assert new_org.embedding_tokens_quota_mtok == org.embedding_tokens_quota_mtok
     # Rerank (no usage yet)
@@ -507,6 +509,12 @@ def test_tiered_billing():
                 tiers=[],
                 unit="Million Tokens",
             ),
+            image_tokens=Product(
+                name="Image tokens",
+                included=PriceTier(unit_cost=0.5, up_to=0.75),
+                tiers=[],
+                unit="Million Tokens",
+            ),
             embedding_tokens=Product(
                 name="Embedding tokens",
                 included=PriceTier(unit_cost=0.5, up_to=0.75),
@@ -561,6 +569,8 @@ def test_tiered_billing():
         credit_grant=0.0,
         llm_tokens_quota_mtok=price_plan.products.llm_tokens.included.up_to,
         llm_tokens_usage_mtok=0.0,
+        image_tokens_quota_mtok=price_plan.products.image_tokens.included.up_to,
+        image_tokens_usage_mtok=0.0,
         embedding_tokens_quota_mtok=price_plan.products.embedding_tokens.included.up_to,
         embedding_tokens_usage_mtok=0.0,
         reranker_quota_ksearch=price_plan.products.reranker_searches.included.up_to,

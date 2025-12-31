@@ -721,5 +721,51 @@
         "provider": "infinity"
       }
     ]
+  },
+  {
+    "meta": {
+      "icon": "openai"
+    },
+    "id": "openai/gpt-image-1.5",
+    "name": "OpenAI GPT Image",
+    "type": "image_gen",
+    "context_length": 200000,
+    "capabilities": ["image_out", "image"],
+    "languages": ["en", "mul"],
+    "llm_input_cost_per_mtoken": 5.0,
+    "llm_output_cost_per_mtoken": 10.0,
+    "image_input_cost_per_mtoken": 8.0,
+    "image_output_cost_per_mtoken": 32.0,
+    "deployments": [
+      {
+        "name": "OpenAI GPT Image Deployment",
+        "provider": "openai",
+        "routing_id": "openai/gpt-image-1.5",
+        "api_base": ""
+      }
+    ]
+  },
+  {
+    "meta": {
+      "icon": "gemini"
+    },
+    "id": "gemini/gemini-3-pro-image-preview",
+    "name": "Gemini 3 Pro Image Preview",
+    "type": "image_gen",
+    "context_length": 1048576,
+    "capabilities": ["image_out", "image"],
+    "languages": ["en", "mul"],
+    "llm_input_cost_per_mtoken": 2.0,
+    "llm_output_cost_per_mtoken": 12.0,
+    "image_input_cost_per_mtoken": 2.0,
+    "image_output_cost_per_mtoken": 120.0,
+    "deployments": [
+      {
+        "name": "Gemini 3 Pro Image Preview Deployment",
+        "provider": "gemini",
+        "routing_id": "gemini/gemini-3-pro-image-preview",
+        "api_base": ""
+      }
+    ]
   }
 ]

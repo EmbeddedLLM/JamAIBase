@@ -685,7 +685,7 @@ async def organization_model_catalogue(
 async def get_organization_metrics(
     user: Annotated[UserAuth, Depends(auth_user_service_key)],
     metric_id: Annotated[
-        Literal["llm", "embedding", "reranking", "spent", "bandwidth", "storage"],
+        Literal["llm", "embedding", "reranking", "image", "spent", "bandwidth", "storage"],
         Query(alias="metricId", description="Type of usage data to query."),
     ],
     from_: Annotated[
@@ -769,6 +769,15 @@ async def get_organization_metrics(
             )
         elif metric_id == "reranking":
             results = await metrics_client.query_reranking_usage(
+                [org_id],
+                proj_ids,
+                from_,
+                to,
+                group_by,
+                window_size,
+            )
+        elif metric_id == "image":
+            results = await metrics_client.query_image_usage(
                 [org_id],
                 proj_ids,
                 from_,
