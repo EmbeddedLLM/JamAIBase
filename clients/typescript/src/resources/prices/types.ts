@@ -33,7 +33,8 @@ export const ProductsSchema = z.object({
     reranker_searches: ProductSchema.describe("Reranker search quota to this plan or tier."),
     db_storage: ProductSchema.describe("Database storage quota to this plan or tier."),
     file_storage: ProductSchema.describe("File storage quota to this plan or tier."),
-    egress: ProductSchema.describe("Egress bandwidth quota to this plan or tier.")
+    egress: ProductSchema.describe("Egress bandwidth quota to this plan or tier."),
+    image_tokens: ProductSchema.describe("Image token quota to this plan or tier.")
 });
 
 export type Products = z.infer<typeof ProductsSchema>;
@@ -49,7 +50,10 @@ export const PricePlanUpdateSchema = z.object({
     credit_grant: z.number().min(0).optional().describe("Credit amount included in USD."),
     max_users: z.number().int().min(1).nullable().optional().describe("Maximum number of users per organization. `null` means no limit."),
     products: ProductsSchema.optional().describe("Mapping of product ID to product."),
-    allowed_orgs: z.array(z.string()).optional().describe("List of IDs of organizations allowed to use this price plan. If empty, all orgs are allowed."),
+    allowed_orgs: z
+        .array(z.string())
+        .optional()
+        .describe("List of IDs of organizations allowed to use this price plan. If empty, all orgs are allowed."),
     meta: z.record(z.any()).optional().describe("Metadata.")
 });
 
@@ -58,18 +62,23 @@ export type PricePlanUpdate = z.infer<typeof PricePlanUpdateSchema>;
 /**
  * Price plan create schema
  */
-export const PricePlanCreateSchema = z.object({
-    id: z.string().default("").describe("Price plan ID."),
-    stripe_price_id_live: z.string().min(1).describe("Stripe price ID (live mode)."),
-    stripe_price_id_test: z.string().min(1).describe("Stripe price ID (test mode)."),
-    name: z.string().min(1).max(255).describe("Price plan name."),
-    flat_cost: z.number().min(0).describe("Base price for the entire tier."),
-    credit_grant: z.number().min(0).describe("Credit amount included in USD."),
-    max_users: z.number().int().min(1).nullable().describe("Maximum number of users per organization. `null` means no limit."),
-    products: ProductsSchema.describe("Mapping of product ID to product."),
-    allowed_orgs: z.array(z.string()).default([]).describe("List of IDs of organizations allowed to use this price plan. If empty, all orgs are allowed."),
-    meta: z.record(z.any()).default({}).describe("Metadata.")
-}).partial({ id: true, allowed_orgs: true, meta: true });
+export const PricePlanCreateSchema = z
+    .object({
+        id: z.string().default("").describe("Price plan ID."),
+        stripe_price_id_live: z.string().min(1).describe("Stripe price ID (live mode)."),
+        stripe_price_id_test: z.string().min(1).describe("Stripe price ID (test mode)."),
+        name: z.string().min(1).max(255).describe("Price plan name."),
+        flat_cost: z.number().min(0).describe("Base price for the entire tier."),
+        credit_grant: z.number().min(0).describe("Credit amount included in USD."),
+        max_users: z.number().int().min(1).nullable().describe("Maximum number of users per organization. `null` means no limit."),
+        products: ProductsSchema.describe("Mapping of product ID to product."),
+        allowed_orgs: z
+            .array(z.string())
+            .default([])
+            .describe("List of IDs of organizations allowed to use this price plan. If empty, all orgs are allowed."),
+        meta: z.record(z.any()).default({}).describe("Metadata.")
+    })
+    .partial({ id: true, allowed_orgs: true, meta: true });
 
 export type PricePlanCreate = z.infer<typeof PricePlanCreateSchema>;
 

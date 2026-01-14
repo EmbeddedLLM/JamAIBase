@@ -1,4 +1,5 @@
 import { Base } from "@/resources/base";
+import { serializeParams } from "@/helpers/utils";
 import {
     AgentMetaResponse,
     AgentMetaResponseSchema,
@@ -21,7 +22,12 @@ import {
     PageConversationMetaResponse,
     PageConversationMetaResponseSchema
 } from "@/resources/conversations/types";
-import { CellCompletionResponse, CellReferencesResponse, ColumnCompletionResponseSchema, RowReferencesResponseSchema } from "@/resources/gen_tables/chat";
+import {
+    CellCompletionResponse,
+    CellReferencesResponse,
+    ColumnCompletionResponseSchema,
+    RowReferencesResponseSchema
+} from "@/resources/gen_tables/chat";
 import { ChunkError } from "@/resources/shared/error";
 import { OkResponse, OkResponseSchema } from "@/resources/shared/types";
 
@@ -130,8 +136,6 @@ export class Conversations extends Base {
             params: { conversation_id: conversationId }
         });
 
-        
-
         return this.handleResponse(response, OkResponseSchema);
     }
 
@@ -140,9 +144,7 @@ export class Conversations extends Base {
      * @param request Message add request
      * @returns Stream of message chunks
      */
-    public async sendMessage(
-        request: MessageAddRequest
-    ): Promise<ReadableStream<CellCompletionResponse | CellReferencesResponse>> {
+    public async sendMessage(request: MessageAddRequest): Promise<ReadableStream<CellCompletionResponse | CellReferencesResponse>> {
         const parsedRequest = MessageAddRequestSchema.parse(request);
         const response = await this.httpClient.post("/api/v2/conversations/messages", parsedRequest, {
             responseType: "stream"
@@ -171,9 +173,7 @@ export class Conversations extends Base {
      * @param request Message regen request
      * @returns Stream of regenerated message chunks
      */
-    public async regenMessage(
-        request: MessagesRegenRequest
-    ): Promise<ReadableStream<CellCompletionResponse | CellReferencesResponse>> {
+    public async regenMessage(request: MessagesRegenRequest): Promise<ReadableStream<CellCompletionResponse | CellReferencesResponse>> {
         const parsedRequest = MessagesRegenRequestSchema.parse(request);
         const response = await this.httpClient.post("/api/v2/conversations/messages/regen", parsedRequest, {
             responseType: "stream"
@@ -205,14 +205,17 @@ export class Conversations extends Base {
             params: {
                 conversation_id: conversationId,
                 column_ids: columnIds
-            }
+            },
+            paramsSerializer: serializeParams
         });
 
         return this.handleResponse(response, ConversationThreadsResponseSchema);
     }
 
     // Helper method for conversation stream (includes metadata event)
-    private handleConversationStreamResponse(response: any): ReadableStream<ConversationMetaResponse | CellCompletionResponse | CellReferencesResponse> {
+    private handleConversationStreamResponse(
+        response: any
+    ): ReadableStream<ConversationMetaResponse | CellCompletionResponse | CellReferencesResponse> {
         this.logWarning(response);
 
         if (response.status !== 200) {
@@ -224,7 +227,10 @@ export class Conversations extends Base {
         return new ReadableStream({
             async start(controller) {
                 response.data.on("data", (data: any) => {
-                    const lines = data.toString().split("\n").filter((line: string) => line.trim());
+                    const lines = data
+                        .toString()
+                        .split("\n")
+                        .filter((line: string) => line.trim());
 
                     for (const line of lines) {
                         if (line.startsWith("event:")) {
@@ -281,7 +287,11 @@ export class Conversations extends Base {
         return new ReadableStream({
             async start(controller) {
                 response.data.on("data", (data: any) => {
-                    const chunk = data.toString().replace(/^data: /, "").replace(/data: \[DONE\]\s+$/, "").trim();
+                    const chunk = data
+                        .toString()
+                        .replace(/^data: /, "")
+                        .replace(/data: \[DONE\]\s+$/, "")
+                        .trim();
 
                     if (chunk === "[DONE]") return;
 

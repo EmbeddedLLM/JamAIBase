@@ -1,7 +1,8 @@
-import JamAI, { PROGRESS_STATES } from "@/index";
+import JamAI from "@/index";
 import { afterAll, beforeAll, describe, expect, it, jest } from "@jest/globals";
 import dotenv from "dotenv";
 import { cleanupTestEnvironment, setupTestEnvironment, TestContext } from "./testUtils";
+import { PROGRESS_STATES } from "@/resources/tasks/types";
 
 dotenv.config({
     path: "__tests__/.env"
@@ -19,8 +20,6 @@ describe("APIClient Tasks", () => {
     beforeAll(async () => {
         testContext = await setupTestEnvironment();
         client = testContext.client;
-
-      
     });
 
     afterAll(async function () {
@@ -89,8 +88,6 @@ describe("APIClient Tasks", () => {
         // Poll should return null on timeout for non-existent tasks
         expect(response).toBeNull();
     });
-
-
 
     it("poll progress with different initial wait times", async () => {
         const testKey = "test-initial-wait-key";

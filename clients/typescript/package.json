@@ -1,6 +1,6 @@
 {
     "name": "jamaibase",
-    "version": "0.5.0",
+    "version": "0.6.1",
     "description": "JamAIBase Client SDK (JS/TS). JamAI Base: Let Your Database Orchestrate LLMs and RAG",
     "main": "dist/index.cjs",
     "module": "dist/index.mjs",
@@ -13,7 +13,7 @@
         "build": "/bin/bash build",
         "openapi-to-zod": "openapi-zod-client openapi.json -o zodschema/zodmodels.ts",
         "doc-ts-moduler": "typedoc  --includeVersion --tsconfig tsconfig.build.json --includes ./dist/*.d.ts --includes ./dist/**/*.d.ts --includes ./dist/resources/**/*.d.ts --out docs-autogen-ts",
-        "doc-ts": "typedoc --readme ./README.md --includeVersion --tsconfig tsconfig.build.json --entryPointStrategy expand --entryPoints ./dist/index.d.ts --entryPoints ./dist/resources --out docs-autogen-ts --categorizeByGroup --sort alphabetical && cp JamAI_Base_Cover.png docs-autogen-ts/"
+        "doc-ts": "typedoc --readme ./README.md --includeVersion --tsconfig tsconfig.build.json --entryPointStrategy expand --entryPoints ./dist/index.d.ts --entryPoints ./dist/resources --exclude '**/shared/**' --out docs-autogen-ts --categorizeByGroup --sort alphabetical && cp JamAI_Base_Cover.png docs-autogen-ts/"
     },
     "repository": {
         "type": "git",

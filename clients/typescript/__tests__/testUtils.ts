@@ -23,10 +23,7 @@ export interface TestContext {
  * Also cleans up existing tables for gentable tests
  * Optionally creates model configs and deployments
  */
-export async function setupTestEnvironment(options?: {
-    cleanupTables?: boolean;
-    createModels?: boolean;
-}): Promise<TestContext> {
+export async function setupTestEnvironment(options?: { cleanupTables?: boolean; createModels?: boolean }): Promise<TestContext> {
     // Default cleanupTables to true if not provided
     const { cleanupTables = true, createModels = false } = options ?? {};
     const myuuid = uuidv4();
@@ -50,9 +47,8 @@ export async function setupTestEnvironment(options?: {
 
         // Check for existing user with id="0"
         const users = await setupClient.users.listUsers();
-        const existingUser = users.items.find(u => u.id === "0");
-        userId = "0"
-        
+        const existingUser = users.items.find((u) => u.id === "0");
+        userId = "0";
 
         if (existingUser) {
             shouldDeleteUser = false;
@@ -70,7 +66,7 @@ export async function setupTestEnvironment(options?: {
 
         // Check for existing organization with id="0"
         const orgs = await setupClient.organizations.listOrganizations();
-        const existingOrg = orgs.items.find(o => o.id === "0");
+        const existingOrg = orgs.items.find((o) => o.id === "0");
 
         if (existingOrg) {
             organizationId = existingOrg.id;
@@ -151,10 +147,10 @@ export async function setupTestEnvironment(options?: {
     let modelConfigs: TestContext["modelConfigs"] | undefined;
     if (createModels) {
         const completionModelId = `openai/gpt-4o-mini-test-${uuidv4().substring(0, 8)}`;
-        const completionRoutingId = 'gpt-4o-mini'
-        const embeddingDimention = 1536
+        const completionRoutingId = "gpt-4o-mini";
+        const embeddingDimention = 1536;
         const embeddingModelId = `openai/text-embedding-test-${uuidv4().substring(0, 8)}`;
-        const embeddingRoutingId = "text-embedding-3-small"
+        const embeddingRoutingId = "text-embedding-3-small";
 
         // Create completion model config (similar to GPT_4O_MINI_CONFIG)
         await client.models.createModelConfig({
@@ -224,15 +220,7 @@ export async function setupTestEnvironment(options?: {
  * Only deletes resources that were manually created (based on shouldDelete flags)
  */
 export async function cleanupTestEnvironment(context: TestContext): Promise<void> {
-    const {
-        projectId,
-        organizationId,
-        userId,
-        shouldDeleteProject,
-        shouldDeleteOrganization,
-        shouldDeleteUser,
-        modelConfigs
-    } = context;
+    const { projectId, organizationId, userId, shouldDeleteProject, shouldDeleteOrganization, shouldDeleteUser, modelConfigs } = context;
 
     // Create cleanup client
     const cleanupClient = new JamAI({

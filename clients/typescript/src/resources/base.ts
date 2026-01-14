@@ -36,7 +36,7 @@ export abstract class Base {
     protected maxRetries: number;
     protected httpClient: AxiosInstance;
     protected timeout: number | undefined;
-    private sdkVersion = "0.3";
+    private sdkVersion = "0.6.1";
 
     /**
      * Creates an instance of APIClient.

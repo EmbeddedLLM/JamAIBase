@@ -1,6 +1,6 @@
 import { Base } from "@/resources/base";
 
-import { isRunningInBrowser } from "@/helpers/utils";
+import { isRunningInBrowser, serializeParams } from "@/helpers/utils";
 import { getFileName, getMimeType, readFile } from "@/helpers/utils.node";
 import {
     AddActionColumnRequest,
@@ -198,11 +198,7 @@ export class GenTable extends Base {
         const parsedParams = ListTableRowsRequestSchema.parse(params);
         const response = await this.httpClient.get(`/api/v2/gen_tables/${parsedParams.table_type}/rows/list`, {
             params: parsedParams,
-            paramsSerializer: (params) => {
-                return Object.entries(params)
-                    .flatMap(([key, value]) => (Array.isArray(value) ? value.map((val) => `${key}=${val}`) : `${key}=${value}`))
-                    .join("&");
-            }
+            paramsSerializer: serializeParams
         });
 
         return this.handleResponse(response, PageListTableRowsResponseSchema);
@@ -212,11 +208,7 @@ export class GenTable extends Base {
         const parsedParams = GetRowRequestSchema.parse(params);
         const response = await this.httpClient.get(`/api/v2/gen_tables/${params.table_type}/rows`, {
             params: parsedParams,
-            paramsSerializer: (params) => {
-                return Object.entries(params)
-                    .flatMap(([key, value]) => (Array.isArray(value) ? value.map((val) => `${key}=${val}`) : `${key}=${value}`))
-                    .join("&");
-            }
+            paramsSerializer: serializeParams
         });
 
         return this.handleResponse(response, GetRowResponseSchema);
@@ -228,11 +220,7 @@ export class GenTable extends Base {
         let getURL = `/api/v2/gen_tables/${parsedParams.table_type}/threads`;
         const response = await this.httpClient.get(getURL, {
             params: parsedParams,
-            paramsSerializer: (params) => {
-                return Object.entries(params)
-                    .flatMap(([key, value]) => (Array.isArray(value) ? value.map((val) => `${key}=${val}`) : `${key}=${value}`))
-                    .join("&");
-            }
+            paramsSerializer: serializeParams
         });
 
         return this.handleResponse(response, GetConversationThreadResponseSchema);
@@ -654,15 +642,7 @@ export class GenTable extends Base {
         try {
             const response = await this.httpClient.get(apiURL, {
                 params: parsedParams,
-                paramsSerializer: (params) => {
-                    return Object.entries(params)
-                        .flatMap(([key, value]) =>
-                            Array.isArray(value)
-                                ? value.map((val) => `${encodeURIComponent(key)}=${encodeURIComponent(val)}`)
-                                : `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
-                        )
-                        .join("&");
-                },
+                paramsSerializer: serializeParams,
                 responseType: "arraybuffer"
             });
 

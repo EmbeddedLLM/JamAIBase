@@ -1,4 +1,5 @@
 import { Base } from "@/resources/base";
+import { serializeParams } from "@/helpers/utils";
 import {
     ListInvitesParams,
     ListInvitesParamsSchema,
@@ -336,7 +337,10 @@ export class Organizations extends Base {
         groupBy?: string[];
         dataSource?: "clickhouse" | "victoriametrics";
     }): Promise<any> {
-        const response = await this.httpClient.get("/api/v2/organizations/meters/query", { params });
+        const response = await this.httpClient.get("/api/v2/organizations/meters/query", {
+            params,
+            paramsSerializer: serializeParams
+        });
 
         return this.handleResponse(response);
     }

@@ -46,3 +46,26 @@ export function createPaginationSchema<T>(itemSchema: z.ZodType<T>) {
         })
     );
 }
+
+/**
+ * Serializes query parameters for axios requests, properly handling arrays and skipping null/undefined values.
+ * This prevents null/undefined values from being sent as literal strings (e.g., "columns=null").
+ *
+ * @param params - The query parameters object to serialize
+ * @returns URL-encoded query string
+ *
+ * @example
+ * serializeParams({ foo: 'bar', list: [1, 2], skip: null })
+ * // Returns: "foo=bar&list=1&list=2"
+ */
+export function serializeParams(params: Record<string, any>): string {
+    return Object.entries(params)
+        .flatMap(([key, value]) =>
+            Array.isArray(value)
+                ? value.map((val) => `${encodeURIComponent(key)}=${encodeURIComponent(val)}`)
+                : value !== undefined && value !== null
+                ? `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+                : []
+        )
+        .join("&");
+}

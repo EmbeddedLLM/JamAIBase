@@ -1,5 +1,5 @@
 import { createPaginationSchema } from "@/helpers/utils";
-import { RAGParamsSchema } from "@/resources/llm/chat";
+import { RAGParamsSchema, ToolSchema } from "@/resources/llm/chat";
 import { z } from "zod";
 
 export const GenTableOrderBy = Object.freeze({
@@ -27,6 +27,25 @@ export const EmbedGenConfigSchema = z.object({
     embedding_model: z.string(),
     source_column: z.string()
 });
+
+export const ImageGenConfigSchema = z.object({
+    object: z.literal("gen_config.image").default("gen_config.image"),
+    model: z.string().default(""),
+    prompt: z.string().default(""),
+    size: z.enum(["auto", "1024x1024", "1536x1024", "1024x1536"]).nullable().default(null),
+    quality: z.enum(["low", "medium", "high", "auto"]).nullable().default(null),
+    style: z.string().nullable().default(null)
+});
+
+const ToolChoiceFunctionSchema = z.object({
+    name: z.string()
+});
+
+const ToolChoiceGenConfigSchema = z.object({
+    type: z.string().default("function"),
+    function: ToolChoiceFunctionSchema
+});
+
 export const LLMGenConfigSchema = z.object({
     object: z.literal("gen_config.llm").default("gen_config.llm"),
     model: z.string().default(""),
@@ -34,13 +53,22 @@ export const LLMGenConfigSchema = z.object({
     system_prompt: z.string().default(""),
     multi_turn: z.boolean().default(false),
     rag_params: RAGParamsSchema.nullable().default(null),
-    temperature: z.number().min(0.001).max(2.0).default(0.2),
-    top_p: z.number().min(0.001).max(1.0).default(0.6),
-    stop: z.array(z.string()).nullable().default(null),
+    tools: z.array(ToolSchema).min(1).nullable().default(null),
+    tool_choice: z.union([
+        z.enum(["none", "auto", "required"]),
+        ToolChoiceGenConfigSchema
+    ]).nullable().default(null),
+    temperature: z.number().gte(0).default(0.2),
+    top_p: z.number().gte(0.001).default(0.6),
+    stream: z.boolean().default(true),
     max_tokens: z.number().int().min(1).default(2048),
+    stop: z.array(z.string()).nullable().default(null),
     presence_penalty: z.number().default(0.0),
     frequency_penalty: z.number().default(0.0),
-    logit_bias: z.record(z.string(), z.any()).default({})
+    logit_bias: z.record(z.string(), z.any()).default({}),
+    reasoning_effort: z.enum(["disable", "minimal", "none", "low", "medium", "high"]).nullable().default(null),
+    thinking_budget: z.number().int().gte(0).nullable().default(null),
+    reasoning_summary: z.enum(["auto", "concise", "detailed"]).default("auto")
 });
 
 export const CodeGenConfigSchema = z.object({
@@ -58,7 +86,7 @@ export const ColumnSchemaSchema = z.object({
     dtype: DtypeEnumSchema.default("str"),
     vlen: z.number().int().gte(0).default(0),
     index: z.boolean().default(true),
-    gen_config: z.union([LLMGenConfigSchema, EmbedGenConfigSchema, CodeGenConfigSchema, PythonGenConfigSchema, z.null()]).optional()
+    gen_config: z.union([LLMGenConfigSchema, ImageGenConfigSchema, EmbedGenConfigSchema, CodeGenConfigSchema, PythonGenConfigSchema, z.null()]).optional()
 });
 
 export const ColumnSchemaCreateSchema = ColumnSchemaSchema.extend({
@@ -76,7 +104,7 @@ export let ListTableRequestSchema = QueryRequestParams.extend({
     offset: z.number().min(0).optional(),
     limit: z.number().min(1).max(100).optional(),
     order_by: z.string().optional(),
-    order_ascending: z.boolean().optional().optional(),
+    order_ascending: z.boolean().optional(),
     parent_id: z.string().nullable().optional(),
     search_query: z.string().optional(),
     count_rows: z.boolean().optional(),
@@ -102,11 +130,14 @@ export const TableMetaRequestSchema = z.object({
 export const ListTableRowsRequestSchema = QueryRequestParams.extend({
     table_type: TableTypesSchema,
     table_id: z.string(),
+    order_by: z.string().default("ID"),
+    order_ascending: z.boolean().default(true),
     columns: z.array(IdSchema).nullable().optional(),
+    where: z.string().default("").optional(),
     search_query: z.string().default(""),
+    search_columns: z.array(z.string()).nullable().optional(),
     float_decimals: z.number().int().default(0),
-    vec_decimals: z.number().int().default(0),
-    order_descending: z.boolean().default(true)
+    vec_decimals: z.number().int().default(0)
 });
 
 export const ListTableRowsResponseSchema = z.record(z.string(), z.any());
@@ -176,7 +207,7 @@ export const AddColumnRequestSchema = z.object({
 export const UpdateGenConfigRequestSchema = z.object({
     table_type: TableTypesSchema,
     table_id: z.string(),
-    column_map: z.record(z.string(), z.union([LLMGenConfigSchema, EmbedGenConfigSchema, CodeGenConfigSchema, PythonGenConfigSchema, z.null()]))
+    column_map: z.record(z.string(), z.union([LLMGenConfigSchema, ImageGenConfigSchema, EmbedGenConfigSchema, CodeGenConfigSchema, PythonGenConfigSchema, z.null()]))
 });
 
 export const DeleteRowRequestSchema = z.object({
@@ -213,8 +244,8 @@ export const UpdateRowRequestSchema = z.object({
 export const DeleteRowsRequestSchema = z.object({
     table_type: TableTypesSchema,
     table_id: z.string(),
-    row_ids: z.array(z.string()).nullable().optional(),
-    where: z.string().optional(),
+    row_ids: z.array(z.string()).min(1).max(100).nullable().default(null),
+    where: z.string().default("").optional()
 });
 
 export const HybridSearchRequestSchema = z.object({

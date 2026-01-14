@@ -61,12 +61,12 @@ class JamAI extends Base {
         this.file = new Files(sharedConfig);
     }
 
-    public override setApiKey(token: string){
-        super.setApiKey(token)
+    public override setApiKey(token: string) {
+        super.setApiKey(token);
     }
 
-    public override setProjId(projectId: string){
-        super.setProjId(projectId)
+    public override setProjId(projectId: string) {
+        super.setProjId(projectId);
     }
 
     /**
@@ -94,21 +94,17 @@ class JamAI extends Base {
      * @property {Number} [socketActiveTTL=null] - Sets the time to live for active sockets, even if in use. If not set, sockets are released only when free. Default is null.
      */
     public override setHttpsagentConfig(payload: Agent.HttpsOptions) {
-        super.setHttpsagentConfig(payload)
+        super.setHttpsagentConfig(payload);
     }
 
     public override setAuthHeader(header: string) {
-        super.setAuthHeader(header)
+        super.setAuthHeader(header);
     }
 
     public override async health(): Promise<AxiosResponse> {
-        return await super.health()
+        return await super.health();
     }
 }
-
-// Re-export useful constants and types
-export { PROGRESS_STATES } from "@/resources/tasks/types";
-export type { ProgressState, ProgressResponse, PollProgressParams } from "@/resources/tasks/types";
 
 // // Re-export types from internal modules for easier access
 // export * from "@/resources/base";
@@ -117,4 +113,4 @@ export type { ProgressState, ProgressResponse, PollProgressParams } from "@/reso
 // export * from "@/resources/llm/chat";
 // export * from "@/resources/templates";
 
-export default JamAI; 
+export default JamAI;

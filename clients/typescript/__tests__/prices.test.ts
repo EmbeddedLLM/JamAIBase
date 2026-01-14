@@ -73,6 +73,12 @@ describe("APIClient Prices", () => {
                     included: { unit_cost: 0, up_to: 0.75 },
                     tiers: [],
                     unit: "GiB"
+                },
+                image_tokens: {
+                    name: "Image tokens",
+                    included: { unit_cost: 0, up_to: 0.75 },
+                    tiers: [],
+                    unit: "Million Tokens"
                 }
             }
         });
@@ -138,6 +144,12 @@ describe("APIClient Prices", () => {
                         included: { unit_cost: 0, up_to: 0.75 },
                         tiers: [],
                         unit: "GiB"
+                    },
+                    image_tokens: {
+                        name: "Image tokens",
+                        included: { unit_cost: 0, up_to: 0.75 },
+                        tiers: [],
+                        unit: "Million Tokens"
                     }
                 }
             });
@@ -164,7 +176,6 @@ describe("APIClient Prices", () => {
             if (response.id !== undefined) {
                 await client.prices.deletePricePlan(response.id);
             }
-
         });
 
         it("list price plans - without limit and offset", async () => {
@@ -283,6 +294,12 @@ describe("APIClient Prices", () => {
                         included: { unit_cost: 0, up_to: 0.75 },
                         tiers: [],
                         unit: "GiB"
+                    },
+                    image_tokens: {
+                        name: "Image tokens",
+                        included: { unit_cost: 0, up_to: 0.75 },
+                        tiers: [],
+                        unit: "Million Tokens"
                     }
                 }
             });

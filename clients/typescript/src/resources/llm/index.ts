@@ -1,4 +1,5 @@
 import { Base } from "@/resources/base";
+import { serializeParams } from "@/helpers/utils";
 import {
     ChatCompletionChunk,
     ChatCompletionChunkSchema,
@@ -118,19 +119,7 @@ export class LLM extends Base {
     
         const response = await this.httpClient.get(getURL, {
             params: parsedParams,
-            paramsSerializer: (params) => {
-                const searchParams = new URLSearchParams();
-              
-                Object.entries(params).forEach(([key, value]) => {
-                  if (Array.isArray(value)) {
-                    value.forEach(v => searchParams.append(key, String(v)));
-                  } else if (value !== undefined && value !== null) {
-                    searchParams.append(key, String(value));
-                  }
-                });
-              
-                return searchParams.toString();
-              }
+            paramsSerializer: serializeParams
               
         });
     
@@ -145,19 +134,7 @@ export class LLM extends Base {
 
         const response = await this.httpClient.get(getURL, {
             params: parsedParams,
-            paramsSerializer: (params) => {
-                const searchParams = new URLSearchParams();
-              
-                Object.entries(params).forEach(([key, value]) => {
-                  if (Array.isArray(value)) {
-                    value.forEach(v => searchParams.append(key, String(v)));
-                  } else if (value !== undefined && value !== null) {
-                    searchParams.append(key, String(value));
-                  }
-                });
-              
-                return searchParams.toString();
-              }
+            paramsSerializer: serializeParams
         });
 
         return this.handleResponse(response, ModelNamesResponseSchema);
@@ -207,19 +184,7 @@ export class LLM extends Base {
 
         const response = await this.httpClient.get("/api/v1/models/ids", {
             params: parsedParams,
-            paramsSerializer: (params) => {
-                const searchParams = new URLSearchParams();
-              
-                Object.entries(params).forEach(([key, value]) => {
-                  if (Array.isArray(value)) {
-                    value.forEach(v => searchParams.append(key, String(v)));
-                  } else if (value !== undefined && value !== null) {
-                    searchParams.append(key, String(value));
-                  }
-                });
-              
-                return searchParams.toString();
-              }
+            paramsSerializer: serializeParams
         });
 
         return this.handleResponse(response);

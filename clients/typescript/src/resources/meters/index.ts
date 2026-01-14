@@ -1,4 +1,5 @@
 import { Base } from "@/resources/base";
+import { serializeParams } from "@/helpers/utils";
 import {
     BandwidthMetricsParams,
     BandwidthMetricsParamsSchema,
@@ -20,7 +21,10 @@ export class Meters extends Base {
      */
     public async getUsageMetrics(params: UsageMetricsParams): Promise<UsageResponse> {
         const parsedParams = UsageMetricsParamsSchema.parse(params);
-        const response = await this.httpClient.get("/api/v2/meters/usages", { params: parsedParams });
+        const response = await this.httpClient.get("/api/v2/meters/usages", {
+            params: parsedParams,
+            paramsSerializer: serializeParams
+        });
 
         return this.handleResponse(response, UsageResponseSchema);
     }
@@ -32,7 +36,10 @@ export class Meters extends Base {
      */
     public async getBillingMetrics(params: BillingMetricsParams): Promise<UsageResponse> {
         const parsedParams = BillingMetricsParamsSchema.parse(params);
-        const response = await this.httpClient.get("/api/v2/meters/billings", { params: parsedParams });
+        const response = await this.httpClient.get("/api/v2/meters/billings", {
+            params: parsedParams,
+            paramsSerializer: serializeParams
+        });
 
         return this.handleResponse(response, UsageResponseSchema);
     }
@@ -44,7 +51,10 @@ export class Meters extends Base {
      */
     public async getBandwidthMetrics(params: BandwidthMetricsParams): Promise<UsageResponse> {
         const parsedParams = BandwidthMetricsParamsSchema.parse(params);
-        const response = await this.httpClient.get("/api/v2/meters/bandwidths", { params: parsedParams });
+        const response = await this.httpClient.get("/api/v2/meters/bandwidths", {
+            params: parsedParams,
+            paramsSerializer: serializeParams
+        });
 
         return this.handleResponse(response, UsageResponseSchema);
     }
@@ -56,7 +66,10 @@ export class Meters extends Base {
      */
     public async getStorageMetrics(params: StorageMetricsParams): Promise<UsageResponse> {
         const parsedParams = StorageMetricsParamsSchema.parse(params);
-        const response = await this.httpClient.get("/api/v2/meters/storages", { params: parsedParams });
+        const response = await this.httpClient.get("/api/v2/meters/storages", {
+            params: parsedParams,
+            paramsSerializer: serializeParams
+        });
 
         return this.handleResponse(response, UsageResponseSchema);
     }

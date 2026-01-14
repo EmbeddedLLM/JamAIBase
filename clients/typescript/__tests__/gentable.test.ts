@@ -58,9 +58,8 @@ describe("APIClient Gentable", () => {
 
             // Store all embedding models
             const allEmbeddingModels = models.data.filter((model) => model.capabilities.includes("embed"));
-            embeddingModels = allEmbeddingModels.length > 0
-                ? allEmbeddingModels.map((model) => model.id)
-                : ["ellm/sentence-transformers/all-MiniLM-L6-v2"];
+            embeddingModels =
+                allEmbeddingModels.length > 0 ? allEmbeddingModels.map((model) => model.id) : ["ellm/sentence-transformers/all-MiniLM-L6-v2"];
 
             // Set the first one as default
             embeddingModel = embeddingModels[0]!;
@@ -466,7 +465,7 @@ describe("APIClient Gentable", () => {
         }
     });
 
-    it("add row to action table with reindex", async () => {
+    it("add row to action table - no stream", async () => {
         for await (const { id: table_id } of _getTable("action")) {
             const response = await client.table.addRow({
                 table_type: "action",
@@ -487,59 +486,7 @@ describe("APIClient Gentable", () => {
         }
     });
 
-    it("add row to action table without reindex", async () => {
-        for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.table.addRow({
-                table_type: "action",
-                data: [
-                    {
-                        question: "What is penguin?"
-                    },
-                    {
-                        question: "What is help?"
-                    }
-                ],
-                table_id: table_id,
-                concurrent: true
-            });
-
-            const parsedData = MultiRowCompletionResponseSchema.parse(response);
-            expect(parsedData).toEqual(response);
-        }
-    });
-
-    it("add row to action table - stream with reindex", async () => {
-        for await (const { id: table_id } of _getTable("action")) {
-            const response = await client.table.addRowStream({
-                table_type: "action",
-                data: [
-                    {
-                        question: "What is penguin?"
-                    },
-                    {
-                        question: "What is help?"
-                    }
-                ],
-                table_id: table_id,
-                concurrent: true
-            });
-
-            expect(response).toBeInstanceOf(ReadableStream);
-            const reader = response.getReader();
-            let chunk_count: number = 0;
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) {
-                    break;
-                }
-                // console.log(value) ;
-                chunk_count += 1;
-            }
-            expect(chunk_count).toBeGreaterThan(2);
-        }
-    });
-
-    it("add row to action table - stream without reindex", async () => {
+    it("add row to action table - stream", async () => {
         for await (const { id: table_id } of _getTable("action")) {
             const response = await client.table.addRowStream({
                 table_type: "action",
@@ -1053,7 +1000,6 @@ describe("APIClient Gentable", () => {
                 column_ids: table.cols.length && table.cols[3]?.id ? [table.cols[3].id] : undefined
             });
 
-
             const parsedData = GetConversationThreadResponseSchema.parse(response);
             expect(parsedData).toEqual(response);
         }
@@ -1147,7 +1093,7 @@ describe("APIClient Gentable", () => {
                     }
                 }
             });
-            
+
             const parsedData = TableMetaResponseSchema.parse(response);
             expect(response).toEqual(parsedData);
         }
@@ -1437,7 +1383,6 @@ describe("APIClient Gentable", () => {
                 table_type: "action",
                 table_id: table_id
             });
-
 
             expect(responseAddRow.rows.length).toBe(responseListRows.items.length);
 
