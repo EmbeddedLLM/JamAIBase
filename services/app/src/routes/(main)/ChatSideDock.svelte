@@ -168,7 +168,7 @@
 			<a
 				href={chatState.conversation
 					? `/chat?${new URLSearchParams([
-							['project_id', page.params.project_id],
+							['project_id', page.params.project_id ?? ''],
 							['agent', chatState.conversation.parent_id ?? '']
 						])}`
 					: '/chat'}
@@ -250,7 +250,7 @@
 									chatState.editConversationTitle(
 										newTitle,
 										isEditingTitle,
-										page.params.project_id ?? page.url.searchParams.get('project_id'),
+										page.params.project_id ?? page.url.searchParams.get('project_id') ?? '',
 										() => {
 											if (chatState.conversation?.conversation_id === isEditingTitle)
 												chatState.conversation.title = newTitle ?? '';
@@ -373,7 +373,7 @@
 		if (chatState.conversation?.conversation_id === isDeletingConv) {
 			goto(
 				`/chat?${new URLSearchParams([
-					['project_id', page.params.project_id],
+					['project_id', page.params.project_id ?? ''],
 					['agent', chatState.conversation.parent_id ?? '']
 				])}`
 			);

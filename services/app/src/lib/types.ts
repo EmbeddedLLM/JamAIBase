@@ -18,10 +18,10 @@ export type ModelConfig = {
 	created_at: string;
 	updated_at: string;
 	id: string;
-	type: 'completion' | 'llm' | 'embed' | 'rerank';
+	type: 'completion' | 'llm' | 'embed' | 'rerank' | 'image_gen';
 	name: string;
 	owned_by: string | null;
-	capabilities: (typeof MODEL_CAPABILITIES)[number][];
+	capabilities: (keyof typeof MODEL_CAPABILITIES)[];
 	context_length: number;
 	languages: string[];
 	max_output_tokens: number | null;
@@ -31,6 +31,8 @@ export type ModelConfig = {
 	blocked_orgs: string[];
 	llm_input_cost_per_mtoken: number;
 	llm_output_cost_per_mtoken: number;
+	image_input_cost_per_mtoken: number;
+	image_output_cost_per_mtoken: number;
 	embedding_size: number | null;
 	embedding_dimensions: number | null;
 	embedding_transform_query: string | null;
@@ -219,7 +221,9 @@ export interface GenTableCol {
 	dtype: (typeof genTableDTypes)[string];
 	vlen: number;
 	index: boolean;
-	gen_config: (CodeGenConfig | LLMGenConfig | PythonGenConfig | EmbedGenConfig) | null;
+	gen_config:
+		| (CodeGenConfig | LLMGenConfig | PythonGenConfig | EmbedGenConfig | ImageGenConfig)
+		| null;
 }
 
 export interface CodeGenConfig {
@@ -284,6 +288,13 @@ export interface LLMGenConfig {
 	reasoning_effort?: string | null;
 }
 
+export interface ImageGenConfig {
+	object: 'gen_config.image';
+	model?: string;
+	prompt?: string;
+	// size/quality/style are supported by backend but not exposed in UI
+}
+
 export interface EmbedGenConfig {
 	object: 'gen_config.embed';
 	embedding_model: string;
@@ -299,6 +310,7 @@ export type GenTableRow = {
 		reasoning_content?: string;
 		reasoning_time?: number;
 		references?: ChatReferences;
+		error?: { message?: string } | string;
 	};
 };
 
@@ -351,6 +363,7 @@ export type PriceRes = {
 		llm_tokens: PriceProduct;
 		embedding_tokens: PriceProduct;
 		reranker_searches: PriceProduct;
+		image_tokens: PriceProduct;
 		db_storage: PriceProduct;
 		file_storage: PriceProduct;
 		egress: PriceProduct;
@@ -468,6 +481,8 @@ export type OrganizationReadRes = {
 	file_usage_gib: number;
 	egress_quota_gib: number | null;
 	egress_usage_gib: number;
+	image_tokens_quota_mtok: number | null;
+	image_tokens_usage_mtok: number;
 	price_plan: PriceRes | null;
 	active: boolean;
 	quotas: {

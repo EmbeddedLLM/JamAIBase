@@ -418,7 +418,18 @@
 									</p>
 								{/if}
 
-								{#if editMode}
+								{#if row[column.id]?.error}
+									{@const error = row[column.id]?.error}
+									<div class="flex h-full w-full items-center p-2">
+										<span class="break-words text-sm text-[#D92D20]">
+											{typeof error === 'string'
+												? error
+												: error?.message
+													? String(error.message)
+													: 'Error'}
+										</span>
+									</div>
+								{:else if editMode}
 									{#if column.dtype === 'image' || column.dtype === 'audio' || column.dtype === 'document'}
 										<FileSelect
 											tableType="chat"
@@ -449,7 +460,7 @@
 										rowID={row.ID}
 										columnID={column.id}
 										fileUri={row[column.id]?.value}
-										fileUrl={tableState.rowThumbs[row.ID]?.[column.id]?.url}
+										fileThumb={tableState.rowThumbs[row.ID]?.[column.id]}
 									/>
 								{:else}
 									{#if !(!row[column.id]?.value && tableState.streamingRows[row.ID]?.includes(column.id))}
@@ -485,6 +496,7 @@
 																: 'answer',
 														message: {
 															content: row[column.id]?.value,
+															error: row[column.id]?.error ?? null,
 															chunks: row[column.id]?.references?.chunks ?? []
 														},
 														reasoningContent: row[column.id]?.reasoning_content ?? null,

@@ -36,7 +36,7 @@
 				`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/${tableType}/export?${new URLSearchParams([['table_id', tableId]])}`,
 				{
 					headers: {
-						'x-project-id': page.params.project_id
+						'x-project-id': page.params.project_id ?? ''
 					}
 				}
 			);

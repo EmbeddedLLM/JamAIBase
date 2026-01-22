@@ -78,6 +78,7 @@ export class ChatState {
 		activeTab: string;
 		message: {
 			content: string;
+			error: { message?: string } | string | null;
 			chunks: ReferenceChunk[];
 			fileUrl?: string;
 		} | null;
@@ -940,6 +941,7 @@ export class ChatState {
 											...this.showOutputDetails,
 											message: {
 												chunks: this.showOutputDetails.message?.chunks ?? [],
+												error: this.showOutputDetails.message?.error ?? null,
 												content:
 													(this.showOutputDetails.message?.content ?? '') +
 													(parsedEvent.data.choices[0].message.content ?? '')
@@ -975,6 +977,7 @@ export class ChatState {
 										...this.showOutputDetails,
 										message: {
 											chunks: (parsedEvent.data as unknown as ChatReferences).chunks ?? [],
+											error: this.showOutputDetails.message?.error ?? null,
 											content: this.showOutputDetails.message?.content ?? ''
 										}
 									};

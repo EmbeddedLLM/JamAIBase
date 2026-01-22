@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { Copy, Ellipsis, Trash2 } from '@lucide/svelte';
 	import { getModelIcon } from '$lib/utils';
+	import { MODEL_TYPES } from '$lib/constants';
 	import type { ModelConfig } from '$lib/types';
 
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
@@ -62,7 +63,7 @@
 		</p>
 		<div class="flex gap-x-1">
 			<div class="w-fit rounded-md bg-[#F5EDFF] px-2.5 py-0.5 text-xs uppercase text-[#916FD0]">
-				{modelConfig.type}
+				{MODEL_TYPES[modelConfig.type] ?? modelConfig.type}
 			</div>
 			{#if modelConfig.deployments.length}
 				<div class="w-fit rounded-md bg-[#E9FFB5] px-2.5 py-0.5 text-xs text-[#29B054]">

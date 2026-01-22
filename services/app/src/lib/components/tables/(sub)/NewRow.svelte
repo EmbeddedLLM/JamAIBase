@@ -377,11 +377,12 @@
 								{column}
 							/>
 						{:else}
+							<!-- ! CHECK fileThumb.value here -->
 							<FileColumnView
 								{tableType}
 								columnID={column.id}
 								fileUri={inputValues[column.id]}
-								fileUrl={columnFile}
+								fileThumb={{ value: inputValues[column.id], url: columnFile }}
 								bind:deletingFile={isDeletingFile}
 							/>
 						{/if}

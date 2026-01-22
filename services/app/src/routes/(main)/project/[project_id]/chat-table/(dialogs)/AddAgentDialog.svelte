@@ -41,7 +41,7 @@
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
-				'x-project-id': page.params.project_id
+				'x-project-id': page.params.project_id ?? ''
 			},
 			body: JSON.stringify({
 				id: agentName,

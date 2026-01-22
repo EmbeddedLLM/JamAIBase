@@ -182,6 +182,7 @@
 										.filter((c) => c.type === 'text')
 										.map((c) => c.text)
 										.join('') ?? ''),
+						error: null,
 						chunks: threadItem?.references?.chunks ?? []
 					},
 					reasoningContent: threadItem?.reasoning_content ?? null,
@@ -777,6 +778,7 @@
 																						.filter((c) => c.type === 'text')
 																						.map((c) => c.text)
 																						.join('') ?? ''),
+																		error: null,
 																		chunks: threadItem?.references?.chunks ?? []
 																	},
 																	reasoningContent: threadItem.reasoning_content ?? null,
@@ -812,6 +814,7 @@
 																				? threadItem.content
 																				: (threadItem.content.find((c) => c.type === 'text')
 																						?.text ?? ''),
+																		error: null,
 																		chunks:
 																			chatState.loadedReferences?.[threadItem.row_id]?.[column]
 																				?.chunks ?? []
@@ -849,6 +852,7 @@
 																				.filter((c) => c.type === 'text')
 																				.map((c) => c.text)
 																				.join('') ?? ''),
+																error: null,
 																chunks: threadItem?.references?.chunks ?? []
 															},
 															reasoningContent: threadItem.reasoning_content ?? null,

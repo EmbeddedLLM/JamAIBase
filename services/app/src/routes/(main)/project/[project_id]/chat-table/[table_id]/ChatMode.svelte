@@ -405,6 +405,7 @@
 											...tableState.showOutputDetails,
 											message: {
 												chunks: tableState.showOutputDetails.message?.chunks ?? [],
+												error: tableState.showOutputDetails.message?.error ?? null,
 												content:
 													(tableState.showOutputDetails.message?.content ?? '') +
 													(parsedEvent.data.choices[0].message.content ?? '')
@@ -440,6 +441,7 @@
 										...tableState.showOutputDetails,
 										message: {
 											chunks: (parsedEvent.data as unknown as ChatReferences).chunks ?? [],
+											error: null,
 											content: tableState.showOutputDetails.message?.content ?? ''
 										}
 									};
@@ -546,6 +548,7 @@
 										.filter((c) => c.type === 'text')
 										.map((c) => c.text)
 										.join('') ?? ''),
+						error: null,
 						chunks: threadItem?.references?.chunks ?? []
 					},
 					reasoningContent: threadItem?.reasoning_content ?? null,
@@ -1086,6 +1089,7 @@
 																				.filter((c) => c.type === 'text')
 																				.map((c) => c.text)
 																				.join('') ?? ''),
+																error: null,
 																chunks: threadItem?.references?.chunks ?? []
 															},
 															reasoningContent: threadItem.reasoning_content ?? null,
@@ -1120,6 +1124,7 @@
 																		? threadItem.content
 																		: (threadItem.content.find((c) => c.type === 'text')?.text ??
 																			''),
+																error: null,
 																chunks:
 																	loadedReferences?.[threadItem.row_id]?.[column]?.chunks ?? []
 															},
@@ -1153,6 +1158,7 @@
 																		.filter((c) => c.type === 'text')
 																		.map((c) => c.text)
 																		.join('') ?? ''),
+														error: null,
 														chunks: threadItem?.references?.chunks ?? []
 													},
 													reasoningContent: threadItem.reasoning_content ?? null,

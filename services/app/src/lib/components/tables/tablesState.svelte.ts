@@ -92,6 +92,7 @@ export class TableState implements ITableState {
 		activeTab: string;
 		message: {
 			content: string;
+			error: { message?: string } | string | null;
 			chunks: ReferenceChunk[];
 			fileUrl?: string;
 		} | null;
@@ -421,6 +422,7 @@ export class TableRowsState {
 											...tableState.showOutputDetails,
 											message: {
 												chunks: tableState.showOutputDetails.message?.chunks ?? [],
+												error: tableState.showOutputDetails.message?.error ?? null,
 												content:
 													(tableState.showOutputDetails.message?.content ?? '') +
 													(parsedEvent.data.choices[0].message.content ?? '')
@@ -466,6 +468,7 @@ export class TableRowsState {
 										...tableState.showOutputDetails,
 										message: {
 											chunks: (parsedEvent.data as unknown as ChatReferences).chunks ?? [],
+											error: tableState.showOutputDetails.message?.error ?? null,
 											content: tableState.showOutputDetails.message?.content ?? ''
 										}
 									};

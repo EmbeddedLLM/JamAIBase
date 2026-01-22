@@ -123,10 +123,13 @@ export const mainHandle: Handle = async ({ event, resolve }) => {
 		}
 	}
 
+	const session = !auth0Mode && !ossMode ? await event.locals.auth?.() : null;
+	const sessionUserId = session?.user?.id;
+
 	//@ts-expect-error asd
-	if (auth0UserData || ossMode) {
+	if (auth0UserData || ossMode || sessionUserId) {
 		//@ts-expect-error asd
-		let userApiData = await getUserApiData(auth0UserData?.sub ?? '0');
+		let userApiData = await getUserApiData(auth0UserData?.sub ?? sessionUserId ?? '0');
 		if (!userApiData.data) {
 			if (auth0Mode && userApiData.status === 404) {
 				const userUpsertRes = await fetch(`${OWL_URL}/api/v2/users`, {

@@ -21,7 +21,14 @@
 		selectedModel: string;
 		allowDeselect?: boolean;
 		selectCb?: (modelId: string) => void;
-		capabilityFilter?: 'completion' | 'chat' | 'image' | 'embed' | 'rerank' | undefined;
+		capabilityFilter?:
+			| 'completion'
+			| 'chat'
+			| 'image'
+			| 'image_out'
+			| 'embed'
+			| 'rerank'
+			| undefined;
 		showCapabilities?: boolean;
 		/** Additional trigger button class */
 		class?: string | undefined;

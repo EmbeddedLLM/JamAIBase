@@ -3,6 +3,7 @@
 	import type { GenTableCol } from '$lib/types';
 
 	import llmHowToUse from './guides/llm.md?raw';
+	import imageHowToUse from './guides/image.md?raw';
 	import pythonHowToUse from './guides/python.md?raw';
 
 	let {
@@ -14,6 +15,10 @@
 	const howToUseContent = $derived.by(() => {
 		if (selectedGenConfig?.object === 'gen_config.llm') {
 			return llmHowToUse;
+		}
+
+		if (selectedGenConfig?.object === 'gen_config.image') {
+			return imageHowToUse;
 		}
 
 		if (selectedGenConfig?.object === 'gen_config.python') {

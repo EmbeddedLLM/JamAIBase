@@ -1,5 +1,4 @@
 <script lang="ts">
-	import capitalize from 'lodash/capitalize';
 	import { fade, slide } from 'svelte/transition';
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
@@ -199,14 +198,14 @@
 					<div class="flex items-center border-b text-sm">
 						<Label required class="text-gray-500">Capabilities</Label>
 						<div class="flex flex-wrap gap-2">
-							{#each MODEL_CAPABILITIES as capability}
+							{#each Object.entries(MODEL_CAPABILITIES) as [capability, label]}
 								<button
 									type="button"
-									class="cursor-pointer rounded-full border border-green-400 px-3 py-1 text-sm capitalize"
+									class="cursor-pointer rounded-full border border-green-400 px-3 py-1 text-sm"
 									class:bg-[#F4FFD9]={selectedCapabilities.includes(capability)}
 									onclick={() => toggleCapability(capability)}
 								>
-									{capability}
+									{label}
 								</button>
 							{/each}
 						</div>
@@ -247,7 +246,7 @@
 					<div class="border-b text-sm last:border-b-0">
 						<p class="text-gray-500">Capabilities</p>
 						<p class="text-gray-700">
-							{model.capabilities.map((cap) => capitalize(cap)).join(', ')}
+							{model.capabilities.map((cap) => MODEL_CAPABILITIES[cap]).join(', ')}
 						</p>
 					</div>
 					<div class="border-b text-sm last:border-b-0">
@@ -276,7 +275,7 @@
 							<Input required type="number" name="context_length" value={model.context_length} />
 						</div>
 					</div>
-					{#if modelType === MODEL_TYPES.embed.toLowerCase()}
+					{#if modelType === 'embed'}
 						<div class="flex items-center border-b text-sm">
 							<Label class="text-gray-500">Embedding size</Label>
 							<div>
@@ -343,7 +342,7 @@
 				<div
 					class="overflow-auto [&>div>*]:p-2 [&>div]:grid [&>div]:grid-cols-[minmax(18rem,_2fr)_minmax(20rem,_5fr)]"
 				>
-					{#if modelType === MODEL_TYPES.llm.toLowerCase()}
+					{#if modelType === 'llm'}
 						<div class="flex items-center border-b text-sm">
 							<Label class="text-gray-500">Cost in USD per million input tokens</Label>
 							<div>
@@ -369,7 +368,7 @@
 							</div>
 						</div>
 					{/if}
-					{#if modelType === MODEL_TYPES.embed.toLowerCase()}
+					{#if modelType === 'embed'}
 						<div class="flex items-center border-b text-sm">
 							<Label class="text-gray-500">Cost in USD per million embedding tokens</Label>
 							<div>
@@ -383,7 +382,7 @@
 							</div>
 						</div>
 					{/if}
-					{#if modelType === MODEL_TYPES.rerank.toLowerCase()}
+					{#if modelType === 'rerank'}
 						<div class="flex items-center border-b text-sm">
 							<Label class="text-gray-500">Cost in USD for a thousand searches</Label>
 							<div>
@@ -397,12 +396,62 @@
 							</div>
 						</div>
 					{/if}
+					{#if modelType === 'image_gen'}
+						<div class="flex items-center border-b text-sm">
+							<Label class="text-gray-500">Cost in USD per million input tokens</Label>
+							<div>
+								<Input
+									type="number"
+									min="0"
+									step=".000001"
+									name="llm_input_cost_per_mtoken"
+									value={model.llm_input_cost_per_mtoken}
+								/>
+							</div>
+						</div>
+						<div class="flex items-center border-b text-sm">
+							<Label class="text-gray-500">Cost in USD per million output tokens</Label>
+							<div>
+								<Input
+									type="number"
+									min="0"
+									step=".000001"
+									name="llm_output_cost_per_mtoken"
+									value={model.llm_output_cost_per_mtoken}
+								/>
+							</div>
+						</div>
+						<div class="flex items-center border-b text-sm">
+							<Label class="text-gray-500">Cost in USD per million image input tokens</Label>
+							<div>
+								<Input
+									type="number"
+									min="0"
+									step=".000001"
+									name="image_input_cost_per_mtoken"
+									value={model.image_input_cost_per_mtoken}
+								/>
+							</div>
+						</div>
+						<div class="flex items-center border-b text-sm">
+							<Label class="text-gray-500">Cost in USD per million image output tokens</Label>
+							<div>
+								<Input
+									type="number"
+									min="0"
+									step=".000001"
+									name="image_output_cost_per_mtoken"
+									value={model.image_output_cost_per_mtoken}
+								/>
+							</div>
+						</div>
+					{/if}
 				</div>
 			{:else}
 				<div
 					class="overflow-auto rounded-xl bg-gray-100 [&>div>*]:p-4 [&>div]:grid [&>div]:grid-cols-[minmax(18rem,_2fr)_minmax(20rem,_5fr)]"
 				>
-					{#if modelType === MODEL_TYPES.llm.toLowerCase()}
+					{#if modelType === 'llm'}
 						<div class="border-b text-sm last:border-b-0">
 							<p class="text-gray-500">Cost in USD per million input tokens</p>
 							<p class="text-gray-700">{model.llm_input_cost_per_mtoken}</p>
@@ -412,16 +461,34 @@
 							<p class="text-gray-700">{model.llm_output_cost_per_mtoken}</p>
 						</div>
 					{/if}
-					{#if modelType === MODEL_TYPES.embed.toLowerCase()}
+					{#if modelType === 'embed'}
 						<div class="border-b text-sm last:border-b-0">
 							<p class="text-gray-500">Cost in USD per million embedding tokens</p>
 							<p class="text-gray-700">{model.embedding_cost_per_mtoken}</p>
 						</div>
 					{/if}
-					{#if modelType === MODEL_TYPES.rerank.toLowerCase()}
+					{#if modelType === 'rerank'}
 						<div class="border-b text-sm last:border-b-0">
 							<p class="text-gray-500">Cost in USD for a thousand searches</p>
 							<p class="text-gray-700">{model.reranking_cost_per_ksearch}</p>
+						</div>
+					{/if}
+					{#if modelType === 'image_gen'}
+						<div class="border-b text-sm last:border-b-0">
+							<p class="text-gray-500">Cost in USD per million input tokens</p>
+							<p class="text-gray-700">{model.llm_input_cost_per_mtoken}</p>
+						</div>
+						<div class="border-b text-sm last:border-b-0">
+							<p class="text-gray-500">Cost in USD per million output tokens</p>
+							<p class="text-gray-700">{model.llm_output_cost_per_mtoken}</p>
+						</div>
+						<div class="border-b text-sm last:border-b-0">
+							<p class="text-gray-500">Cost in USD per million image input tokens</p>
+							<p class="text-gray-700">{model.image_input_cost_per_mtoken}</p>
+						</div>
+						<div class="border-b text-sm last:border-b-0">
+							<p class="text-gray-500">Cost in USD per million image output tokens</p>
+							<p class="text-gray-700">{model.image_output_cost_per_mtoken}</p>
 						</div>
 					{/if}
 				</div>

@@ -59,7 +59,7 @@
 			{
 				credentials: 'same-origin',
 				headers: {
-					'x-project-id': page.params.project_id
+					'x-project-id': page.params.project_id ?? ''
 				}
 			}
 		);
@@ -123,7 +123,7 @@
 				{
 					signal: searchController.signal,
 					headers: {
-						'x-project-id': page.params.project_id
+						'x-project-id': page.params.project_id ?? ''
 					}
 				}
 			);

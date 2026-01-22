@@ -37,19 +37,21 @@ export const MODEL_TYPES = {
 	completion: 'Completion',
 	llm: 'LLM',
 	embed: 'Embed',
-	rerank: 'Rerank'
+	rerank: 'Rerank',
+	image_gen: 'Image Gen'
 } as Record<string, string>;
 
-export const MODEL_CAPABILITIES = [
-	'completion',
-	'chat',
-	'tool',
-	'reasoning',
-	'image',
-	'audio',
-	'embed',
-	'rerank'
-] as const;
+export const MODEL_CAPABILITIES = {
+	completion: 'Completion',
+	chat: 'Chat',
+	tool: 'Tool',
+	reasoning: 'Reasoning',
+	image: 'Image',
+	image_out: 'Image Out',
+	audio: 'Audio',
+	embed: 'Embed',
+	rerank: 'Rerank'
+} as Record<string, string>;
 
 export const modelLogos = {
 	openai: {
@@ -173,7 +175,7 @@ export const genTableDTypes = {
 } as Record<string, string>;
 export const genTableColDTypes = {
 	Input: Object.keys(genTableDTypes),
-	'LLM Output': ['str'],
+	'LLM Output': ['str', 'image'],
 	// 'Code Output': ['str', 'image', 'audio'],
 	'Python Output': ['str', 'image', 'audio']
 } as Record<keyof typeof genTableColTypes, (keyof typeof genTableDTypes)[]>;

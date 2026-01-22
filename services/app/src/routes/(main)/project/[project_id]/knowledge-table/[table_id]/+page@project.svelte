@@ -71,6 +71,7 @@
 							...tableState.showOutputDetails,
 							message: {
 								content: activeCell.value,
+								error: activeCell.error ?? null,
 								chunks: activeCell.references?.chunks ?? []
 							},
 							reasoningContent: activeCell.reasoning_content ?? null,

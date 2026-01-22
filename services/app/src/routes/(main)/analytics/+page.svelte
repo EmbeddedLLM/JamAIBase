@@ -1,7 +1,4 @@
 <script lang="ts">
-	import { page } from '$app/state';
-	import { afterNavigate } from '$app/navigation';
-
 	import {
 		CreditUsageChart,
 		EgressUsageChart,
@@ -13,23 +10,36 @@
 	let { data } = $props();
 	let {
 		tokenUsage: tokenUsagePromise,
+		imageTokenUsage: imageTokenUsagePromise,
+		embeddingTokenUsage: embeddingTokenUsagePromise,
+		rerankingTokenUsage: rerankingTokenUsagePromise,
 		creditUsage: creditUsagePromise,
 		egressUsage: egressUsagePromise,
 		storageUsage: storageUsagePromise
 	} = $derived(data);
 
 	let tokenLegendContainer: HTMLDivElement | undefined = $state();
-	let tokenUsagePromiseResolved = $state(false);
-	$effect(() => {
-		const p = tokenUsagePromise;
+	const tokenUsageTabs = [
+		{ id: 'llm', label: 'LLM' },
+		{ id: 'image', label: 'Image' },
+		{ id: 'embedding', label: 'Embed' },
+		{ id: 'reranking', label: 'Rerank' }
+	] as const;
+	type TokenUsageTab = (typeof tokenUsageTabs)[number]['id'];
+	let selectedTokenUsageTab: TokenUsageTab = $state('llm');
 
-		if (!p || typeof p.then !== 'function') {
-			tokenUsagePromiseResolved = Boolean(p);
+	let llmUsageResolved = $state(false);
+	let imageUsageResolved = $state(false);
+	let embeddingUsageResolved = $state(false);
+	let rerankingUsageResolved = $state(false);
+
+	const trackUsagePromise = (p: unknown, setResolved: (value: boolean) => void) => {
+		if (!p || typeof (p as Promise<unknown>).then !== 'function') {
+			setResolved(Boolean(p));
 			return;
 		}
 
-		tokenUsagePromiseResolved = false;
-
+		setResolved(false);
 		let cancelled = false;
 
 		(async () => {
@@ -37,8 +47,8 @@
 				await p;
 			} catch {
 			} finally {
-				if (!cancelled && tokenUsagePromise === p) {
-					tokenUsagePromiseResolved = true;
+				if (!cancelled) {
+					setResolved(true);
 				}
 			}
 		})();
@@ -46,7 +56,47 @@
 		return () => {
 			cancelled = true;
 		};
+	};
+
+	$effect(() => trackUsagePromise(tokenUsagePromise, (value) => (llmUsageResolved = value)));
+	$effect(() =>
+		trackUsagePromise(imageTokenUsagePromise, (value) => (imageUsageResolved = value))
+	);
+	$effect(() =>
+		trackUsagePromise(embeddingTokenUsagePromise, (value) => (embeddingUsageResolved = value))
+	);
+	$effect(() =>
+		trackUsagePromise(rerankingTokenUsagePromise, (value) => (rerankingUsageResolved = value))
+	);
+
+	let selectedTokenUsagePromise = $derived.by(() => {
+		switch (selectedTokenUsageTab) {
+			case 'image':
+				return imageTokenUsagePromise;
+			case 'embedding':
+				return embeddingTokenUsagePromise;
+			case 'reranking':
+				return rerankingTokenUsagePromise;
+			default:
+				return tokenUsagePromise;
+		}
 	});
+
+	let selectedTokenUsageResolved = $derived.by(() => {
+		switch (selectedTokenUsageTab) {
+			case 'image':
+				return imageUsageResolved;
+			case 'embedding':
+				return embeddingUsageResolved;
+			case 'reranking':
+				return rerankingUsageResolved;
+			default:
+				return llmUsageResolved;
+		}
+	});
+	let tokenUsageTabIndex = $derived(
+		tokenUsageTabs.findIndex((tab) => tab.id === selectedTokenUsageTab)
+	);
 
 	let selectedChartEgressStorage: 'egress' | 'storage' = $state('egress');
 </script>
@@ -60,9 +110,37 @@
 		<div
 			class="border-b border-[#E5E5E5] pb-2 data-dark:border-[#333] lg:border-b-0 lg:border-r lg:pr-2"
 		>
-			<h3 class="pl-2 font-medium text-[#667085]">Token Usage</h3>
+			<div class="flex flex-col gap-2 px-2 pt-1">
+				<div class="flex flex-wrap items-center justify-between gap-2">
+					<h3 class="font-medium text-[#667085]">Token Usage</h3>
 
-			{#await tokenUsagePromise}
+					<div class="w-full sm:w-[24rem]">
+						<div
+							style="grid-template-columns: repeat(4, minmax(5rem, 1fr));"
+							class="relative grid w-full place-items-center rounded-[3px] bg-[#E4E7EC] p-0.5 data-dark:bg-gray-700"
+						>
+							<div
+								class="absolute left-0.5 top-0.5 z-0 h-[calc(100%_-_4px)] rounded-[3px] bg-white transition-transform duration-200"
+								style={`width: calc((100% - 4px) / 4); transform: translateX(calc(${tokenUsageTabIndex} * 100%));`}
+							></div>
+
+							{#each tokenUsageTabs as tab}
+								<button
+									onclick={() => (selectedTokenUsageTab = tab.id)}
+									class="z-10 w-full rounded-[3px] px-3 py-1 text-xs transition-colors ease-in-out sm:text-sm {selectedTokenUsageTab ===
+									tab.id
+										? 'text-[#667085]'
+										: 'text-[#98A2B3]'}"
+								>
+									{tab.label}
+								</button>
+							{/each}
+						</div>
+					</div>
+				</div>
+			</div>
+
+			{#await selectedTokenUsagePromise}
 				<div class="flex items-center space-x-4">
 					<Skeleton class="h-[24rem] w-full sm:h-[32.3rem]" />
 				</div>
@@ -80,12 +158,12 @@
 		</div>
 
 		<div class="flex flex-col gap-2 pt-2 lg:pt-0">
-			<div class="{!tokenUsagePromiseResolved ? 'block' : 'hidden'} flex items-center space-x-4">
+			<div class="{!selectedTokenUsageResolved ? 'block' : 'hidden'} flex items-center space-x-4">
 				<Skeleton class="h-[26rem] w-full sm:h-[33.8rem] lg:ml-2" />
 			</div>
 			<div
 				bind:this={tokenLegendContainer}
-				class="{tokenUsagePromiseResolved
+				class="{selectedTokenUsageResolved
 					? 'visible py-1'
 					: 'pointer-events-none invisible absolute'} flex grow flex-col gap-2 text-xs sm:text-sm"
 			></div>

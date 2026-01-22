@@ -69,7 +69,7 @@
 			.filter((col) => col.id !== 'ID' && col.id !== 'Updated at') ?? []
 	);
 
-	let selectedTab: 'prompt' | 'rag_settings' | 'how_to_use' = $state('prompt');
+let selectedTab: 'prompt' | 'rag_settings' | 'how_to_use' = $state('prompt');
 	let showModelSettings = $state(true);
 
 	let isLoading = $state(false);
@@ -81,7 +81,13 @@
 
 		const tabs: { id: typeof selectedTab; title: string }[] = [];
 
-		if (selectedGenConfig.object !== 'gen_config.python') {
+	if (selectedGenConfig.object === 'gen_config.python') {
+		tabs.push({ id: 'prompt', title: 'Code' });
+	} else if (selectedGenConfig.object === 'gen_config.image') {
+		if (showPromptTab) {
+			tabs.push({ id: 'prompt', title: 'Prompt' });
+		}
+	} else {
 			if (showPromptTab && selectedGenConfig.object !== 'gen_config.code') {
 				tabs.push({ id: 'prompt', title: 'Prompt' });
 			}
@@ -90,11 +96,9 @@
 				id: 'rag_settings',
 				title: selectedGenConfig.object === 'gen_config.embed' ? 'Model Settings' : 'RAG'
 			});
-		} else {
-			tabs.push({ id: 'prompt', title: 'Code' });
 		}
 
-		if (['gen_config.llm', 'gen_config.python'].includes(selectedGenConfig.object)) {
+		if (['gen_config.llm', 'gen_config.python', 'gen_config.image'].includes(selectedGenConfig.object)) {
 			tabs.push({ id: 'how_to_use', title: 'How to use' });
 		}
 
@@ -104,13 +108,16 @@
 	let tabHighlightIdx = $derived(tabItems.findIndex((t) => selectedTab === t.id));
 
 	let promptVarCounter = $derived.by(() => {
-		const matches = [
-			...(selectedGenConfig?.object === 'gen_config.python'
+		const sourceText =
+			selectedGenConfig?.object === 'gen_config.python'
 				? selectedGenConfig.python_code
-				: selectedGenConfig?.object === 'gen_config.llm'
+				: selectedGenConfig?.object === 'gen_config.llm' ||
+						selectedGenConfig?.object === 'gen_config.image'
 					? (selectedGenConfig?.prompt ?? '')
-					: ''
-			).matchAll(
+					: '';
+
+		const matches = [
+			...sourceText.matchAll(
 				selectedGenConfig?.object === 'gen_config.python'
 					? pythonVariablePattern
 					: promptVariablePattern
@@ -356,6 +363,15 @@
 										class="w-64 border-transparent bg-[#F9FAFB] hover:bg-[#e1e2e6] data-dark:bg-[#42464e]"
 									/>
 								</div>
+							{:else if (tableType !== 'knowledge' || showPromptTab) && selectedGenConfig.object === 'gen_config.image'}
+								<div class="">
+									<ModelSelect
+										disabled={readonly}
+										capabilityFilter="image_out"
+										bind:selectedModel={selectedGenConfig.model!}
+										class="w-64 border-transparent bg-[#F9FAFB] hover:bg-[#e1e2e6] data-dark:bg-[#42464e]"
+									/>
+								</div>
 							{/if}
 
 							<!-- {#if showPromptTab}
@@ -474,7 +490,8 @@
 								? showModelSettings
 									? 'sm:grid-cols-[minmax(0,8fr)_minmax(300px,8fr)]'
 									: 'sm:grid-cols-[minmax(0,8fr)_minmax(150px,1fr)]'
-								: ''} {selectedGenConfig.object === 'gen_config.python'
+							: ''} {selectedGenConfig.object === 'gen_config.python' ||
+							selectedGenConfig.object === 'gen_config.image'
 								? 'grid-rows-1'
 								: 'grid-rows-[repeat(2,minmax(450px,1fr))]'} min-h-0 overflow-auto"
 						>
@@ -507,19 +524,25 @@
 									{/each}
 								</div>
 
-								{#if selectedGenConfig.object === 'gen_config.llm'}
+								{#if selectedGenConfig.object === 'gen_config.llm' || selectedGenConfig.object === 'gen_config.image'}
 									<PromptEditor
 										bind:this={promptEditor}
 										bind:editorContent={
 											() => {
-												if (selectedGenConfig?.object === 'gen_config.llm') {
+												if (
+													selectedGenConfig?.object === 'gen_config.llm' ||
+													selectedGenConfig?.object === 'gen_config.image'
+												) {
 													return selectedGenConfig?.prompt ?? '';
 												} else {
 													return '';
 												}
 											},
 											(v) => {
-												if (selectedGenConfig?.object === 'gen_config.llm')
+												if (
+													selectedGenConfig?.object === 'gen_config.llm' ||
+													selectedGenConfig?.object === 'gen_config.image'
+												)
 													selectedGenConfig.prompt = v;
 											}
 										}

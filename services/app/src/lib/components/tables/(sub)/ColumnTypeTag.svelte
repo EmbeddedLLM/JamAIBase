@@ -26,7 +26,7 @@
 	<span class="px-1 font-medium capitalize">
 		{#if colType === 'input'}
 			Input
-		{:else if genConfig?.object === 'gen_config.llm'}
+		{:else if genConfig?.object === 'gen_config.llm' || genConfig?.object === 'gen_config.image'}
 			LLM
 		{:else if genConfig?.object === 'gen_config.python'}
 			Python

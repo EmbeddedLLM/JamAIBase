@@ -34,7 +34,7 @@
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
-					'x-project-id': page.params.project_id
+					'x-project-id': page.params.project_id ?? ''
 				},
 				body: JSON.stringify({
 					table_id: page.params.table_id,
@@ -71,7 +71,7 @@
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
-					'x-project-id': page.params.project_id
+					'x-project-id': page.params.project_id ?? ''
 				},
 				body: JSON.stringify({
 					table_id: page.params.table_id,

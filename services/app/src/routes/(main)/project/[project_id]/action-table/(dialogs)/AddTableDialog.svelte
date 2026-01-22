@@ -51,6 +51,25 @@
 
 	let isLoading = $state(false);
 
+	const defaultGenConfig = (
+		colType: keyof typeof genTableColTypes | null,
+		dtype: keyof typeof genTableDTypes | ''
+	) => {
+		if (colType === 'Code Output') {
+			return { object: 'gen_config.code', source_column: '' } as const;
+		}
+		if (colType === 'Python Output') {
+			return { object: 'gen_config.python', python_code: '' } as const;
+		}
+		if (colType === 'LLM Output') {
+			if (dtype === 'image') {
+				return { object: 'gen_config.image', model: '', prompt: '' } as const;
+			}
+			return genTableColTypes['LLM Output'];
+		}
+		return null;
+	};
+
 	$effect(() => {
 		if (!isAddingTable) {
 			tableId = '';
@@ -90,13 +109,17 @@
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
-				'x-project-id': page.params.project_id
+				'x-project-id': page.params.project_id ?? ''
 			},
 			body: JSON.stringify({
 				id: tableId,
 				version: jamaiApiVersion,
 				cols: columns
 					.map((col, i) => {
+						const imageGenConfig =
+							col.col_type === 'LLM Output' && col.dtype === 'image'
+								? { object: 'gen_config.image', model: '', prompt: '' }
+								: null;
 						if (col.col_type === 'Code Output') {
 							return {
 								...col,
@@ -117,6 +140,13 @@
 									...col.gen_config,
 									python_code: `row["${col.id}"] = "<result here>"`
 								}
+							};
+						} else if (imageGenConfig) {
+							return {
+								...col,
+								col_type: undefined,
+								drag_id: undefined,
+								gen_config: imageGenConfig
 							};
 						} else {
 							return {
@@ -235,7 +265,6 @@
 										value={columns[index].col_type ?? undefined}
 										onValueChange={(v) => {
 											columns[index].col_type = v as keyof typeof genTableColTypes;
-											columns[index].gen_config = genTableColTypes[columns[index].col_type];
 											if (
 												!genTableColDTypes[column.col_type ?? 'Input'].includes(
 													columns[index].dtype
@@ -244,6 +273,10 @@
 												columns[index].dtype =
 													'str' /* genTableColDTypes[column.col_type ?? 'Input'][0] */;
 											}
+											columns[index].gen_config = defaultGenConfig(
+												columns[index].col_type,
+												columns[index].dtype
+											);
 
 											if (columns.length === index + 1) {
 												columns = [...columns, newColDefault()];
@@ -287,7 +320,16 @@
 												columns[index].col_type = (Object.entries(genTableColDTypes).find(
 													([colType, dTypes]) => dTypes.includes(v)
 												)?.[0] ?? 'Input') as keyof typeof genTableColDTypes;
+												columns[index].gen_config = defaultGenConfig(
+													columns[index].col_type,
+													columns[index].dtype
+												);
 												columns = [...columns, newColDefault()];
+											} else {
+												columns[index].gen_config = defaultGenConfig(
+													columns[index].col_type,
+													columns[index].dtype
+												);
 											}
 										}}
 									>

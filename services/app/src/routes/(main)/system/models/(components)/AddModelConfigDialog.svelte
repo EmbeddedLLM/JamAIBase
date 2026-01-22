@@ -141,21 +141,23 @@
 										<p class="text-xs text-gray-400">{config.id}</p>
 									</div>
 									<Checkbox
-										bind:checked={() => config.id === selectedSuggestedConfig?.id,
-										(v) => {
-											currentStep = 0;
-											if (v) {
-												selectedSuggestedConfig = config;
-												modelType = config.type;
-												selectedCapabilities = config.capabilities;
-												modelIcon = (config?.meta?.icon as string) || undefined;
-											} else {
-												selectedSuggestedConfig = null;
-												modelType = undefined;
-												selectedCapabilities = [];
-												modelIcon = undefined;
+										bind:checked={
+											() => config.id === selectedSuggestedConfig?.id,
+											(v) => {
+												currentStep = 0;
+												if (v) {
+													selectedSuggestedConfig = config;
+													modelType = config.type;
+													selectedCapabilities = config.capabilities;
+													modelIcon = (config?.meta?.icon as string) || undefined;
+												} else {
+													selectedSuggestedConfig = null;
+													modelType = undefined;
+													selectedCapabilities = [];
+													modelIcon = undefined;
+												}
 											}
-										}}
+										}
 										class="border-gray-400 data-[state=checked]:bg-[#1B748A]"
 									/>
 								</div>
@@ -329,15 +331,15 @@
 						<div class="col-span-2 space-y-1">
 							<Label required>Capabilities</Label>
 							<div class="flex flex-wrap gap-2">
-								{#each MODEL_CAPABILITIES as capability}
+								{#each Object.entries(MODEL_CAPABILITIES) as [capability, label]}
 									<!-- A11y: visible, non-interactive elements with an onclick event must be accompanied by a keyboard event handler. -->
 									<button
 										type="button"
-										class="cursor-pointer rounded-full border border-green-300 px-3 py-1 text-sm capitalize"
+										class="cursor-pointer rounded-full border border-green-300 px-3 py-1 text-sm"
 										class:bg-[#F5FFDB]={selectedCapabilities.includes(capability)}
 										onclick={() => toggleCapability(capability)}
 									>
-										{capability}
+										{label}
 									</button>
 								{/each}
 							</div>
@@ -376,7 +378,7 @@
 							/>
 						</div>
 
-						{#if modelType === MODEL_TYPES.embed.toLowerCase()}
+						{#if modelType === 'embed'}
 							<div class="space-y-1">
 								<Label>Embedding size</Label>
 								<Input
@@ -420,7 +422,7 @@
 					</div>
 
 					<div class="hidden space-y-6" class:!block={currentStep === 2}>
-						{#if modelType === MODEL_TYPES.llm.toLowerCase()}
+						{#if modelType === 'llm'}
 							<div class="space-y-1">
 								<Label>Cost in USD per million input tokens</Label>
 								<Input
@@ -444,7 +446,7 @@
 								/>
 							</div>
 						{/if}
-						{#if modelType === MODEL_TYPES.embed.toLowerCase()}
+						{#if modelType === 'embed'}
 							<div class="space-y-1">
 								<Label>Cost in USD per million embedding tokens</Label>
 								<Input
@@ -457,7 +459,7 @@
 								/>
 							</div>
 						{/if}
-						{#if modelType === MODEL_TYPES.rerank.toLowerCase()}
+						{#if modelType === 'rerank'}
 							<div class="space-y-1">
 								<Label>Cost in USD for a thousand searches</Label>
 								<Input
@@ -466,6 +468,52 @@
 									min="0"
 									step=".000001"
 									name="reranking_cost_per_ksearch"
+									class="bg-white"
+								/>
+							</div>
+						{/if}
+						{#if modelType === 'image_gen'}
+							<div class="space-y-1">
+								<Label>Cost in USD per million input tokens</Label>
+								<Input
+									value={selectedSuggestedConfig?.llm_input_cost_per_mtoken}
+									type="number"
+									min="0"
+									step=".000001"
+									name="llm_input_cost_per_mtoken"
+									class="bg-white"
+								/>
+							</div>
+							<div class="space-y-1">
+								<Label>Cost in USD per million output tokens</Label>
+								<Input
+									value={selectedSuggestedConfig?.llm_output_cost_per_mtoken}
+									type="number"
+									min="0"
+									step=".000001"
+									name="llm_output_cost_per_mtoken"
+									class="bg-white"
+								/>
+							</div>
+							<div class="space-y-1">
+								<Label>Cost in USD per million image input tokens</Label>
+								<Input
+									value={selectedSuggestedConfig?.image_input_cost_per_mtoken}
+									type="number"
+									min="0"
+									step=".000001"
+									name="image_input_cost_per_mtoken"
+									class="bg-white"
+								/>
+							</div>
+							<div class="space-y-1">
+								<Label>Cost in USD per million image output tokens</Label>
+								<Input
+									value={selectedSuggestedConfig?.image_output_cost_per_mtoken}
+									type="number"
+									min="0"
+									step=".000001"
+									name="image_output_cost_per_mtoken"
 									class="bg-white"
 								/>
 							</div>

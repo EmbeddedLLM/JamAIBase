@@ -20,7 +20,7 @@
 		rowID?: string | undefined;
 		columnID: string;
 		fileUri: string;
-		fileUrl: string;
+		fileThumb: { value: string; url: string } | undefined;
 		deletingFile?: { rowID: string; columnID: string; fileUri?: string } | null;
 	}
 
@@ -30,7 +30,7 @@
 		rowID = undefined,
 		columnID,
 		fileUri,
-		fileUrl,
+		fileThumb,
 		deletingFile = $bindable()
 	}: Props = $props();
 
@@ -71,22 +71,26 @@
 		fileUri.toLowerCase().endsWith(ext)
 	)?.type}
 	<div
-		class="relative flex items-center justify-center {!fileUrl ||
-		!isValidUri(fileUrl)?.protocol.startsWith('http') ||
+		class="relative flex items-center justify-center {!fileThumb ||
+		!isValidUri(fileThumb.url)?.protocol.startsWith('http') ||
 		// fix for inconsistent thumbs gen
 		fileType === 'document'
 			? 'h-full'
 			: ''} group/image w-full p-2"
 	>
-		{#if fileUrl && isValidUri(fileUrl)?.protocol.startsWith('http') && fileType !== undefined}
+		{#if fileThumb && isValidUri(fileThumb.url)?.protocol.startsWith('http') && fileUri === fileThumb.value && fileType !== undefined}
 			{#if fileType === 'image'}
-				<img src={fileUrl} alt="" class="z-0 h-[83px] max-w-full object-contain sm:h-[133px]" />
+				<img
+					src={fileThumb.url}
+					alt=""
+					class="z-0 h-[83px] max-w-full object-contain sm:h-[133px]"
+				/>
 			{:else if fileType === 'audio'}
-				<audio controls src={fileUrl}></audio>
+				<audio controls src={fileThumb.url}></audio>
 			{:else if fileType === 'document'}
 				<div class="flex h-full items-center justify-center">
 					<div class="flex items-center gap-1.5 rounded bg-white py-1 pl-1 pr-1.5">
-						<img src={fileUrl} alt="" class="z-0 h-5 max-w-full object-contain" />
+						<img src={fileThumb.url} alt="" class="z-0 h-5 max-w-full object-contain" />
 						{fileUri.split('/').pop()}
 					</div>
 				</div>
@@ -133,7 +137,7 @@
 				<ArrowDownToLine class="h-3.5 w-3.5" />
 			</Button>
 
-			{#if fileUrl && isValidUri(fileUrl)?.protocol.startsWith('http') && fileType === 'image'}
+			{#if fileThumb && isValidUri(fileThumb.url)?.protocol.startsWith('http') && fileType === 'image'}
 				<Button
 					variant="ghost"
 					title="Enlarge file"
@@ -144,8 +148,9 @@
 							activeTab: 'image',
 							message: {
 								content: fileUri,
+								error: null,
 								chunks: [],
-								fileUrl
+								fileUrl: fileThumb.url
 							},
 							reasoningContent: null,
 							reasoningTime: null,

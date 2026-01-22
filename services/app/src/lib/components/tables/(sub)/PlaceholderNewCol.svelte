@@ -40,6 +40,13 @@
 
 	let isLoading = $state(false);
 
+	$effect(() => {
+		const allowedTypes = genTableColDTypes[colType] ?? [];
+		if (!allowedTypes.includes(dType as (typeof allowedTypes)[number])) {
+			dType = allowedTypes[0] ?? 'str';
+		}
+	});
+
 	async function handleAddColumn() {
 		if (!columnName) {
 			return toast.error('Column name cannot be empty', { id: 'col-id-req' });
@@ -95,9 +102,15 @@
 												object: 'gen_config.python',
 												python_code: `row["${columnName}"] = "<result here>"`
 											}
-										: {
-												object: 'gen_config.llm'
-											}
+										: dType === 'image'
+											? {
+													object: 'gen_config.image',
+													model: '',
+													prompt: ''
+												}
+											: {
+													object: 'gen_config.llm'
+												}
 								: null) satisfies GenTableCol['gen_config']
 						}
 					]
@@ -275,16 +288,22 @@
 		dtype={dType}
 		colType={colType === 'Input' ? 'input' : 'output'}
 		columnID={columnName}
-		genConfig={colType !== 'Input'
-			? colType === 'LLM Output'
+	genConfig={colType !== 'Input'
+		? colType === 'LLM Output'
+			? dType === 'image'
 				? {
-						object: 'gen_config.llm'
+						object: 'gen_config.image',
+						model: '',
+						prompt: ''
 					}
 				: {
-						object: 'gen_config.python',
-						python_code: ''
+						object: 'gen_config.llm'
 					}
-			: undefined}
+			: {
+					object: 'gen_config.python',
+					python_code: ''
+				}
+		: undefined}
 	/>
 
 	<!-- svelte-ignore a11y_autofocus -->

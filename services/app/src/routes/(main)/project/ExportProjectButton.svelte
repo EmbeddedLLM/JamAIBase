@@ -20,7 +20,7 @@
 		if (
 			!confirm(
 				m.project_export_confirm({
-					project_name: $activeProject?.name ?? page.params.project_id ?? projectId
+					project_name: $activeProject?.name ?? page.params.project_id ?? projectId ?? ''
 				})
 			)
 		)
@@ -28,7 +28,7 @@
 		if (page.data.ossMode) {
 			window
 				.open(
-					`${PUBLIC_JAMAI_URL}/api/owl/projects/export?${new URLSearchParams([['project_id', projectId ?? page.params.project_id]])}`,
+					`${PUBLIC_JAMAI_URL}/api/owl/projects/export?${new URLSearchParams([['project_id', projectId ?? page.params.project_id ?? '']])}`,
 					'_blank'
 				)
 				?.focus();
@@ -36,7 +36,7 @@
 			$showLoadingOverlay = true;
 
 			const response = await fetch(
-				`${PUBLIC_JAMAI_URL}/api/owl/projects/export?${new URLSearchParams([['project_id', projectId ?? page.params.project_id]])}`
+				`${PUBLIC_JAMAI_URL}/api/owl/projects/export?${new URLSearchParams([['project_id', projectId ?? page.params.project_id ?? '']])}`
 			);
 
 			if (response.ok) {

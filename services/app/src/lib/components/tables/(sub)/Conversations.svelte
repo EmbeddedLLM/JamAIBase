@@ -86,7 +86,7 @@
 				credentials: 'same-origin',
 				signal: fetchConvController?.signal,
 				headers: {
-					'x-project-id': page.params.project_id
+					'x-project-id': page.params.project_id ?? ''
 				}
 			});
 			currentOffset += limit;

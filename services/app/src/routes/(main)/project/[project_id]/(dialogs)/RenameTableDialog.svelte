@@ -45,7 +45,7 @@
 			{
 				method: 'POST',
 				headers: {
-					'x-project-id': page.params.project_id
+					'x-project-id': page.params.project_id ?? ''
 				}
 			}
 		);

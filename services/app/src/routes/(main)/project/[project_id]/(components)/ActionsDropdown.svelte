@@ -181,7 +181,7 @@
 			])}`,
 			{
 				headers: {
-					'x-project-id': page.params.project_id
+					'x-project-id': page.params.project_id ?? ''
 				}
 			}
 		);
@@ -248,7 +248,7 @@
 
 		<DropdownMenu.Group class="flex flex-col gap-1 py-1 [&>*]:border [&>*]:border-[#E4E7EC]">
 			<DropdownMenu.Item
-				onclick={() => (isDeletingTable = page.params.table_id)}
+				onclick={() => (isDeletingTable = page.params.table_id ?? null)}
 				class="text-[#D92D20] hover:!bg-[#FEF3F2] hover:!text-[#D92D20] data-[highlighted]:bg-[#FEF3F2] data-[highlighted]:text-[#D92D20]"
 			>
 				<Trash2 class="mb-[2px] mr-2 h-4 w-4" />
