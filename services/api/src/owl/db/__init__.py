@@ -265,6 +265,43 @@ async def _check_table_exists(
     ).scalar()
 
 
+async def _get_pg_enum_schema(conn: Connection, enum_type_name: str) -> str | None:
+    return await conn.scalar(
+        text(
+            """
+            SELECT n.nspname
+            FROM pg_type t
+            JOIN pg_namespace n ON n.oid = t.typnamespace
+            WHERE t.typname = :enum_type_name
+            """
+        ),
+        {"enum_type_name": enum_type_name},
+    )
+
+
+async def _get_pg_enum_labels(
+    conn: Connection, *, enum_type_name: str, enum_schema: str
+) -> set[str]:
+    return {
+        r[0]
+        for r in (
+            await conn.execute(
+                text(
+                    """
+                    SELECT e.enumlabel
+                    FROM pg_enum e
+                    JOIN pg_type t ON t.oid = e.enumtypid
+                    JOIN pg_namespace n ON n.oid = t.typnamespace
+                    WHERE t.typname = :enum_type_name
+                      AND n.nspname = :enum_schema
+                    """
+                ),
+                {"enum_type_name": enum_type_name, "enum_schema": enum_schema},
+            )
+        ).all()
+    }
+
+
 async def _check_column_exists(
     conn: Connection,
     table_name: str,
@@ -598,12 +635,52 @@ async def _migrate_reasoning_jsonb_keys(engine: AsyncEngine) -> bool:
         return True
 
 
+async def _migrate_modeltype_enum(engine: AsyncEngine) -> bool:
+    """
+    Keep the Postgres `modeltype` enum in sync with `jamaibase.types.ModelType`.
+
+    The DB stores Enum keys (names), not Enum values, so we persist e.g. "IMAGE_GEN".
+    """
+    from jamaibase.types.db import ModelType
+
+    enum_type_name = "modeltype"
+    expected_labels = [member.name for member in ModelType]
+    invalid = [label for label in expected_labels if not label or "'" in label or "\x00" in label]
+    if invalid:
+        raise ValueError(f"Invalid enum labels for {enum_type_name}: {invalid!r}")
+
+    async with engine.begin() as conn:
+        enum_schema = await _get_pg_enum_schema(conn, enum_type_name)
+        if enum_schema is None:
+            logger.info(f'Enum "{enum_type_name}" not found; skipping enum migration.')
+            return False
+
+        existing = await _get_pg_enum_labels(
+            conn, enum_type_name=enum_type_name, enum_schema=enum_schema
+        )
+        missing = [label for label in expected_labels if label not in existing]
+        if not missing:
+            logger.info(f'Enum "{enum_type_name}" is up to date; no migration needed.')
+            return False
+
+        for label in missing:
+            # Identifiers can't be bound parameters; label is validated above.
+            await conn.exec_driver_sql(
+                f"ALTER TYPE \"{enum_schema}\".{enum_type_name} ADD VALUE '{label}';"
+            )
+        logger.success(
+            f'Successfully migrated enum "{enum_type_name}": added {len(missing)} value(s).'
+        )
+        return True
+
+
 async def migrate_db():
     engine = create_db_engine_async()
     migrated = [
         await _create_schema(engine),
         await _grant_auditor_privilege(engine),
         await _create_tables(engine),
+        await _migrate_modeltype_enum(engine),
         await _create_pg_functions(engine),
         await _add_egress_updated_at_column(engine),
         await _add_project_description_column(engine),
