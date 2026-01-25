@@ -37,6 +37,7 @@ class EnvConfig(BaseSettings):
     redis_port: int = 6379
     file_proxy_url: str = "localhost:6969"
     file_dir: str = "s3://file"
+    s3_region: str = "ap-southeast-5"
     s3_endpoint: str = "http://minio:9000"
     s3_access_key_id: str = "minioadmin"
     s3_secret_access_key: SecretStr = "minioadmin"

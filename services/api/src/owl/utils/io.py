@@ -88,9 +88,10 @@ HTTP_ACLIENT = httpx.AsyncClient(
 async def get_s3_aclient():
     async with aioboto3.Session().client(
         "s3",
+        region_name=ENV_CONFIG.s3_region,
+        endpoint_url=ENV_CONFIG.s3_endpoint,
         aws_access_key_id=ENV_CONFIG.s3_access_key_id,
         aws_secret_access_key=ENV_CONFIG.s3_secret_access_key_plain,
-        endpoint_url=ENV_CONFIG.s3_endpoint,
     ) as aclient:
         yield aclient
 
