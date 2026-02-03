@@ -409,6 +409,7 @@ async def update_project_owner(
 )
 @handle_exception
 async def join_project(
+    request: Request,
     user: Annotated[UserAuth, Depends(auth_user)],
     session: Annotated[AsyncSession, Depends(yield_async_session)],
     user_id: Annotated[
@@ -448,15 +449,27 @@ async def join_project(
 
             # Fetch code
             invite = await session.get(VerificationCode, invite_code)
-            if (
-                invite is None
-                or invite.project_id is None
-                or invite.purpose not in ("project_invite", None)
-                or now() > invite.expiry
-                or invite.revoked_at is not None
-                or invite.used_at is not None
-                or invite.user_email != joining_user.preferred_email
-            ):
+            # Validate
+            reject_reason = None
+            if invite is None:
+                reject_reason = f'Invite code "{invite_code}" is not found.'
+            elif invite.project_id is None:
+                reject_reason = f'Invite code "{invite_code}" is not for a project.'
+            elif invite.purpose not in ("project_invite", None):
+                reject_reason = f'Invite code "{invite_code}" is not for a project invite.'
+            elif now() > invite.expiry:
+                reject_reason = f'Invite code "{invite_code}" has expired.'
+            elif invite.revoked_at is not None:
+                reject_reason = f'Invite code "{invite_code}" has been revoked.'
+            elif invite.used_at is not None:
+                reject_reason = f'Invite code "{invite_code}" has been used.'
+            elif invite.user_email != joining_user.preferred_email:
+                reject_reason = (
+                    f'Invite code "{invite_code}" is for "{invite.user_email}" '
+                    f'but the signed-in user is "{joining_user.preferred_email}".'
+                )
+            if reject_reason is not None:
+                logger.info(f"{reject_reason} ({request.state.id})")
                 raise ResourceNotFoundError(f'Invite code "{invite_code}" is invalid.')
             project_id = invite.project_id
             role = invite.role

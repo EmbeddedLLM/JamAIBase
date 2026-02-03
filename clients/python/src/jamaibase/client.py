@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from os.path import basename, split
 from time import perf_counter
-from typing import Any, AsyncGenerator, BinaryIO, Generator, Literal, Type
+from typing import Any, AsyncGenerator, BinaryIO, Generator, Literal, Self, Type
 from urllib.parse import quote
 from warnings import warn
 
@@ -191,6 +191,17 @@ class _ClientAsync:
         Close the HTTP async client.
         """
         await self.http_client.aclose()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+        if exc_type:
+            logger.error(f"Client exited with exception: {exc_type.__name__}: {exc_value}")
+        try:
+            await self.close()
+        except Exception as e:
+            logger.error(f"Client failed to close: {e}")
 
     @staticmethod
     def _filter_params(params: dict[str, Any] | BaseModel | None) -> dict[str, Any] | None:

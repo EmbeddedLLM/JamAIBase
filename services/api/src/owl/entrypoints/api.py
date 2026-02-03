@@ -51,13 +51,13 @@ suppress_logging_handlers(["uvicorn", "litellm", "azure", "openmeter", "pottery"
 # --- Setup DB --- #
 # Maybe reset DB
 if ENV_CONFIG.db_reset:
-    asyncio.run(reset_db(reset_max_users=ENV_CONFIG.db_init_max_users))
+    asyncio.run(reset_db())
 # Migration
 asyncio.run(migrate_db())
 # Maybe populate DB with demo data
 # If OSS and first launch, init user, organization and project
 if ENV_CONFIG.db_init:
-    asyncio.run(init_db(init_max_users=ENV_CONFIG.db_init_max_users))
+    asyncio.run(init_db())
 # Maybe reset cache
 if ENV_CONFIG.cache_reset:
     CACHE.purge()

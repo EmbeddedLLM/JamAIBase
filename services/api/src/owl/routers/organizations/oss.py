@@ -419,6 +419,7 @@ async def update_organization_owner(
 )
 @handle_exception
 async def join_organization(
+    request: Request,
     user: Annotated[UserAuth, Depends(auth_user_service_key)],
     session: Annotated[AsyncSession, Depends(yield_async_session)],
     user_id: Annotated[str, Query(min_length=1, description="ID of the user joining the org.")],
@@ -453,15 +454,27 @@ async def join_organization(
 
             # Fetch code
             invite = await session.get(VerificationCode, invite_code)
-            if (
-                invite is None
-                or invite.organization_id is None
-                or invite.purpose not in ("organization_invite", None)
-                or now() > invite.expiry
-                or invite.revoked_at is not None
-                or invite.used_at is not None
-                or invite.user_email != joining_user.preferred_email
-            ):
+            # Validate
+            reject_reason = None
+            if invite is None:
+                reject_reason = f'Invite code "{invite_code}" is not found.'
+            elif invite.organization_id is None:
+                reject_reason = f'Invite code "{invite_code}" is not for an organization.'
+            elif invite.purpose not in ("organization_invite", None):
+                reject_reason = f'Invite code "{invite_code}" is not for an organization invite.'
+            elif now() > invite.expiry:
+                reject_reason = f'Invite code "{invite_code}" has expired.'
+            elif invite.revoked_at is not None:
+                reject_reason = f'Invite code "{invite_code}" has been revoked.'
+            elif invite.used_at is not None:
+                reject_reason = f'Invite code "{invite_code}" has been used.'
+            elif invite.user_email != joining_user.preferred_email:
+                reject_reason = (
+                    f'Invite code "{invite_code}" is for "{invite.user_email}" '
+                    f'but the signed-in user is "{joining_user.preferred_email}".'
+                )
+            if reject_reason is not None:
+                logger.info(f"{reject_reason} ({request.state.id})")
                 raise ResourceNotFoundError(f'Invite code "{invite_code}" is invalid.')
             organization_id = invite.organization_id
             role = invite.role

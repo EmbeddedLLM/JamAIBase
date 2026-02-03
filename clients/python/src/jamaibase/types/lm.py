@@ -6,7 +6,6 @@ from pydantic import (
     AfterValidator,
     BaseModel,
     BeforeValidator,
-    ConfigDict,
     Field,
     field_validator,
     model_serializer,
@@ -730,10 +729,8 @@ def _sanitise_name(v: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]", "_", v).strip()
 
 
-class ChatEntry(BaseModel):
+class ChatEntry(BaseModel, use_enum_values=True):
     """Represents a message in the chat context."""
-
-    model_config = ConfigDict(use_enum_values=True)
 
     role: ChatRole = Field(
         description="Who said the message?",

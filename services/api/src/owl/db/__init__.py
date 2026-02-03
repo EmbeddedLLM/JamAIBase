@@ -97,37 +97,12 @@ def cached_text(query: str) -> TextClause:
     return text(query)
 
 
-async def reset_db(*, reset_max_users: int = 3):
-    from sqlmodel import func, select
-
-    from owl.db.models import User
-
+async def reset_db():
     # Only allow DB reset in dev with localhost
     if "@localhost:" not in ENV_CONFIG.db_path:
         raise ValueError("DB reset is only allowed in dev with localhost DB.")
 
     async with async_session() as session:
-        # As a safety measure, reset DB only if it has less than `init_max_users` users
-        # Just in case we accidentally tried to nuke a prod DB
-        user_table_exists = (
-            await session.exec(
-                text(
-                    (
-                        f"SELECT EXISTS ("
-                        f"SELECT FROM information_schema.tables WHERE table_schema = '{SCHEMA}' AND table_name = 'User'"
-                        ");"
-                    )
-                )
-            )
-        ).scalar()
-        if user_table_exists:
-            user_count = (await session.exec(select(func.count(User.id)))).one()
-            if user_count >= reset_max_users:
-                logger.info(
-                    f"Found {user_count:,d} users, abort database reset (>= {reset_max_users} users)."
-                )
-                return
-
         # Delete all tables
         logger.warning(f'Resetting database (dropping schema "{SCHEMA}")...')
         await session.exec(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
@@ -702,7 +677,7 @@ async def migrate_db():
     await CACHE.aclose()
 
 
-async def init_db(*, init_max_users: int = 3):
+async def init_db():
     from fastapi import Request
     from sqlmodel import func, select
     from starlette.datastructures import URL, Headers
@@ -721,19 +696,16 @@ async def init_db(*, init_max_users: int = 3):
     )
 
     async with async_session() as session:
-        # As a safety measure, init DB only if it has less than `init_max_users` users
-        # Just in case we accidentally tried to nuke a prod DB
         user_count = (await session.exec(select(func.count(User.id)))).one()
-        if user_count >= init_max_users:
-            logger.info(
-                f"Found {user_count:,d} users, abort database initialisation (>= {init_max_users} users)."
-            )
-            return
-
         # Only enforce OSS check if db_init=False
-        if ENV_CONFIG.is_oss and user_count != 0:
-            logger.info("OSS mode: Skipping initialization (non-empty DB).")
-            return
+        if ENV_CONFIG.is_oss:
+            if user_count != 0:
+                logger.info("OSS mode: Skipping initialization (non-empty DB).")
+                return
+        else:
+            # Only allow DB init in dev with localhost
+            if "@localhost:" not in ENV_CONFIG.db_path:
+                raise ValueError("DB init is only allowed in dev with localhost DB.")
 
         logger.info("Initialising database...")
 

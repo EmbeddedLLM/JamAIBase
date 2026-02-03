@@ -39,7 +39,7 @@ spec:
 - customize audit_statement based on the level of DML statement you would want to monitor
 
 ```python
-async def _grant_auditor_priviledge(engine: AsyncEngine) -> bool:
+async def _grant_auditor_privilege(engine: AsyncEngine) -> bool:
     """
     Apply the necessary grants to allow the auditor role to audit the database.
     """

@@ -2423,6 +2423,7 @@ class GenerativeTableCore:
                 logger.info(f'Importing table "{self.table_id}": Skipped S3 upload.')
         prog.parse_data.progress = 100
         await CACHE.set_progress(prog)
+        semaphore = Semaphore(S3_MAX_CONCURRENCY)
 
         async def _upload(
             old_uri: str,
@@ -2441,7 +2442,6 @@ class GenerativeTableCore:
                 return (old_uri, new_uri)
 
         uris_seen: dict[str, str] = {}  # Old URI to new URI
-        semaphore = Semaphore(S3_MAX_CONCURRENCY)
         upload_coros = []
         for row in rows:
             file_byte_cols = [c for c in row.keys() if c.endswith("__")]

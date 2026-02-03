@@ -71,7 +71,7 @@ unfixable = ["B"]
 "**/{tests,docs,tools}/*" = ["E402"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["jamaibase", "owl"]
+known-first-party = ["jamaibase", "owl", "polylm"]
 
 [tool.ruff.lint.flake8-bugbear]
 # Allow default arguments like, e.g., `data: List[str] = fastapi.Query(None)`.

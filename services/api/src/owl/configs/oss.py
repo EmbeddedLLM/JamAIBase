@@ -27,7 +27,6 @@ class EnvConfig(BaseSettings):
     max_concurrency: int = 300
     db_init: bool | None = None  # None means unset
     db_reset: bool = False
-    db_init_max_users: int = 5
     cache_reset: bool = False
     enable_byok: bool = True
     disable_billing: bool = False
@@ -139,31 +138,25 @@ class EnvConfig(BaseSettings):
 
     @model_validator(mode="after")
     def validate_db_path(self) -> Self:
-        """
-        Validates that `db_path` starts with either `rqlite+pyrqlite://` or `sqlite://` or `sqlite+libsql://` or `postgresql`.
-        """
         if not (
-            self.db_path.startswith("rqlite+pyrqlite://")
-            or self.db_path.startswith("sqlite://")
-            or self.db_path.startswith("sqlite+libsql://")
-            or self.db_path.startswith("postgresql")
+            self.db_path.startswith("postgresql+psycopg://")
+            # or self.db_path.startswith("sqlite+aiosqlite://")
+            # or self.db_path.startswith("sqlite://")
+            # or self.db_path.startswith("sqlite+libsql://")
+            # or self.db_path.startswith("rqlite+pyrqlite://")
         ):
             raise ValueError(f'`db_path` "{self.db_path}" has an invalid dialect.')
         return self
 
     @property
-    def db_dialect(self) -> Literal["rqlite", "libsql", "postgresql", "sqlite"]:
+    def db_dialect(self) -> Literal["postgresql"]:
         """
-        Show the sqlite dialect that's in use based on the `db_path`.
+        Show the dialect that's in use based on the `db_path`.
         """
-        if self.db_path.startswith("rqlite+pyrqlite://"):
-            return "rqlite"
-        elif self.db_path.startswith("sqlite+libsql://"):
-            return "libsql"
-        elif self.db_path.startswith("postgresql"):
+        if self.db_path.startswith("postgresql"):
             return "postgresql"
-        elif self.db_path.startswith("sqlite://"):
-            return "sqlite"
+        else:
+            raise ValueError(f'`db_path` "{self.db_path}" has an invalid dialect.')
 
     @cached_property
     def is_oss(self) -> bool:
