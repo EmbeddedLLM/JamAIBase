@@ -193,6 +193,53 @@ export const actions = {
 		} else {
 			return leaveOrgBody;
 		}
+	},
+
+	deify: async ({ cookies, fetch, locals, request }) => {
+		const data = await request.formData();
+		const user_id = data.get('user_id');
+		const activeOrganizationId = cookies.get('activeOrganizationId');
+
+		if (typeof user_id !== 'string' || user_id.trim() === '') {
+			return fail(400, new APIError('Invalid user ID').getSerializable());
+		}
+
+		if (!activeOrganizationId) {
+			return fail(400, new APIError('No active organization').getSerializable());
+		}
+
+		//* Verify user perms
+		if (!locals.user) {
+			return fail(401, new APIError('Unauthorized').getSerializable());
+		}
+
+		const deifyUserRes = await fetch(
+			`${OWL_URL}/api/v1/organizations/owner?${new URLSearchParams([
+				['new_owner_id', user_id],
+				['organization_id', activeOrganizationId]
+			])}`,
+			{
+				method: 'PATCH',
+				headers: {
+					...headers,
+					'x-user-id': locals.user.id
+				}
+			}
+		);
+
+		const deifyUserBody = await deifyUserRes.json();
+		if (!deifyUserRes.ok) {
+			logger.error('ORGTEAM_TRANSFER_TRANSFER', deifyUserBody);
+			return fail(
+				deifyUserRes.status,
+				new APIError(
+					'Failed to transfer organization ownership',
+					deifyUserBody as any
+				).getSerializable()
+			);
+		} else {
+			return deifyUserBody;
+		}
 	}
 };
 

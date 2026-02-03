@@ -239,6 +239,58 @@ export const actions = {
 		} else {
 			return leaveOrgBody;
 		}
+	},
+
+	deify: async ({ cookies, fetch, locals, request }) => {
+		const data = await request.formData();
+		const project_id = data.get('project_id');
+		const user_id = data.get('user_id');
+		const activeOrganizationId = cookies.get('activeOrganizationId');
+
+		if (typeof project_id !== 'string' || project_id.trim() === '') {
+			return fail(400, new APIError('Invalid project ID').getSerializable());
+		}
+
+		if (typeof user_id !== 'string' || user_id.trim() === '') {
+			return fail(400, new APIError('Invalid user ID').getSerializable());
+		}
+
+		if (!activeOrganizationId) {
+			return fail(400, new APIError('No active organization').getSerializable());
+		}
+
+		//* Verify user perms
+		if (!locals.user) {
+			return fail(401, new APIError('Unauthorized').getSerializable());
+		}
+
+		const deifyProjectRes = await fetch(
+			`${OWL_URL}/api/v1/projects/owner?${new URLSearchParams([
+				['new_owner_id', user_id],
+				['project_id', project_id]
+			])}`,
+			{
+				method: 'PATCH',
+				headers: {
+					...headers,
+					'x-user-id': locals.user.id
+				}
+			}
+		);
+
+		const deifyProjectBody = await deifyProjectRes.json();
+		if (!deifyProjectRes.ok) {
+			logger.error('PROJTEAM_TRANSFER_TRANSFER', deifyProjectBody);
+			return fail(
+				deifyProjectRes.status,
+				new APIError(
+					'Failed to transfer project ownership',
+					deifyProjectBody as any
+				).getSerializable()
+			);
+		} else {
+			return deifyProjectBody;
+		}
 	}
 };
 

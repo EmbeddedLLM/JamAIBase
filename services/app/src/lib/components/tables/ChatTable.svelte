@@ -420,15 +420,13 @@
 
 								{#if row[column.id]?.error}
 									{@const error = row[column.id]?.error}
-									<div class="flex h-full w-full items-center p-2">
-										<span class="break-words text-sm text-[#D92D20]">
-											{typeof error === 'string'
-												? error
-												: error?.message
-													? String(error.message)
-													: 'Error'}
-										</span>
-									</div>
+									<p class="h-min overflow-auto whitespace-pre-line p-2 text-[#D92D20]">
+										{typeof error === 'string'
+											? error
+											: error?.message
+												? String(error.message)
+												: 'Error'}
+									</p>
 								{:else if editMode}
 									{#if column.dtype === 'image' || column.dtype === 'audio' || column.dtype === 'document'}
 										<FileSelect

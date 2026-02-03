@@ -3,7 +3,6 @@
 	import { onMount } from 'svelte';
 	import { MediaQuery } from 'svelte/reactivity';
 	import debounce from 'lodash/debounce';
-	import ArrowLeft from 'lucide-svelte/icons/arrow-left';
 	import Trash_2 from 'lucide-svelte/icons/trash-2';
 	import { page } from '$app/state';
 	import { cTableSort as sortOptions } from '$globalStore';
@@ -17,18 +16,17 @@
 	import FoundProjectOrgSwitcher from '$lib/components/preset/FoundProjectOrgSwitcher.svelte';
 	import SorterSelect from '$lib/components/preset/SorterSelect.svelte';
 	import SearchBar from '$lib/components/preset/SearchBar.svelte';
-	import Tooltip from '$lib/components/Tooltip.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import { Button } from '$lib/components/ui/button';
 	import { Skeleton } from '$lib/components/ui/skeleton';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
 	import AddIcon from '$lib/icons/AddIcon.svelte';
+	import ArrowBackIcon from '$lib/icons/ArrowBackIcon.svelte';
 	import ChatTableIcon from '$lib/icons/ChatTableIcon.svelte';
-	import ChatAgentIcon from '$lib/icons/ChatAgentIcon.svelte';
+	import ChatAgentIcon2 from '$lib/icons/ChatAgentIcon2.svelte';
 	import EditIcon from '$lib/icons/EditIcon.svelte';
 	import MoreVertIcon from '$lib/icons/MoreVertIcon.svelte';
-	import CheckIcon from '$lib/icons/CheckIcon.svelte';
 	import SortAlphabetIcon from '$lib/icons/SortAlphabetIcon.svelte';
 	import SortByIcon from '$lib/icons/SortByIcon.svelte';
 	import ImportIcon from '$lib/icons/ImportIcon.svelte';
@@ -37,12 +35,13 @@
 	let { data } = $props();
 	let { user } = $derived(data);
 
-	const bigScreen = new MediaQuery('min-width: 1024px');
-	let componentWidth: number = $state(0);
 	let supportsContainerQuery = $state(true);
 	let selectingFilterAgent = $state(true);
 
+	// TODO: Unify these two
 	let filterByAgent = $state('_chat_');
+	let filterAgent = $state<(typeof $pastChatAgents)[number] | null>(null);
+
 	let fetchFilteredConvController: AbortController | null = null;
 	let isLoadingFilteredConv = $state(false);
 	let isLoadingMoreFilteredConv = $state(false);
@@ -74,6 +73,10 @@
 	let moreCAgentsFinished = false;
 	let currentOffsetAgents = 0;
 	const limitAgents = 100;
+
+	let agentSearchQuery = $state('');
+	let agentSearchController: AbortController | null = null;
+	let isLoadingSearchAgents = $state(false);
 
 	let searchQuery = $state('');
 	let searchController: AbortController | null = null;
@@ -116,11 +119,16 @@
 					new URLSearchParams({
 						offset: currentOffsetAgents.toString(),
 						limit: limitAgents.toString(),
+						order_by: $sortOptions.orderBy,
+						order_ascending: $sortOptions.order === 'asc' ? 'true' : 'false',
 						parent_id: '_agent_'
 					}),
 				{
 					credentials: 'same-origin',
-					signal: fetchAgentsController.signal
+					signal: fetchAgentsController.signal,
+					headers: {
+						'x-project-id': page.params.project_id ?? ''
+					}
 				}
 			);
 			currentOffsetAgents += limitAgents;
@@ -164,6 +172,59 @@
 		isLoadingMoreCAgents = false;
 	}
 
+	async function handleSearchAgents(q: string) {
+		isLoadingSearchAgents = true;
+
+		if (!agentSearchQuery) return refetchTables();
+
+		agentSearchController?.abort('Duplicate');
+		agentSearchController = new AbortController();
+
+		try {
+			const response = await fetch(
+				`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/chat/list?${new URLSearchParams({
+					limit: limitAgents.toString(),
+					order_by: $sortOptions.orderBy,
+					order_ascending: $sortOptions.order === 'asc' ? 'true' : 'false',
+					parent_id: '_agent_',
+					search_query: q
+				})}`,
+				{
+					signal: agentSearchController.signal,
+					headers: {
+						'x-project-id': page.params.project_id ?? ''
+					}
+				}
+			);
+			currentOffsetAgents = limitAgents;
+			moreCAgentsFinished = false;
+
+			const responseBody = await response.json();
+			if (response.ok) {
+				$pastChatAgents = responseBody.items;
+			} else {
+				logger.error('CHATTBL_TBL_SEARCHAGENT', responseBody);
+				console.error(responseBody);
+				toast.error('Failed to search agents', {
+					id: responseBody.message || JSON.stringify(responseBody),
+					description: CustomToastDesc as any,
+					componentProps: {
+						description: responseBody.message || JSON.stringify(responseBody),
+						requestID: responseBody.request_id
+					}
+				});
+			}
+			isLoadingSearchAgents = false;
+		} catch (err) {
+			//* don't show abort errors in browser
+			if (err !== 'Duplicate') {
+				console.error(err);
+				isLoadingSearchAgents = false;
+			}
+		}
+	}
+	const debouncedSearchAgents = debounce(handleSearchAgents, 300);
+
 	async function getConvFilterByAgent(agentId: string, showFiltered = false) {
 		if (agentId === filterByAgent && filteredConversations.length !== 0) {
 			isLoadingMoreFilteredConv = true;
@@ -173,6 +234,7 @@
 			currentOffsetFilteredConv = 0;
 			moreFilteredConvFinished = false;
 			filterByAgent = agentId;
+			filterAgent = $pastChatAgents.find((agent) => agent.id === agentId) ?? null;
 		}
 
 		if (showFiltered) selectingFilterAgent = false;
@@ -198,7 +260,10 @@
 				`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/chat/list?` + new URLSearchParams(searchParams),
 				{
 					credentials: 'same-origin',
-					signal: fetchFilteredConvController.signal
+					signal: fetchFilteredConvController.signal,
+					headers: {
+						'x-project-id': page.params.project_id ?? ''
+					}
 				}
 			);
 			currentOffsetFilteredConv += limitFilteredConv;
@@ -260,6 +325,7 @@
 			]);
 
 			isLoadingSearch = false;
+			isLoadingSearchAgents = false;
 		}
 	}
 
@@ -281,7 +347,10 @@
 					search_query: q
 				})}`,
 				{
-					signal: searchController.signal
+					signal: searchController.signal,
+					headers: {
+						'x-project-id': page.params.project_id ?? ''
+					}
 				}
 			);
 			currentOffsetFilteredConv = limitFilteredConv;
@@ -375,148 +444,92 @@
 	<title>Chat Table</title>
 </svelte:head>
 
-<div bind:offsetWidth={componentWidth} class="flex grow flex-col gap-3 overflow-hidden @container">
+{#if filterByAgent === '_chat_'}
 	{#if !loadingAgentsError}
-		<div
-			class="grid h-1 w-[200%] grow grid-cols-2 @2xl:w-auto @2xl:grid-cols-[minmax(300px,3fr)_minmax(0,10fr)] supports-[not(container-type:inline-size)]:lg:w-auto supports-[not(container-type:inline-size)]:lg:grid-cols-[minmax(300px,3fr)_minmax(0,10fr)] {selectingFilterAgent
-				? 'translate-x-0'
-				: '-translate-x-[50%] @2xl:translate-x-0 supports-[not(container-type:inline-size)]:lg:translate-x-0'} transition-transform"
-		>
+		<div class="flex h-full flex-col pb-3">
 			<div
-				inert={(supportsContainerQuery
-					? componentWidth !== undefined && componentWidth < 672
-					: !bigScreen.current) && !selectingFilterAgent}
-				data-testid="agents-list"
-				class="my-2.5 ml-7 mr-7 flex min-h-0 flex-col gap-2 rounded-lg border border-[#E5E5E5] bg-white px-2 py-3 @2xl:my-4 @2xl:mr-1.5 data-dark:border-[#484C55] data-dark:bg-[#303338] supports-[not(container-type:inline-size)]:lg:my-4 supports-[not(container-type:inline-size)]:lg:mr-1.5"
+				class="grid h-min min-w-0 grid-cols-[12rem_min-content_minmax(0,auto)_min-content_min-content] items-center gap-1 overflow-auto px-7 pb-0.5 pt-1 [scrollbar-gutter:stable] sm:overflow-visible sm:pb-2 sm:pt-3"
 			>
-				<div class="flex items-center justify-between">
-					<h3 class="ml-1 text-[#344054]">Agents</h3>
+				<SearchBar
+					bind:searchQuery={agentSearchQuery}
+					isLoadingSearch={isLoadingSearchAgents}
+					debouncedSearch={debouncedSearchAgents}
+					label="Search table"
+					placeholder="Search table"
+					class="w-[12rem]"
+				/>
 
-					<Button
-						onclick={() => (isAddingAgent = true)}
-						variant="ghost"
-						title="New agent"
-						class="aspect-square h-7 w-7 p-0"
-					>
-						<AddIcon class="h-3.5 w-3.5 text-[#667085]" />
-					</Button>
-				</div>
+				<SorterSelect bind:sortOptions={$sortOptions} {sortableFields} {refetchTables} />
 
-				<div
-					onscroll={debounce((e) => scrollHandler(e, 'agent'), 300)}
-					class="flex grow flex-col gap-1 overflow-auto"
+				<div></div>
+
+				<Button
+					variant="action"
+					title="Create agent"
+					onclick={() => (isAddingAgent = true)}
+					class="flex aspect-square h-8 flex-[0_0_auto] items-center justify-center gap-1.5 px-2 py-2 text-xs xs:aspect-auto xs:h-9 xs:px-3 sm:text-sm"
 				>
-					{#if isLoadingCAgents}
-						{#each Array(6) as _}
-							<Skeleton
-								class="flex h-9 w-full flex-[0_0_auto] flex-col rounded bg-black/[0.09] data-dark:bg-white/[0.1]"
-							/>
-						{/each}
-					{:else}
+					<AddIcon class="h-3.5 w-3.5" />
+					<!-- <span class="hidden xs:block">Create table</span> -->
+				</Button>
+
+				<Button
+					variant="action"
+					title="Import table"
+					onclick={(e) => e.currentTarget.querySelector('input')?.click()}
+					class="flex aspect-square h-8 w-8 flex-[0_0_auto] items-center gap-2 p-0 xs:h-9 xs:w-9 md:aspect-auto"
+				>
+					<ImportIcon class="h-3.5 w-3.5" />
+
+					<!-- <span class="hidden md:block">Import table</span> -->
+
+					<input
+						tabindex="-1"
+						id="chat-tbl-import"
+						type="file"
+						accept=".parquet"
+						onchange={(e) => {
+							e.preventDefault();
+							handleFilesUpload(e, [...(e.currentTarget.files ?? [])]);
+						}}
+						multiple={false}
+						class="fixed max-h-[0] max-w-0 overflow-hidden !border-none !p-0"
+					/>
+				</Button>
+			</div>
+
+			<div
+				onscroll={debounce((e) => scrollHandler(e, 'agent'), 300)}
+				style="grid-auto-rows: 112px;"
+				class="grid h-1 grow grid-flow-row grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3 overflow-auto px-7 pt-1 [scrollbar-gutter:stable]"
+			>
+				{#if isLoadingCAgents}
+					{#each Array(12) as _}
+						<Skeleton
+							class="flex flex-col items-center justify-center gap-2 rounded-lg bg-black/[0.09] data-dark:bg-white/[0.1]"
+						/>
+					{/each}
+				{:else}
+					{#each $pastChatAgents as chatAgent (chatAgent.id)}
 						<button
 							onclick={() => {
-								if (filterByAgent !== '_chat_') {
-									getConvFilterByAgent('_chat_', true);
+								if (filterByAgent !== chatAgent.id) {
+									getConvFilterByAgent(chatAgent.id, true);
 								} else {
 									selectingFilterAgent = false;
 								}
 							}}
-							title="All agents"
-							class="flex w-full flex-[0_0_auto] gap-1 px-2 py-2 text-start text-sm {filterByAgent ===
-							'_chat_'
-								? 'bg-[#FFEFF2] text-[#950048]'
-								: 'text-[#667085] hover:bg-[#F2F4F7]'} rounded-lg transition-colors"
+							title={chatAgent.id}
+							class="flex flex-col rounded-lg border border-[#E4E7EC] bg-white transition-[transform,box-shadow] hover:-translate-y-0.5 hover:shadow-float data-dark:border-[#333] data-dark:bg-[#42464E]"
 						>
-							<!-- <ChatAgentIcon class="h-5 flex-[0_0_auto]" /> -->
-							<span class="line-clamp-1 break-all">All agents</span>
-							{#if filterByAgent === '_chat_'}
-								<CheckIcon class="ml-auto h-4 flex-[0_0_auto] self-center text-[#950048]" />
-							{/if}
-						</button>
-
-						{#each $pastChatAgents as chatTable (chatTable.id)}
-							<button
-								onclick={() => {
-									if (filterByAgent !== chatTable.id) {
-										getConvFilterByAgent(chatTable.id, true);
-									} else {
-										selectingFilterAgent = false;
-									}
-								}}
-								title={chatTable.id}
-								class="flex w-full flex-[0_0_auto] gap-1 px-2 py-2 text-sm {filterByAgent ===
-								chatTable.id
-									? 'bg-[#FFEFF2] text-[#950048]'
-									: 'text-[#667085] hover:bg-[#F2F4F7]'} rounded-lg transition-colors"
-							>
-								<!-- <ChatAgentIcon class="h-5 flex-[0_0_auto]" /> -->
-								<span class="line-clamp-1 break-all">{chatTable.id}</span>
-								{#if filterByAgent === chatTable.id}
-									<CheckIcon class="ml-auto h-4 self-center text-[#950048]" />
-								{/if}
-							</button>
-						{/each}
-
-						{#if isLoadingMoreCAgents}
-							<div class="mx-auto flex items-center justify-center p-2">
-								<LoadingSpinner class="h-5 w-5 text-secondary" />
-							</div>
-						{/if}
-					{/if}
-				</div>
-			</div>
-
-			<div
-				inert={(supportsContainerQuery
-					? componentWidth !== undefined && componentWidth < 672
-					: !bigScreen.current) && selectingFilterAgent}
-				data-testid="conv-list"
-				onscroll={debounce((e) => scrollHandler(e, 'filtered'), 300)}
-				class="flex flex-col gap-1 py-2.5 pl-6 pr-6 @2xl:py-4 @2xl:pl-0.5 supports-[not(container-type:inline-size)]:lg:py-4 supports-[not(container-type:inline-size)]:lg:pl-0.5"
-			>
-				{#if filterByAgent}
-					<div class="mx-1 flex items-center gap-2">
-						<Button
-							variant="ghost"
-							onclick={() => (selectingFilterAgent = true)}
-							class="group relative flex aspect-square p-0 @2xl:hidden supports-[not(container-type:inline-size)]:lg:hidden"
-						>
-							<ArrowLeft size={20} class="text-[#344054]" />
-
-							<Tooltip
-								arrowSize={5}
-								class="left-[calc(100%+8px)] top-1/2 z-20 -translate-y-1/2 opacity-0 transition-opacity after:left-0 after:top-1/2 after:-translate-x-[100%] after:-translate-y-1/2 after:rotate-90 group-hover:opacity-100"
-							>
-								Select agent
-							</Tooltip>
-						</Button>
-
-						<a
-							title={filterByAgent}
-							href="/project/{page.params.project_id}/chat-table/{encodeURIComponent(
-								filterByAgent
-							)}"
-							class="relative flex w-full items-center justify-between rounded-md border border-[#E5E5E5] bg-white px-2 py-[7px] @2xl:rounded-lg @2xl:px-3 @2xl:py-3 data-dark:border-[#484C55] data-dark:bg-[#303338] supports-[not(container-type:inline-size)]:lg:rounded-xl supports-[not(container-type:inline-size)]:lg:px-4 supports-[not(container-type:inline-size)]:lg:py-3 {filterByAgent ===
-							'_chat_'
-								? 'pointer-events-none'
-								: ''}"
-						>
-							<div class="flex items-center gap-2">
-								<div
-									class="relative h-6 w-6 flex-[0_0_auto] overflow-hidden rounded-sm bg-[#F2F4F7]"
-								>
-									<ChatAgentIcon
-										class="absolute -bottom-[3px] left-1/2 aspect-square h-[26px] -translate-x-1/2 text-[#475467]"
-									/>
+							<div class="flex w-full grow items-start justify-between p-3">
+								<div class="flex items-start gap-1.5">
+									<ChatAgentIcon2 class="mt-0.5 h-4 w-4 flex-[0_0_auto] text-[#475467]" />
+									<span class="line-clamp-2 break-all text-sm text-[#344054]">
+										{chatAgent.id}
+									</span>
 								</div>
-								<span
-									class="line-clamp-1 text-sm font-medium text-[#344054] @2xl:text-base supports-[not(container-type:inline-size)]:lg:text-base"
-								>
-									{filterByAgent === '_chat_' ? 'All agents' : filterByAgent}
-								</span>
-							</div>
 
-							{#if filterByAgent && filterByAgent !== '_chat_'}
 								<DropdownMenu.Root>
 									<DropdownMenu.Trigger>
 										{#snippet child({ props })}
@@ -524,8 +537,8 @@
 												{...props}
 												variant="ghost"
 												onclick={(e) => e.preventDefault()}
-												title="Agent settings"
-												class="absolute right-1.5 aspect-square h-7 w-7 flex-[0_0_auto] p-0 @2xl:right-3 supports-[not(container-type:inline-size)]:lg:right-4"
+												title="Table settings"
+												class="aspect-square h-7 w-7 flex-[0_0_auto] -translate-y-1.5 translate-x-1.5 p-0"
 											>
 												<MoreVertIcon class="h-[18px] w-[18px]" />
 											</Button>
@@ -534,211 +547,67 @@
 									<DropdownMenu.Content align="end">
 										<DropdownMenu.Group>
 											<DropdownMenu.Item
-												onclick={() => (isEditingTableID = filterByAgent)}
+												onclick={() => (isEditingTableID = chatAgent.id)}
 												class="text-[#344054] data-[highlighted]:text-[#344054]"
 											>
 												<EditIcon class="mr-2 h-3.5 w-3.5" />
-												<span>Rename agent</span>
+												<span>Rename table</span>
 											</DropdownMenu.Item>
-											<ExportTableButton tableId={filterByAgent} tableType="chat">
+											<ExportTableButton tableId={chatAgent.id} tableType="chat">
 												{#snippet children({ handleExportTable })}
 													<DropdownMenu.Item
 														onclick={handleExportTable}
 														class="text-[#344054] data-[highlighted]:text-[#344054]"
 													>
 														<ExportIcon class="mr-2 h-3.5 w-3.5" />
-														<span>Export agent</span>
+														<span>Export table</span>
 													</DropdownMenu.Item>
 												{/snippet}
 											</ExportTableButton>
 											<DropdownMenu.Separator />
 											<DropdownMenu.Item
-												onclick={() => (isDeletingTable = filterByAgent)}
+												onclick={() => (isDeletingTable = chatAgent.id)}
 												class="text-destructive data-[highlighted]:text-destructive"
 											>
 												<Trash_2 class="mr-2 h-3.5 w-3.5" />
-												<span>Delete agent</span>
+												<span>Delete table</span>
 											</DropdownMenu.Item>
 										</DropdownMenu.Group>
 									</DropdownMenu.Content>
 								</DropdownMenu.Root>
-							{/if}
-						</a>
-					</div>
-
-					<div
-						class="grid h-min min-w-0 grid-cols-[12rem_min-content_minmax(0,auto)_min-content_min-content] items-center gap-1 overflow-auto px-1 [scrollbar-gutter:stable] sm:overflow-visible sm:pt-1"
-					>
-						<SearchBar
-							bind:searchQuery
-							{isLoadingSearch}
-							debouncedSearch={debouncedSearchTables}
-							label="Search table"
-							placeholder="Search table"
-							class="w-[12rem]"
-						/>
-
-						<SorterSelect bind:sortOptions={$sortOptions} {sortableFields} {refetchTables} />
-
-						<div></div>
-
-						<Button
-							variant="action"
-							title="Create table"
-							onclick={() => (isAddingConversation = true)}
-							class="flex aspect-square h-8 flex-[0_0_auto] items-center justify-center gap-1.5 px-2 py-2 text-xs xs:aspect-auto xs:h-9 xs:px-3 sm:text-sm"
-						>
-							<AddIcon class="h-3.5 w-3.5" />
-							<!-- <span class="hidden xs:block">Create table</span> -->
-						</Button>
-
-						<Button
-							variant="action"
-							title="Import table"
-							onclick={(e) => e.currentTarget.querySelector('input')?.click()}
-							class="flex aspect-square h-8 w-8 flex-[0_0_auto] items-center gap-2 p-0 xs:h-9 xs:w-9 md:aspect-auto"
-						>
-							<ImportIcon class="h-3.5 w-3.5" />
-
-							<!-- <span class="hidden md:block">Import table</span> -->
-
-							<input
-								tabindex="-1"
-								id="action-tbl-import"
-								type="file"
-								accept=".parquet"
-								onchange={(e) => {
-									e.preventDefault();
-									handleFilesUpload(e, [...(e.currentTarget.files ?? [])]);
-								}}
-								multiple={false}
-								class="fixed max-h-[0] max-w-0 overflow-hidden !border-none !p-0"
-							/>
-						</Button>
-					</div>
-
-					<div
-						onscroll={debounce((e) => scrollHandler(e, 'filtered'), 300)}
-						style="grid-auto-rows: 120px;"
-						class="grid h-1 grow grid-flow-row grid-cols-[repeat(auto-fill,_minmax(300px,_1fr))] gap-3 overflow-auto px-1 pt-1 [scrollbar-gutter:stable]"
-					>
-						{#if isLoadingFilteredConv}
-							<div class="col-span-full mx-auto flex items-center justify-center p-4">
-								<LoadingSpinner class="h-5 w-5 text-secondary" />
 							</div>
-						{:else}
-							{#each filteredConversations as chatTable}
-								<a
-									href="/project/{page.params.project_id}/chat-table/{encodeURIComponent(
-										chatTable.id
-									)}"
-									title={chatTable.id}
-									class="flex flex-col rounded-lg border border-[#E4E7EC] bg-white transition-[transform,box-shadow] hover:-translate-y-0.5 hover:shadow-float data-dark:border-[#333] data-dark:bg-[#42464E]"
+
+							<div class="flex px-3 py-2">
+								<span
+									title={new Date(chatAgent.updated_at).toLocaleString(undefined, {
+										month: 'long',
+										day: 'numeric',
+										year: 'numeric'
+									})}
+									class="line-clamp-1 text-xs font-medium text-[#98A2B3] data-dark:text-[#C9C9C9]"
 								>
-									<div class="flex w-full grow items-start justify-between p-3">
-										<div class="flex items-start gap-1.5">
-											<ChatTableIcon class="h-5 w-5 flex-[0_0_auto] text-[#475467]" />
-											<span class="line-clamp-2 break-all text-sm text-[#344054]">
-												{chatTable.id}
-											</span>
-										</div>
+									Last updated
+									<span class="text-[#475467]">
+										{new Date(chatAgent.updated_at).toLocaleString(undefined, {
+											month: 'long',
+											day: 'numeric',
+											year: 'numeric'
+										})}
+									</span>
+								</span>
+							</div>
+						</button>
+					{/each}
 
-										<DropdownMenu.Root>
-											<DropdownMenu.Trigger>
-												{#snippet child({ props })}
-													<Button
-														{...props}
-														variant="ghost"
-														onclick={(e) => e.preventDefault()}
-														title="Table settings"
-														class="aspect-square h-7 w-7 flex-[0_0_auto] -translate-y-1.5 translate-x-1.5 p-0"
-													>
-														<MoreVertIcon class="h-[18px] w-[18px]" />
-													</Button>
-												{/snippet}
-											</DropdownMenu.Trigger>
-											<DropdownMenu.Content align="end">
-												<DropdownMenu.Group>
-													<DropdownMenu.Item
-														onclick={() => (isEditingTableID = chatTable.id)}
-														class="text-[#344054] data-[highlighted]:text-[#344054]"
-													>
-														<EditIcon class="mr-2 h-3.5 w-3.5" />
-														<span>Rename table</span>
-													</DropdownMenu.Item>
-													<ExportTableButton tableId={chatTable.id} tableType="chat">
-														{#snippet children({ handleExportTable })}
-															<DropdownMenu.Item
-																onclick={handleExportTable}
-																class="text-[#344054] data-[highlighted]:text-[#344054]"
-															>
-																<ExportIcon class="mr-2 h-3.5 w-3.5" />
-																<span>Export table</span>
-															</DropdownMenu.Item>
-														{/snippet}
-													</ExportTableButton>
-													<DropdownMenu.Separator />
-													<DropdownMenu.Item
-														onclick={() => (isDeletingTable = chatTable.id)}
-														class="text-destructive data-[highlighted]:text-destructive"
-													>
-														<Trash_2 class="mr-2 h-3.5 w-3.5" />
-														<span>Delete table</span>
-													</DropdownMenu.Item>
-												</DropdownMenu.Group>
-											</DropdownMenu.Content>
-										</DropdownMenu.Root>
-									</div>
-
-									<div class="flex items-center justify-between px-3 py-2">
-										<span
-											title={new Date(chatTable.updated_at).toLocaleString(undefined, {
-												month: 'long',
-												day: 'numeric',
-												year: 'numeric'
-											})}
-											class="line-clamp-1 text-xs font-medium text-[#98A2B3] data-dark:text-[#C9C9C9]"
-										>
-											Last updated
-											<span class="text-[#475467]">
-												{new Date(chatTable.updated_at).toLocaleString(undefined, {
-													month: 'long',
-													day: 'numeric',
-													year: 'numeric'
-												})}
-											</span>
-										</span>
-
-										{#if filterByAgent === '_chat_' && chatTable.parent_id}
-											{@const mappedColors = filteredConvColorMap.get(chatTable.parent_id)}
-											<span
-												style="background-color: {mappedColors
-													? mappedColors.bg
-													: '#E3F2FD'}; color: {mappedColors ? mappedColors.text : '#0295FF'};"
-												class="w-min select-none whitespace-nowrap rounded-[0.1875rem] px-1 py-0.5 text-xs font-medium"
-											>
-												{chatTable.parent_id}
-											</span>
-										{/if}
-									</div>
-								</a>
-							{/each}
-
-							{#if isLoadingMoreFilteredConv}
-								<div class="mx-auto flex items-center justify-center p-4">
-									<LoadingSpinner class="h-5 w-5 text-secondary" />
-								</div>
-							{/if}
-						{/if}
-					</div>
-				{:else}
-					<span class="my-auto self-center font-medium text-[#999]">
-						Select agent to filter conversations
-					</span>
+					{#if isLoadingMoreCAgents}
+						<div class="mx-auto flex items-center justify-center p-4">
+							<LoadingSpinner class="h-5 w-5 text-secondary" />
+						</div>
+					{/if}
 				{/if}
 			</div>
 		</div>
-	{:else if loadingAgentsError.status === 404 && loadingAgentsError.org_id && user?.org_memberships?.find((org) => org.organization_id === loadingAgentsError?.org_id)}
+	{:else if loadingAgentsError.status === 404 && loadingAgentsError.org_id && user?.org_memberships.find((org) => org.organization_id === loadingAgentsError?.org_id)}
 		{@const projectOrg = user?.organizations.find((org) => org.id === loadingAgentsError?.org_id)}
 		<FoundProjectOrgSwitcher {projectOrg} />
 	{:else}
@@ -753,7 +622,306 @@
 			</div>
 		</div>
 	{/if}
-</div>
+{:else}
+	<div class="flex h-full flex-col pb-3">
+		<div
+			class="flex h-min min-w-0 items-center gap-1 overflow-auto px-7 pb-0.5 pt-1 [scrollbar-gutter:stable] sm:overflow-visible sm:pb-2 sm:pt-3"
+		>
+			<Button
+				variant="ghost"
+				onclick={() => {
+					filterByAgent = '_chat_';
+					filterAgent = null;
+				}}
+				title="Back to select agent"
+				class="group relative flex aspect-square h-9 p-0"
+			>
+				<ArrowBackIcon class="h-7" />
+			</Button>
+
+			{filterByAgent}
+
+			<DropdownMenu.Root>
+				<DropdownMenu.Trigger>
+					{#snippet child({ props })}
+						<Button
+							{...props}
+							variant="ghost"
+							onclick={(e) => e.preventDefault()}
+							title="Table settings"
+							class="ml-1 aspect-square h-7 w-7 flex-[0_0_auto] p-0"
+						>
+							<MoreVertIcon class="h-[18px] w-[18px]" />
+						</Button>
+					{/snippet}
+				</DropdownMenu.Trigger>
+				<DropdownMenu.Content align="start">
+					<DropdownMenu.Group>
+						<DropdownMenu.Item
+							onclick={() => (isEditingTableID = filterByAgent)}
+							class="text-[#344054] data-[highlighted]:text-[#344054]"
+						>
+							<EditIcon class="mr-2 h-3.5 w-3.5" />
+							<span>Rename table</span>
+						</DropdownMenu.Item>
+						<ExportTableButton tableId={filterByAgent} tableType="chat">
+							{#snippet children({ handleExportTable })}
+								<DropdownMenu.Item
+									onclick={handleExportTable}
+									class="text-[#344054] data-[highlighted]:text-[#344054]"
+								>
+									<ExportIcon class="mr-2 h-3.5 w-3.5" />
+									<span>Export table</span>
+								</DropdownMenu.Item>
+							{/snippet}
+						</ExportTableButton>
+						<DropdownMenu.Separator />
+						<DropdownMenu.Item
+							onclick={() => (isDeletingTable = filterByAgent)}
+							class="text-destructive data-[highlighted]:text-destructive"
+						>
+							<Trash_2 class="mr-2 h-3.5 w-3.5" />
+							<span>Delete table</span>
+						</DropdownMenu.Item>
+					</DropdownMenu.Group>
+				</DropdownMenu.Content>
+			</DropdownMenu.Root>
+		</div>
+
+		<div onscroll={debounce((e) => scrollHandler(e, 'filtered'), 300)} class="grow overflow-auto">
+			<p class="px-7 pb-1.5 pt-2 text-sm text-[#667085]">Agent Table</p>
+
+			<div
+				style="grid-auto-rows: 112px;"
+				class="grid grid-flow-row grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3 overflow-auto px-7 pt-1 [scrollbar-gutter:stable]"
+			>
+				<a
+					href="/project/{page.params.project_id}/chat-table/{encodeURIComponent(filterByAgent)}"
+					title={filterByAgent}
+					class="flex flex-col rounded-lg border border-[#E4E7EC] bg-white transition-[transform,box-shadow] hover:-translate-y-0.5 hover:shadow-float data-dark:border-[#333] data-dark:bg-[#42464E]"
+				>
+					<div class="flex w-full grow items-start justify-between p-3">
+						<div class="flex items-start gap-1.5">
+							<ChatAgentIcon2 class="mt-0.5 h-4 w-4 flex-[0_0_auto] text-[#475467]" />
+							<span class="line-clamp-2 break-all text-sm text-[#344054]">
+								{filterByAgent}
+							</span>
+						</div>
+
+						<DropdownMenu.Root>
+							<DropdownMenu.Trigger>
+								{#snippet child({ props })}
+									<Button
+										{...props}
+										variant="ghost"
+										onclick={(e) => e.preventDefault()}
+										title="Table settings"
+										class="aspect-square h-7 w-7 flex-[0_0_auto] -translate-y-1.5 translate-x-1.5 p-0"
+									>
+										<MoreVertIcon class="h-[18px] w-[18px]" />
+									</Button>
+								{/snippet}
+							</DropdownMenu.Trigger>
+							<DropdownMenu.Content align="end">
+								<DropdownMenu.Group>
+									<DropdownMenu.Item
+										onclick={() => (isEditingTableID = filterByAgent)}
+										class="text-[#344054] data-[highlighted]:text-[#344054]"
+									>
+										<EditIcon class="mr-2 h-3.5 w-3.5" />
+										<span>Rename table</span>
+									</DropdownMenu.Item>
+									<ExportTableButton tableId={filterByAgent} tableType="chat">
+										{#snippet children({ handleExportTable })}
+											<DropdownMenu.Item
+												onclick={handleExportTable}
+												class="text-[#344054] data-[highlighted]:text-[#344054]"
+											>
+												<ExportIcon class="mr-2 h-3.5 w-3.5" />
+												<span>Export table</span>
+											</DropdownMenu.Item>
+										{/snippet}
+									</ExportTableButton>
+									<DropdownMenu.Separator />
+									<DropdownMenu.Item
+										onclick={() => (isDeletingTable = filterByAgent)}
+										class="text-destructive data-[highlighted]:text-destructive"
+									>
+										<Trash_2 class="mr-2 h-3.5 w-3.5" />
+										<span>Delete table</span>
+									</DropdownMenu.Item>
+								</DropdownMenu.Group>
+							</DropdownMenu.Content>
+						</DropdownMenu.Root>
+					</div>
+
+					<div class="flex px-3 py-2">
+						<span
+							title={new Date(filterAgent?.updated_at ?? '').toLocaleString(undefined, {
+								month: 'long',
+								day: 'numeric',
+								year: 'numeric'
+							})}
+							class="line-clamp-1 text-xs font-medium text-[#98A2B3] data-dark:text-[#C9C9C9]"
+						>
+							Last updated
+							<span class="text-[#475467]">
+								{new Date(filterAgent?.updated_at ?? '').toLocaleString(undefined, {
+									month: 'long',
+									day: 'numeric',
+									year: 'numeric'
+								})}
+							</span>
+						</span>
+					</div>
+				</a>
+			</div>
+
+			<p class="px-7 pb-1.5 pt-6 text-sm text-[#667085]">Conversation Table</p>
+
+			<div
+				class="grid h-min min-w-0 grid-cols-[12rem_min-content_minmax(0,auto)_min-content_min-content] items-center gap-1 overflow-auto px-7 [scrollbar-gutter:stable] sm:overflow-visible sm:pb-2"
+			>
+				<SearchBar
+					bind:searchQuery
+					{isLoadingSearch}
+					debouncedSearch={debouncedSearchTables}
+					label="Search table"
+					placeholder="Search table"
+					class="w-[12rem]"
+				/>
+
+				<SorterSelect bind:sortOptions={$sortOptions} {sortableFields} {refetchTables} />
+
+				<div></div>
+
+				<!-- <Button
+					variant="action"
+					title="Create table"
+					onclick={() => (isAddingConversation = true)}
+					class="flex aspect-square h-8 flex-[0_0_auto] items-center justify-center gap-1.5 px-2 py-2 text-xs xs:aspect-auto xs:h-9 xs:px-3 sm:text-sm"
+				>
+					<AddIcon class="h-3.5 w-3.5" />
+					<!-- <span class="hidden xs:block">Create table</span> ->
+				</Button> -->
+			</div>
+
+			<div
+				style="grid-auto-rows: 112px;"
+				class="grid h-1 grow grid-flow-row grid-cols-[repeat(auto-fill,_minmax(15rem,_1fr))] gap-3 px-7 pt-1"
+			>
+				{#if isLoadingFilteredConv}
+					{#each Array(12) as _}
+						<Skeleton
+							class="flex flex-col items-center justify-center gap-2 rounded-lg bg-black/[0.09] data-dark:bg-white/[0.1]"
+						/>
+					{/each}
+				{:else}
+					{#each filteredConversations as chatTable}
+						<a
+							href="/project/{page.params.project_id}/chat-table/{encodeURIComponent(chatTable.id)}"
+							title={chatTable.id}
+							class="flex flex-col rounded-lg border border-[#E4E7EC] bg-white transition-[transform,box-shadow] hover:-translate-y-0.5 hover:shadow-float data-dark:border-[#333] data-dark:bg-[#42464E]"
+						>
+							<div class="flex w-full grow items-start justify-between p-3">
+								<div class="flex items-start gap-1.5">
+									<ChatTableIcon class="h-5 w-5 flex-[0_0_auto] text-[#475467]" />
+									<span class="line-clamp-2 break-all text-sm text-[#344054]">
+										{chatTable.id}
+									</span>
+								</div>
+
+								<DropdownMenu.Root>
+									<DropdownMenu.Trigger>
+										{#snippet child({ props })}
+											<Button
+												{...props}
+												variant="ghost"
+												onclick={(e) => e.preventDefault()}
+												title="Table settings"
+												class="aspect-square h-7 w-7 flex-[0_0_auto] -translate-y-1.5 translate-x-1.5 p-0"
+											>
+												<MoreVertIcon class="h-[18px] w-[18px]" />
+											</Button>
+										{/snippet}
+									</DropdownMenu.Trigger>
+									<DropdownMenu.Content align="end">
+										<DropdownMenu.Group>
+											<DropdownMenu.Item
+												onclick={() => (isEditingTableID = chatTable.id)}
+												class="text-[#344054] data-[highlighted]:text-[#344054]"
+											>
+												<EditIcon class="mr-2 h-3.5 w-3.5" />
+												<span>Rename table</span>
+											</DropdownMenu.Item>
+											<ExportTableButton tableId={chatTable.id} tableType="chat">
+												{#snippet children({ handleExportTable })}
+													<DropdownMenu.Item
+														onclick={handleExportTable}
+														class="text-[#344054] data-[highlighted]:text-[#344054]"
+													>
+														<ExportIcon class="mr-2 h-3.5 w-3.5" />
+														<span>Export table</span>
+													</DropdownMenu.Item>
+												{/snippet}
+											</ExportTableButton>
+											<DropdownMenu.Separator />
+											<DropdownMenu.Item
+												onclick={() => (isDeletingTable = chatTable.id)}
+												class="text-destructive data-[highlighted]:text-destructive"
+											>
+												<Trash_2 class="mr-2 h-3.5 w-3.5" />
+												<span>Delete table</span>
+											</DropdownMenu.Item>
+										</DropdownMenu.Group>
+									</DropdownMenu.Content>
+								</DropdownMenu.Root>
+							</div>
+
+							<div class="flex items-center justify-between px-3 py-2">
+								<span
+									title={new Date(chatTable.updated_at).toLocaleString(undefined, {
+										month: 'long',
+										day: 'numeric',
+										year: 'numeric'
+									})}
+									class="line-clamp-1 text-xs font-medium text-[#98A2B3] data-dark:text-[#C9C9C9]"
+								>
+									Last updated
+									<span class="text-[#475467]">
+										{new Date(chatTable.updated_at).toLocaleString(undefined, {
+											month: 'long',
+											day: 'numeric',
+											year: 'numeric'
+										})}
+									</span>
+								</span>
+
+								{#if chatTable.parent_id}
+									{@const mappedColors = filteredConvColorMap.get(chatTable.parent_id)}
+									<span
+										style="background-color: {mappedColors
+											? mappedColors.bg
+											: '#E3F2FD'}; color: {mappedColors ? mappedColors.text : '#0295FF'};"
+										class="w-min select-none whitespace-nowrap rounded-[0.1875rem] px-1 py-0.5 text-xs font-medium"
+									>
+										{chatTable.parent_id}
+									</span>
+								{/if}
+							</div>
+						</a>
+					{/each}
+
+					{#if isLoadingMoreFilteredConv}
+						<div class="mx-auto flex items-center justify-center p-4">
+							<LoadingSpinner class="h-5 w-5 text-secondary" />
+						</div>
+					{/if}
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
 
 <AddAgentDialog bind:isAddingAgent />
 <AddConversationDialog bind:isAddingConversation bind:filteredConversations {filterByAgent} />

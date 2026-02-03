@@ -2,7 +2,6 @@
 	import { enhance } from '$app/forms';
 	import lowerCase from 'lodash/lowerCase';
 	import { isThisYear } from 'date-fns';
-	import { activeOrganization } from '$globalStore';
 	import { userRoles } from '$lib/constants';
 	import type { OrgMemberRead } from '$lib/types';
 
@@ -13,11 +12,14 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Select from '$lib/components/ui/select';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import EditIcon from '$lib/icons/EditIcon.svelte';
-	import DeleteIcon from '$lib/icons/DeleteIcon.svelte';
 	import CloseIcon from '$lib/icons/CloseIcon.svelte';
 	import DialogCloseIcon from '$lib/icons/DialogCloseIcon.svelte';
 	import PersonAddIcon from '$lib/icons/PersonAddIcon.svelte';
+	import MoreVertIcon from '$lib/icons/MoreVertIcon.svelte';
+	import Trash_2 from '@lucide/svelte/icons/trash-2';
+	import WarningIcon from '$lib/icons/WarningIcon.svelte';
 
 	let { data } = $props();
 	let { organizationData, organizationMembers } = $derived(data);
@@ -26,9 +28,11 @@
 	let isInvitingUser = $state(false);
 	let editingUser: OrgMemberRead | null = $state(null);
 	let deletingUser: OrgMemberRead | null = $state(null);
+	let deifyingUser: OrgMemberRead | null = $state(null);
 
 	let isLoadingEdit = $state(false);
 	let isLoadingDelete = $state(false);
+	let isLoadingDeifyingUser = $state(false);
 
 	let selectedUserRole: (typeof userRoles)[number] = $state('GUEST');
 	$effect(() => {
@@ -100,12 +104,17 @@
 							{index + 1}
 						</div>
 						<div role="gridcell" class="flex flex-col items-start justify-center px-2">
-							<span
-								title={user.user.name}
-								class="line-clamp-1 break-all font-medium text-[#0C111D]"
-							>
-								{user.user.name}
-							</span>
+							<div class="flex items-center gap-2">
+								<p title={user.user.name} class="line-clamp-1 break-all font-medium text-[#0C111D]">
+									{user.user.name}
+								</p>
+
+								{#if organizationData?.owner === user.user_id}
+									<span class="rounded-full bg-secondary px-1 py-0.5 text-xs text-white">
+										Owner
+									</span>
+								{/if}
+							</div>
 							<span title={user.user_id} class="line-clamp-1 break-all text-[#98A2B3]">
 								{user.user_id}
 							</span>
@@ -128,29 +137,50 @@
 								{userOrgCreatedAt}
 							</span>
 						</div>
-						<div
-							role="gridcell"
-							class="flex items-center justify-center px-2 opacity-0 transition-opacity duration-75 group-hover:opacity-100 has-[:focus-visible]:opacity-100"
-						>
-							<Button
-								variant="ghost"
-								onclick={() => (editingUser = user)}
-								title="Edit user"
-								class="h-8 w-8 rounded-full p-0"
-							>
-								<EditIcon class="h-4" />
-							</Button>
+						<div role="gridcell" class="flex items-center justify-center px-2">
+							<DropdownMenu.Root>
+								<DropdownMenu.Trigger>
+									{#snippet child({ props })}
+										<Button
+											{...props}
+											variant="ghost"
+											onclick={(e) => e.preventDefault()}
+											title="Manage user"
+											class="aspect-square h-7 w-7 flex-[0_0_auto] p-0"
+										>
+											<MoreVertIcon class="h-[18px] w-[18px]" />
+										</Button>
+									{/snippet}
+								</DropdownMenu.Trigger>
+								<DropdownMenu.Content align="end">
+									<DropdownMenu.Group>
+										<DropdownMenu.Item
+											onclick={() => (editingUser = user)}
+											class="text-[#344054] data-[highlighted]:text-[#344054]"
+										>
+											<span>Edit user</span>
+										</DropdownMenu.Item>
+										<PermissionGuard reqOrgRole="ADMIN">
+											<DropdownMenu.Item
+												onclick={() => (deletingUser = user)}
+												class="text-destructive data-[highlighted]:text-destructive"
+											>
+												<span>Remove user</span>
+											</DropdownMenu.Item>
+										</PermissionGuard>
 
-							<PermissionGuard reqOrgRole="ADMIN">
-								<Button
-									variant="ghost"
-									onclick={() => (deletingUser = user)}
-									title="Remove user"
-									class="h-8 w-8 rounded-full p-0"
-								>
-									<DeleteIcon class="h-6" />
-								</Button>
-							</PermissionGuard>
+										{#if organizationData?.owner === data.user?.id && organizationData?.owner !== user.user_id}
+											<DropdownMenu.Separator />
+											<DropdownMenu.Item
+												onclick={() => (deifyingUser = user)}
+												class="text-[#344054] data-[highlighted]:text-[#344054]"
+											>
+												<span>Make owner</span>
+											</DropdownMenu.Item>
+										{/if}
+									</DropdownMenu.Group>
+								</DropdownMenu.Content>
+							</DropdownMenu.Root>
 						</div>
 
 						<hr class="absolute bottom-0 left-0 right-0 border-[#F2F4F7]" />
@@ -201,7 +231,7 @@
 				<input type="hidden" value={editingUser?.user_id} name="user_id" />
 
 				<div class="flex w-full flex-col gap-1 px-4 text-center sm:px-6">
-					<Label required class="text-left text-sm font-medium text-black">User role*</Label>
+					<Label required class="text-left text-sm font-medium text-black">User role</Label>
 
 					<input
 						type="text"
@@ -258,12 +288,14 @@
 </Dialog.Root>
 
 <Dialog.Root
-	bind:open={() => !!deletingUser,
-	(v) => {
-		if (!v) {
-			deletingUser = null;
+	bind:open={
+		() => !!deletingUser,
+		(v) => {
+			if (!v) {
+				deletingUser = null;
+			}
 		}
-	}}
+	}
 >
 	<Dialog.Content class="w-[clamp(0px,26rem,100%)] bg-white data-dark:bg-[#42464e]">
 		<Dialog.Close
@@ -335,6 +367,80 @@
 					Remove
 				</Button>
 			</form>
+		</Dialog.Actions>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={() => !!deifyingUser, () => (deifyingUser = null)}>
+	<Dialog.Content class="w-[clamp(0px,26rem,100%)] bg-white data-dark:bg-[#42464e]">
+		<Dialog.Close
+			class="absolute right-5 top-5 flex h-10 w-10 items-center justify-center rounded-full !bg-transparent p-0 ring-offset-background transition-colors hover:!bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-black"
+		>
+			<CloseIcon class="w-7" />
+			<span class="sr-only">Close</span>
+		</Dialog.Close>
+
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+		<form
+			id="deifyingUserForm"
+			use:enhance={() => {
+				isLoadingDeifyingUser = true;
+
+				return async ({ result, update }) => {
+					if (result.type !== 'success') {
+						//@ts-ignore
+						const data = result.data;
+						toast.error('Error transferring organization ownership', {
+							id: data?.err_message?.message || JSON.stringify(data),
+							description: CustomToastDesc as any,
+							componentProps: {
+								description: data?.err_message?.message || JSON.stringify(data),
+								requestID: data?.err_message?.request_id ?? ''
+							}
+						});
+					} else {
+						return location.reload();
+					}
+
+					isLoadingDeifyingUser = false;
+					update({ reset: false, invalidateAll: false });
+				};
+			}}
+			onkeydown={(event) => event.key === 'Enter' && event.preventDefault()}
+			method="POST"
+			action="?/deify"
+			class="flex flex-col items-start gap-2 p-8 pb-10"
+		>
+			<input type="hidden" name="user_id" value={deifyingUser?.user_id} />
+
+			<WarningIcon class="mb-1 h-10 text-warning" />
+			<h3 class="text-2xl font-bold">Are you sure?</h3>
+			<p class="text-sm text-text/60">
+				Do you really want transfer ownership of this organization to user
+				<span class="font-medium text-black [word-break:break-word] data-dark:text-white">
+					`{deifyingUser?.user.name || deifyingUser?.user.email || deifyingUser?.user_id}`
+				</span>?
+			</p>
+		</form>
+
+		<Dialog.Actions class="bg-[#f6f6f6] data-dark:bg-[#303338]">
+			<div class="flex gap-2 overflow-x-auto overflow-y-hidden">
+				<Dialog.Close>
+					{#snippet child({ props })}
+						<Button {...props} variant="link" type="button" class="grow px-6">Cancel</Button>
+					{/snippet}
+				</Dialog.Close>
+				<Button
+					variant="warning"
+					type="submit"
+					form="deifyingUserForm"
+					loading={isLoadingDeifyingUser}
+					disabled={isLoadingDeifyingUser}
+					class="grow px-6"
+				>
+					Transfer
+				</Button>
+			</div>
 		</Dialog.Actions>
 	</Dialog.Content>
 </Dialog.Root>

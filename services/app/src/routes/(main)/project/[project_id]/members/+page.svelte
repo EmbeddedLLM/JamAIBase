@@ -1,13 +1,15 @@
 <script lang="ts">
 	import Fuse from 'fuse.js';
 	import { MoreVertical, Search } from '@lucide/svelte';
+	import { activeProject } from '$globalStore';
 	import { ROLE_COLORS } from '$lib/constants';
 	import type { ProjectMemberRead } from '$lib/types';
 
 	import {
 		EditProjMemberDialog,
 		ProjectInviteDialog,
-		RemoveProjMemberDialog
+		RemoveProjMemberDialog,
+		TransferProjOwnerDialog
 	} from './(components)';
 	import * as Table from '$lib/components/ui/table';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -26,6 +28,7 @@
 		open: boolean;
 		value: NonNullable<Awaited<typeof data.projectMembers>['data']>[number] | null;
 	}>({ open: false, value: null });
+	let isDeifyingUser = $state<ProjectMemberRead | null>(null);
 
 	const filterMembers = (members: NonNullable<Awaited<typeof data.projectMembers>['data']>) => {
 		const fuse = new Fuse(members, {
@@ -106,7 +109,17 @@
 													</div>
 												</div>
 												<div>
-													<div class="font-medium text-[#A62050]">{member.user.name}</div>
+													<div class="flex items-center gap-2 font-medium text-[#A62050]">
+														{member.user.name}
+
+														{#if $activeProject?.owner === member.user_id}
+															<span
+																class="rounded-full bg-secondary px-1 py-0.5 text-xs text-white"
+															>
+																Owner
+															</span>
+														{/if}
+													</div>
 													<div class="text-sm text-muted-foreground">{member.user.email}</div>
 												</div>
 											</div>
@@ -135,17 +148,27 @@
 												</DropdownMenu.Trigger>
 												<DropdownMenu.Content align="end" class="w-fit min-w-40 space-y-1">
 													<DropdownMenu.Item
-														class="cursor-pointer"
 														onclick={() => (isEditingUser = member)}
+														class="text-[#344054] data-[highlighted]:text-[#344054]"
 													>
 														Edit role
 													</DropdownMenu.Item>
 													<DropdownMenu.Item
-														class="text-destructive data-[highlighted]:text-destructive"
 														onclick={() => (isRemovingUser = { open: true, value: member })}
+														class="text-destructive data-[highlighted]:text-destructive"
 													>
 														Remove member
 													</DropdownMenu.Item>
+
+													{#if $activeProject?.owner === data.user?.id && $activeProject?.owner !== member.user_id}
+														<DropdownMenu.Separator />
+														<DropdownMenu.Item
+															onclick={() => (isDeifyingUser = member)}
+															class="text-[#344054] data-[highlighted]:text-[#344054]"
+														>
+															<span>Make owner</span>
+														</DropdownMenu.Item>
+													{/if}
 												</DropdownMenu.Content>
 											</DropdownMenu.Root>
 										</Table.Cell>
@@ -185,3 +208,4 @@
 />
 <EditProjMemberDialog bind:isEditingUser />
 <RemoveProjMemberDialog bind:isRemovingUser />
+<TransferProjOwnerDialog bind:isDeifyingUser />

@@ -27,6 +27,7 @@
 	import { Skeleton } from '$lib/components/ui/skeleton';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import LoadingSpinner from '$lib/icons/LoadingSpinner.svelte';
+	import ProjectImgPlaceholder from '$lib/icons/ProjectImgPlaceholder.svelte';
 	import AddIcon from '$lib/icons/AddIcon.svelte';
 	import MoreVertIcon from '$lib/icons/MoreVertIcon.svelte';
 	import EditIcon from '$lib/icons/EditIcon.svelte';
@@ -366,8 +367,8 @@
 											alt=""
 										/>
 									{:else if !project.cover_picture_url}
-										<div class="flex h-28 items-center justify-center rounded-md bg-secondary">
-											<Clipboard class="h-10 w-10 text-white" />
+										<div class="flex h-28 items-center justify-center rounded-md bg-[#CAE7FD]">
+											<ProjectImgPlaceholder />
 										</div>
 									{:else}
 										<div class="flex h-28 items-center justify-center">

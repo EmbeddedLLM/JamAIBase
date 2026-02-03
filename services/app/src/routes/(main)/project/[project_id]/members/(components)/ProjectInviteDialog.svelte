@@ -5,7 +5,6 @@
 	import type { OrgMemberRead } from '$lib/types';
 
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
-	import InputText from '$lib/components/InputText.svelte';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { Label } from '$lib/components/ui/label';
 	import * as Command from '$lib/components/ui/command';
@@ -66,8 +65,6 @@
 						isInvitingUser = false;
 						if ((result.data as any).id) {
 							showCodeDialog = (result.data as any).id;
-						} else {
-							toast.success('Invite userId sent!', { id: 'invite-sent' });
 						}
 					}
 

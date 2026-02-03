@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { enhance } from '$app/forms';
 	import type { ProjectMemberRead } from '$lib/types';
 
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
+	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import CloseIcon from '$lib/icons/CloseIcon.svelte';
 	import DialogCloseIcon from '$lib/icons/DialogCloseIcon.svelte';
-	import { enhance } from '$app/forms';
-	import { Button } from '$lib/components/ui/button';
 
 	let {
 		isRemovingUser = $bindable()

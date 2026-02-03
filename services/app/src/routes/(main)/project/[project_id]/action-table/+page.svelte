@@ -88,7 +88,10 @@
 				`${PUBLIC_JAMAI_URL}/api/owl/gen_tables/action/list?` + new URLSearchParams(searchParams),
 				{
 					credentials: 'same-origin',
-					signal: fetchController.signal
+					signal: fetchController.signal,
+					headers: {
+						'x-project-id': page.params.project_id ?? ''
+					}
 				}
 			);
 			currentOffset += limit;
@@ -162,7 +165,10 @@
 					search_query: q
 				})}`,
 				{
-					signal: searchController.signal
+					signal: searchController.signal,
+					headers: {
+						'x-project-id': page.params.project_id ?? ''
+					}
 				}
 			);
 			currentOffset = limit;
