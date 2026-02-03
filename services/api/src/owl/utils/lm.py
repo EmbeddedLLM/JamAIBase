@@ -374,11 +374,14 @@ class DeploymentRouter:
         for i in range(0, len(seq), n):
             yield seq[i : i + n]
 
-    def _inference_provider(self, provider: str) -> str:
+    def _inference_provider(self, provider: str, owned_by: str) -> str:
         if provider == CloudProvider.ELLM:
             return CloudProvider.ELLM
+        # this check for provider like azure/bedrock that provides other cloud providers model (openai/anthropic)
         if provider in ModelProvider:
             return ModelProvider(provider)
+        elif owned_by in ModelProvider:
+            return ModelProvider(owned_by)
         if provider in OnPremProvider:
             return OnPremProvider(provider)
         owned_by = self.config.owned_by or ""
@@ -598,7 +601,7 @@ class DeploymentRouter:
                 deployment=deployment,
                 api_key=api_key,
                 routing_id=routing_id,
-                inference_provider=self._inference_provider(provider),
+                inference_provider=self._inference_provider(provider, self.config.owned_by),
                 is_reasoning_model=is_reasoning_model,
             )
             self.request.state.timing["external_call"] = perf_counter() - t0
@@ -1011,7 +1014,7 @@ class DeploymentRouter:
                         response: AsyncGenerator[ModelResponseStream, None] = await acompletion(
                             timeout=self.config.timeout,
                             api_key=ctx.api_key,
-                            base_url=ctx.deployment.api_base,
+                            base_url=ctx.deployment.api_base or None,
                             model=ctx.routing_id,
                             messages=messages,
                             stream=True,
@@ -1043,7 +1046,7 @@ class DeploymentRouter:
                     response = await acompletion(
                         timeout=self.config.timeout,
                         api_key=ctx.api_key,
-                        base_url=ctx.deployment.api_base,
+                        base_url=ctx.deployment.api_base or None,
                         model=ctx.routing_id,
                         messages=messages,
                         stream=False,
@@ -1104,7 +1107,7 @@ class DeploymentRouter:
                         response = await acompletion(
                             timeout=self.config.timeout,
                             api_key=ctx.api_key,
-                            base_url=ctx.deployment.api_base,
+                            base_url=ctx.deployment.api_base or None,
                             model=ctx.routing_id,
                             messages=messages_payload,
                             stream=False,
@@ -1192,7 +1195,7 @@ class DeploymentRouter:
                         response = await acompletion(
                             timeout=self.config.timeout,
                             api_key=ctx.api_key,
-                            base_url=ctx.deployment.api_base,
+                            base_url=ctx.deployment.api_base or None,
                             model=ctx.routing_id,
                             messages=messages_payload,
                             stream=False,
@@ -1296,7 +1299,7 @@ class DeploymentRouter:
                             aembedding(
                                 timeout=self.config.timeout,
                                 api_key=ctx.api_key,
-                                api_base=ctx.deployment.api_base,
+                                api_base=ctx.deployment.api_base or None,
                                 model=ctx.routing_id,
                                 input=txt,
                                 dimensions=dimensions,
@@ -1359,7 +1362,7 @@ class DeploymentRouter:
                             arerank(
                                 timeout=self.config.timeout,
                                 api_key=ctx.api_key,
-                                api_base=ctx.deployment.api_base,
+                                api_base=ctx.deployment.api_base or None,
                                 model=ctx.routing_id,
                                 query=query,
                                 documents=docs,
