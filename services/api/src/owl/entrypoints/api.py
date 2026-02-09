@@ -308,16 +308,12 @@ if ENV_CONFIG.is_cloud:
         k: openapi_schema["paths"][k]
         for k in sorted(
             openapi_schema["paths"].keys(),
-            key=lambda p: internal_api_tag
-            in list(openapi_schema["paths"][p].values())[0]["tags"][0],
+            key=lambda p: (
+                internal_api_tag in list(openapi_schema["paths"][p].values())[0]["tags"][0]
+            ),
         )
     }
 if ENV_CONFIG.is_cloud:
-    # Add security schemes
-    openapi_schema["components"]["securitySchemes"] = {
-        "Authentication": {"type": "http", "scheme": "bearer"},
-    }
-    openapi_schema["security"] = [{"Authentication": []}]
     openapi_schema["info"]["x-logo"] = {"url": "https://www.jamaibase.com/favicon.svg"}
 app.openapi_schema = openapi_schema
 

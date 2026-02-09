@@ -1,9 +1,10 @@
 import pytest
 
+from jamaibase import JamAI
 from owl.types import OrgMember_, ProjectMember_, Role, UserRead
 from owl.utils.auth import has_permissions
 from owl.utils.dates import now
-from owl.utils.exceptions import ForbiddenError
+from owl.utils.exceptions import AuthorizationError, ForbiddenError
 
 USER_ID = "user_id"
 ORG_ID = "0"
@@ -124,3 +125,13 @@ def test_has_permissions():
     with pytest.raises(ForbiddenError):
         has_permissions(sys_user, ["project.member"], project_id=PROJ_ID)
     assert has_permissions(sys_user, ["project.guest"], project_id=PROJ_ID) is True
+
+
+@pytest.mark.cloud
+async def test_no_auth_token():
+    client = JamAI(token="")
+    with pytest.raises(
+        AuthorizationError,
+        match='You need to provide your PAT in an "Authorization" header',
+    ):
+        await client.model_info()
