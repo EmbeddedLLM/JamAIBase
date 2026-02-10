@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { signOut } from '@auth/sveltekit/client';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { enhance } from '$app/forms';
 	import type { User } from '$lib/types';
 
@@ -77,7 +78,11 @@
 				</Button>
 			</form>
 
-			<Button type="button" variant="destructive" onclick={signOut}>
+			<Button
+				type="button"
+				variant="destructive"
+				onclick={page.data.auth0Mode ? () => goto('/logout') : signOut}
+			>
 				<span>Log Out</span>
 			</Button>
 		</div>

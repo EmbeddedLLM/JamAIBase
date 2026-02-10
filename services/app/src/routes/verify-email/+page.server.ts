@@ -1,5 +1,4 @@
 import { env } from '$env/dynamic/private';
-import { emailCodeCooldownSecs } from '$lib/constants.js';
 import logger, { APIError } from '$lib/logger.js';
 import { error, fail, redirect } from '@sveltejs/kit';
 import { ManagementClient } from 'auth0';
@@ -55,60 +54,55 @@ export async function load({ locals, url }) {
 		}
 	}
 
-	const listCodesRes = await fetch(
-		`${OWL_URL}/api/v2/users/verify/email/code/list?${new URLSearchParams([
-			['limit', '1'],
-			['search_query', locals.user.email],
-			['search_columns', 'user_email']
-		])}`,
-		{
-			headers: {
-				...headers,
-				'x-user-id': '0'
-			}
-		}
-	);
-	const listCodesBody = await listCodesRes.json();
-
-	if (
-		listCodesRes.ok &&
-		(!listCodesBody.items[0] ||
-			new Date(listCodesBody.items[0]?.expiry).getTime() < new Date().getTime())
-	) {
-		const sendCodeRes = await fetch(
-			`${OWL_URL}/api/v2/users/verify/email/code?${new URLSearchParams([
-				['user_email', locals.user.email],
-				['valid_days', '1']
-			])}`,
+	if (!locals.auth0Mode) {
+		const listCodesRes = await fetch(
+			`${OWL_URL}/api/v2/users/verify/email/code/list?${new URLSearchParams([['limit', '1']])}`,
 			{
-				method: 'POST',
 				headers: {
 					...headers,
-					'x-user-id': '0'
+					'x-user-id': locals.user.id
 				}
 			}
 		);
-		const sendCodeBody = await sendCodeRes.json();
+		const listCodesBody = await listCodesRes.json();
 
-		if (!sendCodeRes.ok) {
-			logger.error('VERIFYEMAIL_LOAD_GETCODE', sendCodeBody);
-		} else {
-			const sendEmailRes = await fetch('https://api.resend.com/emails', {
-				method: 'POST',
-				headers: {
-					Authorization: `Bearer ${RESEND_API_KEY}`,
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify({
-					from: 'JamAI Base <no-reply@jamaibase.com>',
-					to: locals.user.email,
-					subject: 'Verify your JamAI Base email address',
-					html: getVerificationEmailBody(sendCodeBody.id)
-				})
-			});
+		if (
+			listCodesRes.ok &&
+			(!listCodesBody.items[0] ||
+				new Date(listCodesBody.items[0]?.expiry).getTime() < new Date().getTime())
+		) {
+			const sendCodeRes = await fetch(
+				`${OWL_URL}/api/v2/users/verify/email/code?${new URLSearchParams([['valid_days', '1']])}`,
+				{
+					method: 'POST',
+					headers: {
+						...headers,
+						'x-user-id': locals.user.id
+					}
+				}
+			);
+			const sendCodeBody = await sendCodeRes.json();
 
-			if (!sendEmailRes.ok) {
-				logger.error('VERIFYEMAIL_LOAD_SENDCODE', await sendEmailRes.json());
+			if (!sendCodeRes.ok) {
+				logger.error('VERIFYEMAIL_LOAD_GETCODE', sendCodeBody);
+			} else {
+				const sendEmailRes = await fetch('https://api.resend.com/emails', {
+					method: 'POST',
+					headers: {
+						Authorization: `Bearer ${RESEND_API_KEY}`,
+						'Content-Type': 'application/json'
+					},
+					body: JSON.stringify({
+						from: 'JamAI Base <no-reply@jamaibase.com>',
+						to: locals.user.email,
+						subject: 'Verify your JamAI Base email address',
+						html: getVerificationEmailBody(sendCodeBody.id)
+					})
+				});
+
+				if (!sendEmailRes.ok) {
+					logger.error('VERIFYEMAIL_LOAD_SENDCODE', await sendEmailRes.json());
+				}
 			}
 		}
 	}
@@ -163,7 +157,6 @@ export const actions = {
 					}
 				);
 				const responseBody = await response.json();
-
 				if (response.ok) {
 					if (
 						new Date().getTime() - new Date(responseBody.items[0]?.created_at).getTime() >
@@ -183,7 +176,6 @@ export const actions = {
 							}
 						);
 						const sendCodeBody = await sendCodeRes.json();
-
 						if (!sendCodeRes.ok) {
 							logger.error('VERIFYEMAIL_RESEND_GETCODE', sendCodeBody);
 						} else {
@@ -200,7 +192,6 @@ export const actions = {
 									html: getVerificationEmailBody(sendCodeBody.id)
 								})
 							});
-
 							if (!sendEmailRes.ok) {
 								logger.error('VERIFYEMAIL_RESEND_SENDCODE', await sendEmailRes.json());
 							}
@@ -231,6 +222,7 @@ export const actions = {
 	}
 };
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const getVerificationEmailBody = (verificationToken: string) => `<html>
   <head>
     <style type="text/css">
