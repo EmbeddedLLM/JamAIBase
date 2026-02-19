@@ -386,6 +386,22 @@ export type PriceProduct = {
 	unit: string;
 };
 
+export type VerificationCodeRead = {
+	created_at: string;
+	updated_at: string;
+	meta: Record<string, unknown>;
+	name: string;
+	role?: (typeof userRoles)[number] | null;
+	user_email: string;
+	expiry: string;
+	organization_id?: string | null;
+	project_id?: string | null;
+	id: string;
+	purpose?: string | null;
+	used_at?: string | null;
+	revoked_at?: string | null;
+};
+
 export type Auth0User = {
 	sid: string;
 	given_name?: string;
@@ -502,6 +518,15 @@ export type OrgMemberRead = {
 	role: (typeof userRoles)[number];
 	user: Omit<User, 'org_memberships' | 'proj_memberships' | 'organizations' | 'projects'>;
 	organization: OrganizationReadRes;
+};
+
+export type SecretsRead = {
+	organization_id: string;
+	name: string;
+	value: string | null;
+	allowed_projects: string[] | null;
+	created_at: string;
+	updated_at: string;
 };
 
 export type Project = {

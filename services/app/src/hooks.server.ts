@@ -9,8 +9,9 @@ import { error, redirect, type Handle } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import { Agent } from 'undici';
 
-const { AUTH0_CLIENT_SECRET, OWL_SERVICE_KEY, OWL_URL } = env;
+const { AUTH0_CLIENT_SECRET, CHECK_EMAIL_VERIFICATION, OWL_SERVICE_KEY, OWL_URL } = env;
 const ossMode = !OWL_SERVICE_KEY;
+const checkEmailVerification = CHECK_EMAIL_VERIFICATION !== 'false';
 const auth0Mode = !!OWL_SERVICE_KEY && !!AUTH0_CLIENT_SECRET;
 
 const PROXY_PATHS: { path: string; exclude?: string[]; target: string }[] = [
@@ -105,6 +106,7 @@ export const mainHandle: Handle = async ({ event, resolve }) => {
 	if (dev && !request.url.includes('/api/owl/files')) console.log('Connecting', request.url);
 
 	locals.ossMode = ossMode;
+	locals.checkEmailVerification = checkEmailVerification;
 	locals.auth0Mode = auth0Mode;
 
 	let auth0UserData: Auth0User;

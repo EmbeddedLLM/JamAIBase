@@ -98,6 +98,47 @@ export const actions = {
 		return RESEND_API_KEY ? { ok: true } : inviteToken;
 	},
 
+	'revoke-invite': async ({ cookies, fetch, locals, request }) => {
+		const data = await request.formData();
+		const invite_id = data.get('invite_id');
+		const activeOrganizationId = cookies.get('activeOrganizationId');
+
+		if (typeof invite_id !== 'string' || invite_id.trim() === '') {
+			return fail(400, new APIError('Invalid invite code').getSerializable());
+		}
+
+		if (!activeOrganizationId) {
+			return fail(400, new APIError('No active organization').getSerializable());
+		}
+
+		//* Verify user perms
+		if (!locals.user) {
+			return fail(401, new APIError('Unauthorized').getSerializable());
+		}
+
+		const revokeInviteRes = await fetch(
+			`${OWL_URL}/api/v2/organizations/invites?${new URLSearchParams([['invite_id', invite_id]])}`,
+			{
+				method: 'DELETE',
+				headers: {
+					...headers,
+					'x-user-id': locals.user.id
+				}
+			}
+		);
+
+		const revokeInviteBody = await revokeInviteRes.json();
+		if (!revokeInviteRes.ok) {
+			logger.error('ORGTEAM_REVOKE_INVITE', revokeInviteBody);
+			return fail(
+				revokeInviteRes.status,
+				new APIError('Failed to revoke invite', revokeInviteBody as any).getSerializable()
+			);
+		} else {
+			return revokeInviteBody;
+		}
+	},
+
 	update: async ({ cookies, fetch, locals, request }) => {
 		const data = await request.formData();
 		const user_id = data.get('user_id');

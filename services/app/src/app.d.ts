@@ -9,6 +9,7 @@ declare global {
 		// interface Error {}
 		interface Locals {
 			ossMode: boolean;
+			checkEmailVerification: boolean;
 			auth0Mode: boolean;
 			user?: Partial<Auth0User> & User;
 		}

@@ -9,10 +9,12 @@
 				default:
 					'text-[#FCFCFD] bg-[#BF416E] hover:bg-[#950048] focus-visible:bg-[#950048] active:bg-[#7A003B]',
 				destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
+				'destructive-init':
+					'text-[#F04438] bg-white hover:bg-[#FEF3F2] border border-[#E4E7EC] !px-2 !py-1.5 rounded-lg font-normal',
 				outline:
 					'text-[#BF416E] bg-transparent hover:bg-[#BF416E]/[0.025] focus-visible:bg-[#BF416E]/[0.025] active:bg-[#BF416E]/5 border border-[#BF416E]',
 				'outline-neutral':
-					'text-text bg-transparent hover:bg-[#F2F4F7] data-dark:hover:bg-white/[0.1] active:bg-[#F2F4F7] data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1] border border-[#DDD] data-dark:border-[#42464E]',
+					'text-[#475467] bg-transparent hover:bg-[#F2F4F7] data-dark:hover:bg-white/[0.1] active:bg-[#F2F4F7] data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1] border border-[#F2F4F7] data-dark:border-[#42464E] rounded-lg font-normal',
 				action: 'bg-[#E4E7EC] hover:bg-[#D0D5DD] text-[#475467] rounded-lg',
 				warning: 'bg-warning hover:bg-warning/80 text-black',
 				ghost: 'hover:bg-[#E4E7EC] hover:text-accent-foreground',

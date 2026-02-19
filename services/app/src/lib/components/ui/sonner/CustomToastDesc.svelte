@@ -14,11 +14,11 @@
 	let requestIDCopiedTimeout: ReturnType<typeof setTimeout> | undefined = $state();
 </script>
 
-<div class="flex flex-col gap-0.5 group-[.toast]:text-muted-foreground">
+<div class="flex flex-col gap-1 group-[.toast]:text-muted-foreground">
 	<p class="text-muted-foreground">{description}</p>
 	{#if requestID}
-		<div class="flex items-center gap-0.5">
-			<span class="text-black">{requestID}</span>
+		<div class="flex w-max items-center gap-0.5 rounded-lg bg-[#0C111D] px-2 py-1.5">
+			<span class="text-white">{requestID}</span>
 			<Button
 				variant="ghost"
 				aria-label="Copy organization ID"

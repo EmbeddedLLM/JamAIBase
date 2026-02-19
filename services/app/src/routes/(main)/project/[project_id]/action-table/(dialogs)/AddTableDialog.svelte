@@ -378,48 +378,56 @@
 								{#if dragMouseCoords && draggingColumn}
 									<li
 										inert
-										style="grid-template-columns: 30px repeat(2, minmax(0, 1fr)) 50px 40px; top: {dragMouseCoords.y -
+										style="grid-template-columns: 30px minmax(0, 1.2fr) repeat(2, minmax(0, 1fr)) auto; top: {dragMouseCoords.y -
 											dragMouseCoords.startY -
 											10}px; left: {dragMouseCoords.x -
 											dragMouseCoords.startX}px; width: {dragMouseCoords.width}px;"
-										class="pointer-events-none fixed z-[9999] mt-3 grid gap-2 bg-[#F4F5FA] data-dark:bg-[#42464e]"
+										class="pointer-events-none fixed z-[9999] grid gap-2 rounded-lg bg-[#F5F6FA]"
 									>
-										<button class="flex cursor-grab items-center justify-center">
-											<HamburgerIcon class="h-5" />
+										<button class="flex cursor-grab touch-none items-center justify-center">
+											<HamburgerIcon class="h-5 text-[#667085]" />
 										</button>
 
 										<div class="flex w-full flex-col gap-2 py-1 text-center">
 											<InputText
-												placeholder="Required"
+												placeholder="New column"
 												value={draggingColumn.id}
-												class="bg-white data-dark:bg-[#42464e]"
+												class="h-[38px] border border-[#E4E7EC] bg-white data-dark:bg-[#42464e]"
 											/>
 										</div>
 
 										<div class="flex w-full flex-col gap-2 py-1 text-center">
 											<Button
-												variant="outline-neutral"
-												class="flex h-[38px] min-w-full items-center justify-between gap-2 rounded-md border-transparent bg-white pl-3 pr-2 data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1] sm:gap-8"
+												class="flex h-[38px] min-w-full items-center justify-between gap-2 rounded-md border border-[#DDD] bg-white pl-3 pr-2 text-text data-dark:border-[#42464E] data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1] sm:gap-8"
 											>
 												<span class="line-clamp-1 whitespace-nowrap text-left font-normal">
-													{genTableDTypes[draggingColumn.dtype]
-														? genTableDTypes[draggingColumn.dtype]
-														: 'Select Data Type'}
+													{draggingColumn.col_type || 'Select column type'}
 												</span>
 
 												<ChevronDown class="h-4 w-4" />
 											</Button>
 										</div>
 
-										<div class="flex items-center justify-center">
-											<Checkbox checked={!!draggingColumn.gen_config} class="h-5 w-5" />
+										<div class="flex w-full flex-col gap-2 py-1 text-center">
+											<Button
+												class="flex h-[38px] min-w-full items-center justify-between gap-2 rounded-md border border-[#DDD] bg-white pl-3 pr-2 text-text data-dark:border-[#42464E] data-dark:bg-[#0D0E11] data-dark:hover:bg-white/[0.1] sm:gap-8"
+											>
+												<span class="line-clamp-1 whitespace-nowrap text-left font-normal">
+													{genTableDTypes[draggingColumn.dtype]
+														? genTableDTypes[draggingColumn.dtype]
+														: 'Select data type'}
+												</span>
+
+												<ChevronDown class="h-4 w-4" />
+											</Button>
 										</div>
 
 										<Button
 											variant="ghost"
+											title="Remove column"
 											class="aspect-square h-8 w-8 place-self-center rounded-full p-0"
 										>
-											<CloseIcon class="h-5" />
+											<CloseIcon class="h-5 text-[#475467]" />
 										</Button>
 									</li>
 								{/if}

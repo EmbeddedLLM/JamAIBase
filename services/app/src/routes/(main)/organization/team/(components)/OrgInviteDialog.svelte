@@ -9,7 +9,10 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Select from '$lib/components/ui/select';
 
-	let { isInvitingUser = $bindable() }: { isInvitingUser: boolean } = $props();
+	let {
+		isInvitingUser = $bindable(),
+		refetchOrgInvites
+	}: { isInvitingUser: boolean; refetchOrgInvites: () => void } = $props();
 
 	let isLoadingInvite = $state(false);
 
@@ -53,6 +56,7 @@
 					}
 
 					isLoadingInvite = false;
+					refetchOrgInvites();
 				};
 			}}
 			onkeydown={(event) => event.key === 'Enter' && event.preventDefault()}

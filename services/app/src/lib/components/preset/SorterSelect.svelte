@@ -4,11 +4,10 @@
 
 	import { m } from '$lib/paraglide/messages';
 	import * as Select from '$lib/components/ui/select';
-	import { MoveUp } from '@lucide/svelte';
 
 	interface Props {
 		sortOptions: { orderBy: string; order: 'asc' | 'desc' };
-		sortableFields: { id: string; title: string; Icon: Component }[];
+		sortableFields: { id: string; title: string; Icon?: Component }[];
 		refetchTables: () => Promise<void>;
 		class?: string | undefined | null;
 	}

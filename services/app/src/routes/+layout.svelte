@@ -206,8 +206,36 @@
 	</script>
 </svelte:head> -->
 
-<Toaster closeButton richColors />
+<Toaster
+	closeButton
+	richColors
+	toastOptions={{
+		classes: {
+			toast:
+				'flex items-start data-[type=success]:items-center data-[type=success]:p-2 [&[data-type=success]>[data-close-button]]:top-5 data-[type=error]:pt-2.5 data-[type=error]:px-2 !bg-[#1D2939] border-transparent rounded-lg overflow-hidden sonner-toast',
+			title: 'text-white text-sm pr-8',
+			description: 'text-[#98A2B3] text-sm',
+			closeButton: 'top-4 right-1 left-[unset]'
+		}
+	}}
+/>
 
 <Tooltip.Provider>
 	{@render children?.()}
 </Tooltip.Provider>
+
+<style>
+	:global(.sonner-toast > [data-icon]) {
+		height: 30px;
+		width: 40px;
+	}
+
+	:global(.sonner-toast > [data-icon] > svg) {
+		height: 30px;
+		width: 40px;
+	}
+
+	:global(.sonner-toast > [data-content]) {
+		gap: 4px;
+	}
+</style>

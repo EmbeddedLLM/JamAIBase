@@ -1,4 +1,4 @@
-import { modelLogos } from '$lib/constants';
+import { modelLogos, userRoles } from '$lib/constants';
 import type { ReferenceChunk } from '$lib/types';
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -72,6 +72,37 @@ function getAllProperties(obj: object) {
 		});
 	} while ((curr = Object.getPrototypeOf(curr)));
 	return allProps;
+}
+
+export function hasPermission(
+	user: App.Locals['user'],
+	ossMode: boolean,
+	organizationId: string,
+	projectId: string,
+	_orgRole?: (typeof userRoles)[number],
+	_projRole?: (typeof userRoles)[number]
+) {
+	if (ossMode) return true;
+
+	const roleHierarchy = {
+		GUEST: 1,
+		MEMBER: 2,
+		ADMIN: 3
+	} as Record<(typeof userRoles)[number], number>;
+
+	const orgRole = user?.org_memberships.find((org) => org.organization_id === organizationId)?.role;
+	const projRole = user?.proj_memberships.find((proj) => proj.project_id === projectId)?.role;
+
+	const userOrgLevel = roleHierarchy[orgRole ?? 'GUEST'];
+	const userProjLevel = roleHierarchy[projRole ?? 'GUEST'];
+
+	const reqOrgLevel = roleHierarchy[_orgRole ?? 'GUEST'];
+	const reqProjLevel = roleHierarchy[_projRole ?? 'GUEST'];
+	if ((!_orgRole || userOrgLevel >= reqOrgLevel) && (!_projRole || userProjLevel >= reqProjLevel)) {
+		return true;
+	} else {
+		return false;
+	}
 }
 
 export function insertAtCursor(el: HTMLInputElement | HTMLTextAreaElement, value: string) {

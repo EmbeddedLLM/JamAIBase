@@ -12,7 +12,7 @@
 	<title>Usage - Organization</title>
 </svelte:head>
 
-<div class="flex flex-col gap-10 overflow-auto px-4 py-4 sm:px-8 sm:py-6">
+<div class="flex flex-col gap-10 overflow-auto px-4 py-4">
 	<section data-testid="org-quotas" class="flex flex-col gap-3">
 		<h2 class="text-sm font-medium text-[#667085]">QUOTAS</h2>
 

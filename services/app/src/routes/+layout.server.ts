@@ -62,6 +62,7 @@ export const load: (event: LayoutServerLoadEvent) => Promise<Data> = async ({
 	if (!url.pathname.startsWith('/login') && !url.pathname.startsWith('/register')) {
 		if (
 			!locals.ossMode &&
+			locals.checkEmailVerification &&
 			!locals.user!.email_verified &&
 			!url.pathname.startsWith('/verify-email')
 		) {
@@ -71,7 +72,7 @@ export const load: (event: LayoutServerLoadEvent) => Promise<Data> = async ({
 			);
 		}
 
-		if (locals.ossMode || locals.user?.email_verified) {
+		if (locals.ossMode || locals.user?.email_verified || !locals.checkEmailVerification) {
 			let activeOrganizationId = cookies.get('activeOrganizationId');
 
 			//? Redirect to create org if no orgs

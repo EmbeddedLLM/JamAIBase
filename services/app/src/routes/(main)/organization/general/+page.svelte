@@ -5,14 +5,11 @@
 	import PermissionGuard from '$lib/components/PermissionGuard.svelte';
 	import { toast, CustomToastDesc } from '$lib/components/ui/sonner';
 	import InputText from '$lib/components/InputText.svelte';
-	import Tooltip from '$lib/components/Tooltip.svelte';
 	import { Label } from '$lib/components/ui/label';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import WarningIcon from '$lib/icons/WarningIcon.svelte';
 	import CloseIcon from '$lib/icons/CloseIcon.svelte';
-	import CopyIcon from '$lib/icons/CopyIcon.svelte';
-	import CheckDoneIcon from '$lib/icons/CheckDoneIcon.svelte';
 
 	let isEditingOrgName = $state(false);
 	let editOrgName = $state($activeOrganization?.name ?? '');
@@ -24,81 +21,67 @@
 	let confirmOrgName = $state('');
 	let isDeletingOrg = $state(false);
 	let isLoadingDeleteOrg = $state(false);
-
-	let orgIdCopied = $state(false);
-	let orgIdCopiedTimeout: ReturnType<typeof setTimeout> | undefined = $state();
 </script>
 
 <svelte:head>
 	<title>General - Organization</title>
 </svelte:head>
 
-<section class="flex h-full flex-col gap-4 overflow-auto px-4 py-4 sm:px-8 sm:py-6">
-	<h2 class="text-sm font-medium text-[#667085]">YOUR ORGANIZATION</h2>
+<section class="flex h-full flex-col gap-4 overflow-auto px-4 py-3">
+	<div class="mb-3 flex h-min w-[clamp(0px,100%,600px)] flex-col gap-5 rounded-lg bg-white p-4">
+		<div class="flex flex-col gap-1">
+			<p class="select-none text-sm text-[#475467]">Organization Name</p>
 
-	<div class="mb-8 flex h-min w-[clamp(0px,100%,600px)] flex-col gap-4 rounded-lg bg-white p-4">
-		<div class="flex items-center justify-between">
-			<div class="flex flex-col gap-1">
-				<p class="text-xs font-medium uppercase text-[#98A2B3]">Organization Name</p>
-				<span class="text-sm">{$activeOrganization?.name ?? ''}</span>
+			<div class="flex items-center gap-2">
+				<div class="grow rounded-xl border border-[#E4E7EC] bg-[#F9FAFB] p-2 text-[#667085]">
+					{$activeOrganization?.name ?? ''}
+				</div>
+
+				<PermissionGuard reqOrgRole="ADMIN">
+					<Button
+						variant="outline"
+						onclick={() => {
+							editOrgName = $activeOrganization?.name ?? '';
+							isEditingOrgName = true;
+						}}
+						title="Edit organization name"
+						class="px-6"
+					>
+						Edit
+					</Button>
+				</PermissionGuard>
 			</div>
-
-			<PermissionGuard reqOrgRole="ADMIN">
-				<Button
-					variant="outline"
-					onclick={() => {
-						editOrgName = $activeOrganization?.name ?? '';
-						isEditingOrgName = true;
-					}}
-					title="Edit organization name"
-					class="px-6"
-				>
-					Edit
-				</Button>
-			</PermissionGuard>
 		</div>
 
 		<div class="flex flex-col gap-1">
-			<p class="text-xs font-medium uppercase text-[#98A2B3]">Organization ID</p>
-			<div class="flex items-center gap-1">
-				<span class="text-sm">{$activeOrganization?.id ?? ''}</span>
+			<p class="select-none text-sm text-[#475467]">Organization ID</p>
+
+			<div class="flex items-center gap-2">
+				<div class="grow rounded-xl border border-[#E4E7EC] bg-[#F9FAFB] p-2 text-[#667085]">
+					{$activeOrganization?.id ?? ''}
+				</div>
+
 				<Button
-					variant="ghost"
-					aria-label="Copy organization ID"
+					variant="outline"
 					onclick={() => {
 						navigator.clipboard.writeText($activeOrganization?.id ?? '');
-						clearTimeout(orgIdCopiedTimeout);
-						orgIdCopied = true;
-						orgIdCopiedTimeout = setTimeout(() => (orgIdCopied = false), 1500);
+						toast.success('Organization ID copied to clipboard', {
+							id: 'org-id-copied'
+						});
 					}}
-					class="group relative aspect-square h-[unset] rounded-full p-[1px]"
+					title="Copy organization ID"
+					class="px-6"
 				>
-					<CopyIcon class="h-5 text-[#98A2B3]" />
-
-					<Tooltip
-						arrowSize={8}
-						class="{orgIdCopied
-							? 'absolute bg-[#12B76A] after:!border-t-[#12B76A]'
-							: '-left-2'} -top-7 opacity-0 transition-opacity group-hover:opacity-100"
-					>
-						{#if orgIdCopied}
-							<div class="flex gap-1">
-								<CheckDoneIcon class="h-4 w-4" />
-								Copied to clipboard
-							</div>
-						{:else}
-							Copy
-						{/if}
-					</Tooltip>
+					Copy
 				</Button>
 			</div>
 		</div>
 	</div>
 
-	<div class="mt-auto flex flex-col gap-2">
-		<h2 class="text-sm font-medium text-[#667085]">ORGANIZATION REMOVAL</h2>
+	<div class="flex h-min w-[clamp(0px,100%,600px)] flex-col gap-1 rounded-lg bg-white p-4">
+		<h2 class="text-[#475467]">Organization Removal</h2>
 
-		<p class="mb-1 text-[0] text-[#667085] [&>span]:text-[13px]">
+		<p class="mb-3 text-sm text-[#667085] [&>span]:text-[13px]">
 			<span>Leaving this organization will remove you from it</span>
 			<span>
 				<PermissionGuard reqOrgRole="ADMIN">
@@ -111,10 +94,20 @@
 		</p>
 
 		<div class="flex w-[clamp(0px,100%,600px)] flex-col gap-2 sm:flex-row sm:items-center">
-			<Button onclick={() => (isLeavingOrg = true)} class="px-8">Leave Organization</Button>
+			<Button
+				onclick={() => (isLeavingOrg = true)}
+				variant="outline"
+				class="border-[#D92D20] px-8 text-[#D92D20] hover:bg-[#FEF3F2]"
+			>
+				Leave Organization
+			</Button>
 
 			<PermissionGuard reqOrgRole="ADMIN">
-				<Button onclick={() => (isDeletingOrg = true)} variant="outline" class="px-8">
+				<Button
+					onclick={() => (isDeletingOrg = true)}
+					variant="destructive"
+					class="bg-[#D92D20] px-8 hover:bg-[#B42318]"
+				>
 					Delete Organization
 				</Button>
 			</PermissionGuard>
