@@ -66,8 +66,10 @@ from owl.types import (
     TableMetaResponse,
     TableSchemaCreate,
     TableType,
+    URLEmbedFormData,
     UserAuth,
 )
+from owl.url_loader import load_url_content
 from owl.utils.auth import auth_user_project, has_permissions
 from owl.utils.billing import BillingManager
 from owl.utils.exceptions import (
@@ -890,6 +892,21 @@ async def embed_file_options():
     return Response(content=None, headers=headers)
 
 
+@router.options(
+    "/v2/gen_tables/knowledge/embed_url",
+    summary="Get CORS preflight options for URL embedding endpoint",
+    description="Permissions: None, publicly accessible.",
+)
+@handle_exception
+async def embed_url_options():
+    headers = {
+        "Allow": "POST, OPTIONS",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+    }
+    return Response(content=None, headers=headers)
+
+
 @router.post(
     "/v2/gen_tables/knowledge/embed_file",
     summary="Embed a file into a knowledge table.",
@@ -1007,6 +1024,117 @@ async def embed_file(
             "Text": chunk.text,
             "Text Embed": text_embed,
             "File ID": file_uri,
+            "Page": chunk.page,
+        }
+        for chunk, text_embed in zip(chunks, text_embeds, strict=True)
+    ]
+    await table.add_rows(row_add_data)
+    return OkResponse()
+
+
+@router.post(
+    "/v2/gen_tables/knowledge/embed_url",
+    summary="Embed a URL into a knowledge table.",
+    description="Permissions: `organization.MEMBER` OR `project.MEMBER`.",
+)
+@handle_exception
+async def embed_url(
+    *,
+    request: Request,
+    auth_info: Annotated[
+        tuple[UserAuth, ProjectRead, OrganizationRead], Depends(auth_user_project)
+    ],
+    data: Annotated[URLEmbedFormData, Form()],
+) -> OkResponse:
+    user, project, org = auth_info
+    has_permissions(
+        user,
+        ["organization.MEMBER", "project.MEMBER"],
+        organization_id=org.id,
+        project_id=project.id,
+    )
+    # --- Fetch URL content --- #
+    logger.info(f'Fetching content from URL "{data.url}".')
+    try:
+        file_content_str, file_name = await load_url_content(data.url)
+        file_content = file_content_str.encode("utf-8")
+    except ValueError as e:
+        raise BadInputError(f"Invalid URL: {e}")
+    except Exception as e:
+        logger.warning(f'Failed to fetch URL "{data.url}" due to error: {repr(e)}')
+        raise BadInputError(f"Failed to fetch URL content: {str(e)}")
+
+    table = await KnowledgeTable.open_table(
+        project_id=project.id,
+        table_id=data.table_id,
+    )
+    # Check quota
+    request_id: str = request.state.id
+    billing: BillingManager = request.state.billing
+    billing.has_gen_table_quota(table)
+    billing.has_db_storage_quota()
+    billing.has_egress_quota()
+
+    # --- Add into Knowledge Table --- #
+    logger.info(f'{request_id} - Parsing content from "{data.url}".')
+    doc_parser = GeneralDocLoader(request_id=request_id)
+    try:
+        chunks = await doc_parser.load_document_chunks(
+            file_name, file_content, data.chunk_size, data.chunk_overlap
+        )
+    except BadInputError as e:
+        logger.warning(f'Failed to parse content from "{data.url}" due to error: {repr(e)}')
+        raise
+    except Exception as e:
+        logger.warning(f'Failed to parse content from "{data.url}" due to error: {repr(e)}')
+        raise BadInputError(
+            f'Sorry we encountered an issue while processing content from "{data.url}". '
+            "Please ensure the URL is valid and contains parseable content."
+        ) from e
+
+    logger.info(f'{request_id} - Embedding content from "{data.url}" with {len(chunks):,d} chunks.')
+
+    # --- Extract title --- #
+    lm = LMEngine(
+        organization=org,
+        project=project,
+        request=request,
+    )
+    first_page_chunks = [d.text for d in chunks[:8]]
+    excerpt = "".join(first_page_chunks)[:50000]
+    logger.debug(f"{request_id} - Performing title extraction.")
+    title = await lm.generate_title(excerpt=excerpt, model="")
+
+    # --- Embed --- #
+    title_embed = text_embeds = None
+    for col in table.column_metadata:
+        if col.column_id.lower() == "title embed":
+            title_embed = await lm.embed_documents(
+                model=col.gen_config.embedding_model,
+                texts=[title],
+                encoding_format="float",
+            )
+            title_embed = title_embed.data[0].embedding
+        elif col.column_id.lower() == "text embed":
+            text_embeds = await lm.embed_documents(
+                model=col.gen_config.embedding_model,
+                texts=[chunk.text for chunk in chunks],
+                encoding_format="float",
+            )
+            text_embeds = [data.embedding for data in text_embeds.data]
+
+    if title_embed is None or text_embeds is None or len(text_embeds) == 0:
+        raise BadInputError(
+            "Sorry we encountered an issue during embedding. If this issue persists, please contact support."
+        )
+    # --- Store into Knowledge Table --- #
+    row_add_data = [
+        {
+            "Title": title,
+            "Title Embed": title_embed,
+            "Text": chunk.text,
+            "Text Embed": text_embed,
+            "File ID": data.url,
             "Page": chunk.page,
         }
         for chunk, text_embed in zip(chunks, text_embeds, strict=True)

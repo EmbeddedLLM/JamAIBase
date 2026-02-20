@@ -929,6 +929,30 @@ class FileEmbedFormData(BaseModel):
     ] = 200
 
 
+class URLEmbedFormData(BaseModel):
+    url: Annotated[str, Field(description="The URL to extract content from.")]
+    table_id: Annotated[SanitisedNonEmptyStr, Field(description="Knowledge Table ID.")]
+    chunk_size: Annotated[
+        int, Field(gt=0, description="Maximum chunk size (number of characters). Must be > 0.")
+    ] = 2000
+    chunk_overlap: Annotated[
+        int, Field(ge=0, description="Overlap in characters between chunks. Must be >= 0.")
+    ] = 200
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def validate_url_format(cls, v: str) -> str:
+        """Validate URL format: must be http or https."""
+        if not isinstance(v, str):
+            raise ValueError("URL must be a string")
+        v = v.strip()
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("URL must start with http:// or https://")
+        if len(v) < 10:  # Minimum viable URL length
+            raise ValueError("URL is too short")
+        return v
+
+
 class TableDataImportFormData(BaseModel):
     file: Annotated[UploadFile, File(description="The CSV or TSV file.")]
     file_name: Annotated[str, Field(description="File name.", deprecated=True)] = ""
