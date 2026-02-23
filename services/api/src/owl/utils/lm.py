@@ -707,8 +707,8 @@ class DeploymentRouter:
 
         # Anthropic specific
         if ctx.inference_provider == CloudProvider.ANTHROPIC:
-            # 4.1 and 4.5 models cannot specify both `temperature` and `top_p`
-            if "-4-1" in ctx.routing_id or "-4-5" in ctx.routing_id:
+            # 4.x models cannot specify both `temperature` and `top_p`
+            if "-4-" in ctx.routing_id:
                 t = hyperparams.get("temperature", None)
                 p = hyperparams.get("top_p", None)
                 if t is not None and p is not None:
@@ -736,8 +736,8 @@ class DeploymentRouter:
                 hyperparams["reasoning_effort"] = "disable"
                 return
             elif ctx.inference_provider == CloudProvider.GEMINI:
-                # 3-Pro cannot disable thinking
-                if "3-pro" in ctx.routing_id:
+                # 3/3.1-Pro cannot disable thinking
+                if "3-pro" in ctx.routing_id or "3.1-pro" in ctx.routing_id:
                     hyperparams["reasoning_effort"] = "low"
                 # 2.5 Pro cannot disable thinking
                 elif "2.5-pro" in ctx.routing_id:
