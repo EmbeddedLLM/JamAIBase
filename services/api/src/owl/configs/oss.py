@@ -43,6 +43,8 @@ class EnvConfig(BaseSettings):
     code_executor_endpoint: str = "http://kopi:3000"
     docling_url: str = "http://docling:5001"
     docling_timeout_sec: Annotated[int, Field(gt=0, le=60 * 60)] = 20 * 60
+    gotenberg_url: str = "http://gotenberg:3000"
+    gotenberg_timeout_sec: Annotated[int, Field(gt=0, le=60 * 60)] = 5 * 60
     test_llm_api_base: str = "http://test-llm:6970/v1"
     # Configs
     embed_file_upload_max_bytes: int = 200 * 1024 * 1024  # 200MiB in bytes
@@ -59,7 +61,9 @@ class EnvConfig(BaseSettings):
     max_write_batch_size: int = 100
     max_file_cache_size: int = 20
     # PDF Loader configs
-    fast_pdf_parsing: bool = True
+    use_vlm_ocr: bool = True  # Enable VLM OCR (otherwise use Docling OCR)
+    # VLM model ID for OCR, only used when use_vlm_ocr is True.
+    vlm_model_id: str = "openai/gpt-4o-mini"
     # LLM configs
     llm_timeout_sec: Annotated[int, Field(gt=0, le=60 * 60)] = 60
     embed_timeout_sec: Annotated[int, Field(gt=0, le=60 * 60)] = 60

@@ -1361,7 +1361,12 @@ class GenExecutor(_Executor):
             if isinstance(c, TextContent):
                 contents.append(c)
             else:
-                data = await _load_uri_as_base64(c.uri)
+                data = await _load_uri_as_base64(
+                    c.uri,
+                    request=self.request,
+                    organization=self.organization,
+                    lm_engine=self.lm,
+                )
                 if getattr(self._col_map.get(c.column_name, None), "is_document_column", False):
                     # Document (data could be None)
                     replacements[c.column_name] = str(data)
@@ -1603,12 +1608,20 @@ def _resolve_image_output_type(image_bytes: bytes, mime_type: str | None) -> tup
     return mime or "image/png", extension
 
 
-async def _load_uri_as_base64(uri: str | None) -> str | AudioContent | ImageContent | None:
+async def _load_uri_as_base64(
+    uri: str | None,
+    request: Request | None = None,
+    organization: OrganizationRead | None = None,
+    lm_engine: LMEngine | None = None,
+) -> str | AudioContent | ImageContent | None:
     """
     Loads a file from URI for LLM inference.
 
     Args:
         uri (str | None): The URI of the file.
+        request (Request | None): FastAPI request object for VLM OCR.
+        organization (OrganizationRead | None): Organization for VLM OCR.
+        lm_engine (LMEngine | None): LMEngine instance for VLM OCR.
 
     Returns:
         content (str | AudioContent | ImageContent): The file content.
@@ -1635,7 +1648,17 @@ async def _load_uri_as_base64(uri: str | None) -> str | AudioContent | ImageCont
     try:
         # Load as document
         if extension in DOCUMENT_FILE_EXTENSIONS:
-            return await GeneralDocLoader().load_document(basename(uri), file_binary)
+            try:
+                return await GeneralDocLoader(
+                    request_id=request.state.id,
+                    lm_engine=lm_engine,
+                ).load_document(basename(uri), file_binary)
+            except Exception as e:
+                logger.warning(
+                    f'Failed to use VLM OCR for "{uri}": {repr(e)}, falling back to Docling.'
+                )
+                # Retry using Docling OCR as fallback
+                return await GeneralDocLoader().load_document(basename(uri), file_binary)
         # Load as audio or image
         else:
             base64_data = base64.b64encode(file_binary).decode("utf-8")

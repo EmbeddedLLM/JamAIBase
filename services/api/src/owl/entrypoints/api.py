@@ -402,6 +402,23 @@ def post_fork(server, worker):
     server.log.info(f"Worker spawned (pid: {worker.pid})")
 
 
+# Gunicorn post_worker_init hook
+# Re-install coverage's SIGTERM handler after Gunicorn's init_signals() wipes it.
+# Without this, uvicorn 0.29+'s signal re-raise kills workers before coverage can save data.
+# Execution order: init_signals() → post_worker_init() → run()
+def post_worker_init(worker):
+    try:
+        import signal
+
+        import coverage
+
+        cov = coverage.Coverage.current()
+        if cov and cov.config.sigterm:
+            signal.signal(signal.SIGTERM, cov._on_sigterm)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     options = {
         "bind": f"{ENV_CONFIG.host}:{ENV_CONFIG.port}",
@@ -414,6 +431,7 @@ if __name__ == "__main__":
         "max_requests_jitter": 200,
         "keepalive": 60,  # AWS ALB and Nginx default to 60 seconds
         "post_fork": post_fork,
+        "post_worker_init": post_worker_init,
         "loglevel": "error",
     }
     StandaloneApplication(app, options).run()

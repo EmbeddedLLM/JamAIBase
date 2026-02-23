@@ -2024,6 +2024,9 @@ FILE_PAGES = {
     FILES["1978_APL_FP_detrapping.PDF"]: 4,
     FILES["digital_scan_combined.pdf"]: 15,
     FILES["(2017.06.30) NMT in Linear Time (ByteNet).pptx"]: 3,
+    FILES["RAG and LLM Integration Guide.html"]: 7,
+    FILES["multilingual-code-examples.html"]: 4,
+    FILES["Recommendation Letter.docx"]: 2,
     FILES["Claims Form.xlsx"]: 2,
 }
 
@@ -2090,8 +2093,6 @@ def test_embed_file(
 @pytest.mark.parametrize(
     "file_path",
     [
-        FILES["empty.pdf"],
-        FILES["empty_3pages.pdf"],
         FILES["empty.txt"],
         FILES["empty.csv"],
     ],

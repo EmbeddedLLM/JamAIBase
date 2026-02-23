@@ -145,10 +145,12 @@ jobs:
           OWL_STRIPE_WEBHOOK_SECRET_TEST: ${{ secrets.OWL_STRIPE_WEBHOOK_SECRET_TEST }}
           OWL_STRIPE_PUBLISHABLE_KEY_TEST: ${{ secrets.OWL_STRIPE_PUBLISHABLE_KEY_TEST }}
 
-      - name: Configure Docker timeout
+      - name: Configure Docker daemon
         run: |
-          mkdir -p ~/.docker
-          echo '{"max-concurrent-downloads": 3, "max-download-attempts": 5}' > ~/.docker/config.json
+          DAEMON_JSON=/etc/docker/daemon.json
+          EXISTING=$(sudo cat "$DAEMON_JSON" 2>/dev/null || echo '{}')
+          echo "$EXISTING" | jq '. + {"max-concurrent-downloads": 3, "max-download-attempts": 5}' | sudo tee "$DAEMON_JSON"
+          sudo systemctl restart docker
 
       - name: Launch services
         id: launch_services

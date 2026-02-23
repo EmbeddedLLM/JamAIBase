@@ -467,9 +467,7 @@ def real_run(real_setup: RealImageMetricsContext) -> ImageRunContext:
             stream=False,
             check_usage=False,
         )
-    end_dt = datetime.now(tz=timezone.utc)
-    if end_dt < start_dt + timedelta(seconds=20):
-        end_dt = start_dt + timedelta(seconds=20)
+    end_dt = start_dt + timedelta(minutes=1)
 
     return ImageRunContext(
         start_dt=start_dt,

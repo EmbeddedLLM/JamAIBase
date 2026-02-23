@@ -10,16 +10,23 @@ from typing import AsyncGenerator
 from urllib.parse import urlparse, urlunparse
 
 import aioboto3
-import httpx
 from botocore.exceptions import ClientError
+from httpx import AsyncClient, HTTPStatusError, Response
 from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
+from pydantic_ai.retries import (
+    AsyncTenacityTransport,
+    RetryConfig,
+    wait_retry_after,
+)
 from sqlmodel import select
+from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from jamaibase.utils.io import (  # noqa: F401
     AUDIO_WHITE_LIST,
     DOC_WHITE_LIST,
     EMBED_WHITE_LIST,
+    EXT_TO_MIME,
     IMAGE_WHITE_LIST,
     csv_to_df,
     df_to_csv,
@@ -76,12 +83,47 @@ AUDIO_WHITE_LIST_EXT = set(ext for exts in AUDIO_WHITE_LIST.values() for ext in 
 UPLOAD_WHITE_LIST_MIME = set(UPLOAD_WHITE_LIST.keys())
 UPLOAD_WHITE_LIST_EXT = set(ext for exts in UPLOAD_WHITE_LIST.values() for ext in exts)
 
-HTTP_ACLIENT = httpx.AsyncClient(
-    timeout=10.0,
-    transport=httpx.AsyncHTTPTransport(retries=3),
-    follow_redirects=False,  # Prevent redirect-based SSRF
-    max_redirects=0,
-)
+
+def _should_retry_status(response: Response) -> None:
+    """Raise exceptions for retryable HTTP status codes."""
+    if response.status_code in (429, 502, 503, 504):
+        response.raise_for_status()  # This will raise HTTPStatusError
+
+
+def get_async_client(
+    *,
+    timeout: float = 10.0,
+    follow_redirects: bool = False,  # Prevent redirect-based SSRF
+    max_redirects: int = 0,
+    retry_config: RetryConfig | None = None,
+) -> AsyncClient:
+    if retry_config is None:
+        retry_config = RetryConfig(
+            # Retry on HTTP errors and connection issues
+            retry=retry_if_exception_type((HTTPStatusError, ConnectionError)),
+            # Smart waiting: respects Retry-After headers, falls back to exponential backoff
+            wait=wait_retry_after(
+                fallback_strategy=wait_exponential(multiplier=1, max=60),
+                max_wait=300,
+            ),
+            # Stop after 5 attempts
+            stop=stop_after_attempt(5),
+            # Re-raise the last exception if all retries fail
+            reraise=True,
+        )
+    client = AsyncClient(
+        timeout=timeout,
+        follow_redirects=follow_redirects,
+        max_redirects=max_redirects,
+        transport=AsyncTenacityTransport(
+            config=retry_config,
+            validate_response=_should_retry_status,
+        ),
+    )
+    return client
+
+
+HTTP_ACLIENT = get_async_client()
 
 
 @asynccontextmanager
@@ -173,7 +215,7 @@ async def open_uri_async(uri: str) -> AsyncGenerator[tuple[AsyncResponse, str], 
             response.raise_for_status()
             mime = response.headers.get("Content-Type", "application/octet-stream")
             yield (AsyncResponse(response.content), mime)
-        except httpx.HTTPStatusError as e:
+        except HTTPStatusError as e:
             if e.response.status_code == 404:
                 raise ResourceNotFoundError(f'File "{uri}" is not found.') from e
             logger.warning(f'Failed to open "{uri}" due to {e.__class__.__name__}: {e}')

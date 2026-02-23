@@ -940,8 +940,19 @@ async def embed_file(
         filename=file_name,
     )
     # --- Add into Knowledge Table --- #
-    logger.info(f'{request_id} - Parsing file "{file_name}".')
-    doc_parser = GeneralDocLoader(request_id=request_id)
+    logger.debug(f'{request_id} - Parsing file "{file_name}".')
+    try:
+        doc_parser = GeneralDocLoader(
+            request_id=request_id,
+            lm_engine=LMEngine(organization=org, project=project, request=request),
+        )
+    except Exception as e:
+        logger.warning(
+            f"{request_id} - Failed to initialize VLM OCR: {repr(e)}, falling back to Docling OCR."
+        )
+        # Retry using Docling OCR as fallback
+        doc_parser = GeneralDocLoader(request_id=request_id)
+
     try:
         chunks = await doc_parser.load_document_chunks(
             file_name, file_content, data.chunk_size, data.chunk_overlap

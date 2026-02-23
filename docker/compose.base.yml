@@ -215,6 +215,19 @@ services:
     networks:
       - jamai
 
+  gotenberg:
+    image: ghcr.io/embeddedllm/gotenberg/gotenberg:8
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    ports:
+      - "3001:3000"
+    networks:
+      - jamai
+
   owl:
     build:
       context: ..
@@ -253,6 +266,8 @@ services:
       minio:
         condition: service_healthy
       docling:
+        condition: service_healthy
+      gotenberg:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl --fail localhost:6969/api/health || exit 1"]
