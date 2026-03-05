@@ -78,10 +78,6 @@ def _is_bad_char(char: str, *, allow_newline: bool) -> bool:
         return True
 
     # 3. Check for specific disallowed Unicode categories and blocks
-    category = unicodedata.category(char)
-    # Combining marks (e.g., for Zalgo text)
-    if category.startswith("M"):
-        return True
     # Box drawing
     if "\u2500" <= char <= "\u257f":
         return True
@@ -104,13 +100,19 @@ def _str_pre_validator(
     if disallow_empty_string and len(value) == 0:
         raise ValueError("Text is empty.")
 
-    # --- Simplified and Consolidated Character Validation ---
-    # The generator expression is efficient as `any()` will short-circuit
-    # on the first bad character found.
-    value = "".join(char for char in value if not unicodedata.category(char).startswith("M"))
+    # Reject excessive consecutive combining marks (Zalgo text) while
+    # preserving valid scripts (Thai, Arabic, Hindi, Vietnamese, etc.)
+    consecutive = 0
+    for char in value:
+        if unicodedata.category(char).startswith("M"):
+            consecutive += 1
+            if consecutive > 6:
+                raise ValueError("Text contains excessive combining marks.")
+        else:
+            consecutive = 0
+
     if any(_is_bad_char(char, allow_newline=allow_newline) for char in value):
         raise ValueError("Text contains disallowed or non-printable characters.")
-
     return value
 
 

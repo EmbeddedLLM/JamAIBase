@@ -1258,6 +1258,11 @@ def test_column_dependency(
             "code": "row['result_column'] = int(row['input']) + int(row['input'])",
             "expected": "4",
         },
+        {
+            "input": "ยืนยัน",
+            "code": "msg='แจ้งซ่อม'; row['result_column']=f'{row['input']}{msg}'",
+            "expected": "ยืนยันแจ้งซ่อม",
+        },
         # Test error handling:
         {
             "input": "DUMMY",

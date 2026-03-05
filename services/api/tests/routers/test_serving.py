@@ -818,7 +818,7 @@ def test_chat_reasoning_anthropic(setup: ServingContext, stream: bool):
     # Test default params
     response = _test_chat_reasoning_cloud(**kwargs)
     assert len(response.content) > 0
-    kwargs["routing_id"] = "claude-3-7-sonnet-latest"
+    kwargs["routing_id"] = "claude-4-6-sonnet-latest"
     response = _test_chat_reasoning_cloud(**kwargs)
     assert len(response.content) > 0
     # Test disabling reasoning
