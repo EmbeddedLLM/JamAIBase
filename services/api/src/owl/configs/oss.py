@@ -237,7 +237,7 @@ class EnvConfig(BaseSettings):
 
     @property
     def bedrock_api_key_plain(self) -> str:
-        return self.azure_ai_api_key.get_secret_value()
+        return self.bedrock_api_key.get_secret_value()
 
     @property
     def cerebras_api_key_plain(self) -> str:
