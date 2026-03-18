@@ -377,6 +377,8 @@ class DeploymentRouter:
     def _inference_provider(self, provider: str, owned_by: str) -> str:
         if provider == CloudProvider.ELLM:
             return CloudProvider.ELLM
+        elif provider == CloudProvider.VLLM_CLOUD:
+            return CloudProvider.VLLM_CLOUD
         # this check for provider like azure/bedrock that provides other cloud providers model (openai/anthropic)
         if provider in ModelProvider:
             return ModelProvider(provider)

@@ -69,18 +69,18 @@ def test_id_string_bad(value: str):
 
 
 def test_string_normalisation():
-    # ---
-    #
-    # Zalgo text
-    assert IdTest(id="H̵̛͕̞̦̰̜͍̰̥̟͆̏͂̌͑ͅä̷͔̟͓̬̯̟͍̭͉͈̮͙̣̯̬͚̞̭̍̀̾͠m̴̡̧̛̝̯̹̗̹̤̲̺̟̥̈̏͊̔̑̍͆̌̀̚͝͝b̴̢̢̫̝̠̗̼̬̻̮̺̭͔̘͑̆̎̚ư̵̧̡̥̙̭̿̈̀̒̐̊͒͑r̷̡̡̲̼̖͎̫̮̜͇̬͌͘g̷̹͍͎̬͕͓͕̐̃̈́̓̆̚͝ẻ̵̡̼̬̥̹͇̭͔̯̉͛̈́̕r̸̮̖̻̮̣̗͚͖̝̂͌̾̓̀̿̔̀͋̈́͌̈́̋͜").id == "Hämbưrgẻr"
-    #
-    #
-    # ---
-    # Arabic
-    assert IdTest(id="مَرْحَبًا بِكُمْ").id == "مرحبا بكم"
-    # ---
-    # Thai
-    assert IdTest(id="สวัสดีครับ คามุย อิอิ").id == "สวสดครบ คามย ออ"
+    with pytest.raises(ValidationError, match="Text contains excessive combining marks"):
+        IdTest(
+            id=(
+                "H̵̛͕̞̦̰̜͍̰̥̟͆̏͂̌͑ͅä̷͔̟͓̬̯̟͍̭͉͈̮͙̣̯̬͚̞̭̍̀̾͠"
+                "m̴̡̧̛̝̯̹̗̹̤̲̺̟̥̈̏͊̔̑̍͆̌̀̚͝͝b̴̢̢̫̝̠̗̼̬̻̮̺̭͔̘͑̆̎̚"
+                "ư̵̧̡̥̙̭̿̈̀̒̐̊͒͑r̷̡̡̲̼̖͎̫̮̜͇̬͌͘g̷̹͍͎̬͕͓͕̐̃̈́̓̆̚͝"
+                "ẻ̵̡̼̬̥̹͇̭͔̯̉͛̈́̕r̸̮̖̻̮̣̗͚͖̝̂͌̾̓̀̿̔̀͋̈́͌̈́̋͜"
+            )
+        )
+
+    assert IdTest(id="مَرْحَبًا بِكُمْ").id == "مَرْحَبًا بِكُمْ"
+    assert IdTest(id="สวัสดีครับ คามุย อิอิ").id == "สวัสดีครับ คามุย อิอิ"
 
 
 def test_datetime_utc():
