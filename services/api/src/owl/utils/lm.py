@@ -774,7 +774,11 @@ class DeploymentRouter:
                         "summary": reasoning_summary,
                     }
                     return
-            elif ctx.inference_provider == OnPremProvider.VLLM:
+            elif ctx.inference_provider in (
+                OnPremProvider.VLLM,
+                OnPremProvider.VLLM_AMD,
+                CloudProvider.VLLM_CLOUD,
+            ):
                 hyperparams["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
                 return
             logger.warning(
