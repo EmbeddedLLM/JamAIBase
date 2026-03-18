@@ -1383,7 +1383,10 @@ class GenExecutor(_Executor):
                 continue
             for col_name, data in replacements.items():
                 _regex = r"(?<!\\)\${" + re.escape(col_name) + r"}"
-                c.text = re.sub(_regex, data, c.text)
+                # Use lambda to avoid re.sub interpreting backslashes in data as escape sequences
+                # 'lambda _, d=data: d' — '_' is the unused match object, d=data binds current
+                # loop value as default arg, and the lambda returns d as a literal string.
+                c.text = re.sub(_regex, lambda _, d=data: d, c.text)
             c.text = c.text.strip()
         # Re-assemble
         message = ChatEntry.user(content=contents)

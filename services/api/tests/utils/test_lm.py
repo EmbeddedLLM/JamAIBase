@@ -14,8 +14,7 @@ def test_inference_provider_should_prefer_vllm_cloud_over_owned_by() -> None:
     router = _make_router()
 
     assert (
-        router._inference_provider(CloudProvider.VLLM_CLOUD, "openai")
-        == CloudProvider.VLLM_CLOUD
+        router._inference_provider(CloudProvider.VLLM_CLOUD, "openai") == CloudProvider.VLLM_CLOUD
     )
 
 
