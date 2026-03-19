@@ -728,6 +728,15 @@ class DeploymentRouter:
         # Non-reasoning model does not require further processing
         if not ctx.is_reasoning_model:
             return
+        # handle vLLM reasoning (only applicable to some models) only disable when explicitly requested
+        if ctx.inference_provider in (
+            OnPremProvider.VLLM,
+            OnPremProvider.VLLM_AMD,
+            CloudProvider.VLLM_CLOUD,
+        ):
+            if reasoning_effort in ("disable", "none"):
+                hyperparams["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
+            return
         # Disable reasoning if requested
         if (
             reasoning_effort in ("disable", "minimal", "none")
@@ -736,6 +745,7 @@ class DeploymentRouter:
         ):
             if ctx.inference_provider == CloudProvider.ELLM:
                 hyperparams["reasoning_effort"] = "disable"
+                hyperparams["allowed_openai_params"] = ["reasoning_effort"]
                 return
             elif ctx.inference_provider == CloudProvider.GEMINI:
                 # 3/3.1-Pro cannot disable thinking
@@ -751,8 +761,12 @@ class DeploymentRouter:
                 hyperparams["thinking"] = {"type": "disabled"}
                 return
             elif ctx.inference_provider == CloudProvider.OPENAI:
-                if "gpt-5.1" in ctx.routing_id:
-                    # gpt-5.1: Supported values are: 'none', 'low', 'medium', and 'high'.
+                if (
+                    "gpt-5.1" in ctx.routing_id
+                    or "gpt-5.2" in ctx.routing_id
+                    or "gpt-5.4" in ctx.routing_id
+                ):
+                    # gpt-5.1/2/4: Supported values are: 'none', 'low', 'medium', and 'high'.
                     hyperparams["reasoning"] = {
                         "effort": "none",
                         "summary": reasoning_summary,
@@ -776,13 +790,6 @@ class DeploymentRouter:
                         "summary": reasoning_summary,
                     }
                     return
-            elif ctx.inference_provider in (
-                OnPremProvider.VLLM,
-                OnPremProvider.VLLM_AMD,
-                CloudProvider.VLLM_CLOUD,
-            ):
-                hyperparams["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
-                return
             logger.warning(
                 (
                     f'Disabling reasoning is not supported for model "{self.config.id}" '
@@ -807,7 +814,7 @@ class DeploymentRouter:
             elif ctx.inference_provider in [CloudProvider.GEMINI, CloudProvider.ANTHROPIC]:
                 # Gemini 3-Pro recommends reasoning_effort
                 # https://ai.google.dev/gemini-api/docs/openai
-                if "3-pro" in ctx.routing_id:
+                if "3-pro" in ctx.routing_id or "3.1-pro" in ctx.routing_id:
                     hyperparams["reasoning_effort"] = (
                         "high" if reasoning_effort == "high" else "low"
                     )
