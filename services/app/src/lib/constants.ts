@@ -282,7 +282,7 @@ export const actionRowsPerPage = 100;
 export const knowledgeRowsPerPage = 20;
 export const chatRowsPerPage = 100;
 
-export const reasoningEffortEnum = ['disabled', 'minimal', 'low', 'medium', 'high'];
+export const reasoningEffortEnum = ['disable', 'minimal', 'low', 'medium', 'high'];
 
 //* Non-local
 export const userRoles = ['GUEST', 'MEMBER', 'ADMIN'] as const;
