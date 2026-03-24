@@ -129,6 +129,13 @@
 	let animationFrameId: ReturnType<typeof requestAnimationFrame> | null = $state(null);
 	let tooltip: HTMLDivElement | undefined = $state();
 	let tooltipPos = $state({ x: 0, y: 0, visible: false });
+
+	function hasDeploymentProviderKey(deployments: ModelConfig['deployments']) {
+		return deployments?.some(
+			(deployment) => !!page.data.organizationData?.external_keys?.[deployment.provider ?? '']
+		);
+	}
+
 	function handleMouseOver(event: MouseEvent) {
 		if (animationFrameId) {
 			cancelAnimationFrame(animationFrameId);
@@ -196,7 +203,7 @@
 					<Command.Empty forceMount>No models found.</Command.Empty>
 				{/if}
 				<Command.Group value="models">
-					{#each results as { id, name, languages, capabilities, owned_by }}
+					{#each results as { id, name, languages, capabilities, owned_by, deployments }}
 						<!-- TODO: simplify this -->
 						{@const isDisabled =
 							(owned_by !== 'ellm' &&
@@ -204,7 +211,7 @@
 								page.data.organizationData &&
 								page.data.organizationData.credit === 0 &&
 								page.data.organizationData.credit_grant === 0 &&
-								!page.data.organizationData.external_keys?.[owned_by ?? '']) ||
+								!hasDeploymentProviderKey(deployments)) ||
 							(page.data.organizationData?.price_plan_id === 'base' &&
 								page.data.organizationData.credit === 0 &&
 								page.data.organizationData.credit_grant === 0 &&

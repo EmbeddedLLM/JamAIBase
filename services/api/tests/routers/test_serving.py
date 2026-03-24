@@ -1,4 +1,5 @@
 import base64
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -25,13 +26,19 @@ from jamaibase.types import (
     ModelInfoListResponse,
     OkResponse,
     OrganizationCreate,
+    OrganizationUpdate,
     RAGParams,
     References,
     RerankingRequest,
     StripePaymentInfo,
     TextContent,
 )
-from jamaibase.utils.exceptions import BadInputError, ForbiddenError, ResourceNotFoundError
+from jamaibase.utils.exceptions import (
+    AuthorizationError,
+    BadInputError,
+    ForbiddenError,
+    ResourceNotFoundError,
+)
 from owl.configs import ENV_CONFIG
 from owl.types import (
     CloudProvider,
@@ -90,6 +97,27 @@ class ServingContext:
     chat_request_short: ChatRequest
     embedding_request: EmbeddingRequest
     reranking_request: RerankingRequest
+
+
+@contextmanager
+def _override_org_external_keys(
+    client: JamAI,
+    organization_id: str,
+    external_keys: dict[str, str],
+) -> Generator[None, None, None]:
+    original_org = client.organizations.get_organization(organization_id)
+    original_keys = dict(original_org.external_keys)
+    try:
+        client.organizations.update_organization(
+            organization_id,
+            OrganizationUpdate(external_keys=external_keys),
+        )
+        yield
+    finally:
+        client.organizations.update_organization(
+            organization_id,
+            OrganizationUpdate(external_keys=original_keys),
+        )
 
 
 def _metrics_match_llm_token_counts(metrics_data, serving_info):
@@ -356,6 +384,84 @@ def test_chat_completion_without_credit(setup: ServingContext):
     client = JamAI(user_id=setup.user_id, project_id=setup.project_ids[2])
     with pytest.raises(ForbiddenError, match="Insufficient .+ credits"):
         client.generate_chat_completions(setup.chat_request)
+
+
+@pytest.mark.cloud
+def test_generate_embeddings_should_fail_preflight_without_credit_and_without_byok(
+    setup: ServingContext,
+):
+    setup = deepcopy(setup)
+    super_client = JamAI(user_id=setup.superuser_id)
+    response = super_client.organizations.set_credit_grant(setup.org_id, amount=0)
+    assert isinstance(response, OkResponse)
+    client = JamAI(user_id=setup.user_id, project_id=setup.project_ids[2])
+
+    with pytest.raises(ForbiddenError, match="Insufficient .+ credits"):
+        client.generate_embeddings(setup.embedding_request, timeout=EMBED_TIMEOUT)
+
+
+@pytest.mark.cloud
+def test_chat_completion_should_allow_zero_credit_when_org_has_byok_key(
+    setup: ServingContext,
+):
+    byok_key = ENV_CONFIG.get_api_key("openai")
+    if not byok_key:
+        pytest.skip("OpenAI env key unavailable for BYOK serving test.")
+
+    setup = deepcopy(setup)
+    super_client = JamAI(user_id=setup.superuser_id)
+    client = JamAI(user_id=setup.user_id, project_id=setup.project_ids[2])
+    response = super_client.organizations.set_credit_grant(setup.org_id, amount=0)
+    assert isinstance(response, OkResponse)
+
+    with _override_org_external_keys(
+        client,
+        setup.org_id,
+        {"openai": byok_key},
+    ):
+        response = client.generate_chat_completions(setup.chat_request, timeout=CHAT_TIMEOUT)
+        assert isinstance(response, ChatCompletionResponse)
+        assert response.model == setup.chat_model_id
+
+
+@pytest.mark.cloud
+def test_chat_completion_should_use_org_zero_external_key_before_env_fallback(
+    setup: ServingContext,
+):
+    setup = deepcopy(setup)
+    super_client = JamAI(user_id=setup.superuser_id, project_id=setup.project_ids[0])
+    client = JamAI(user_id=setup.user_id, project_id=setup.project_ids[2])
+    super_client.organizations.set_credit_grant(setup.org_id, amount=1)
+    original_superorg = super_client.organizations.get_organization(setup.superorg_id)
+    overridden_keys = dict(original_superorg.external_keys)
+    overridden_keys["openai"] = "fake-key"
+
+    with _override_org_external_keys(super_client, setup.superorg_id, overridden_keys):
+        with pytest.raises(AuthorizationError, match="Invalid API key"):
+            client.generate_chat_completions(setup.chat_request, timeout=CHAT_TIMEOUT)
+
+
+@pytest.mark.cloud
+def test_chat_completion_should_fallback_to_env_when_org_zero_external_key_missing(
+    setup: ServingContext,
+):
+    env_key = ENV_CONFIG.get_api_key("openai")
+    if not env_key:
+        pytest.skip("OpenAI env key unavailable for system-key fallback test.")
+
+    setup = deepcopy(setup)
+    super_client = JamAI(user_id=setup.superuser_id, project_id=setup.project_ids[0])
+    client = JamAI(user_id=setup.user_id, project_id=setup.project_ids[2])
+    super_client.organizations.set_credit_grant(setup.org_id, amount=1)
+    original_superorg = super_client.organizations.get_organization(setup.superorg_id)
+    overridden_keys = dict(original_superorg.external_keys)
+    overridden_keys.pop("openai", None)
+
+    with _override_org_external_keys(super_client, setup.superorg_id, overridden_keys):
+        response = _test_chat_completion(
+            client, setup.chat_request, stream=False, timeout=CHAT_TIMEOUT
+        )
+        assert response.model == setup.chat_model_id
 
 
 def _test_chat_completion_stream(

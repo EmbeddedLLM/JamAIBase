@@ -95,6 +95,7 @@ from owl.utils.dates import now
 from owl.utils.exceptions import (
     BadInputError,
     ExternalAuthError,
+    InsufficientCreditsError,
     JamaiException,
     ModelCapabilityError,
     ModelOverloadError,
@@ -312,6 +313,14 @@ class DeploymentContext:
     use_openai_responses: bool = False
 
 
+@dataclass(slots=True)
+class ResolvedCredential:
+    api_key: str
+    provider: str
+    source: Literal["org", "system", "dummy"]
+    is_byok: bool
+
+
 ImageInput = bytes | IO[bytes] | os.PathLike
 
 
@@ -366,6 +375,9 @@ class DeploymentRouter:
             before_sleep=before_sleep_log(_Logger(), "WARNING"),
         )
         self._model_display_id = self.config.name if is_browser else self.config.id
+        self.chosen_credential: ResolvedCredential | None = None
+        self._byok_key_cache: dict[str, str] = {}
+        self._pending_byok_retry_error: JamaiException | None = None
 
     @staticmethod
     def batch(seq, n):
@@ -388,6 +400,119 @@ class DeploymentRouter:
             return OnPremProvider(provider)
         owned_by = self.config.owned_by or ""
         return next((p for p in ModelProvider if owned_by.lower() == p.value.lower()), "")
+
+    def _check_quota(self, is_byok: bool) -> None:
+        billing = getattr(getattr(self.request, "state", None), "billing", None)
+        if billing is None:
+            return
+
+        if self.config.type in (ModelType.COMPLETION, ModelType.LLM):
+            billing.has_llm_quota(
+                model_id=self.config.id,
+                is_byok=is_byok,
+            )
+        elif self.config.type == ModelType.IMAGE_GEN:
+            billing.has_image_gen_quota(
+                model_id=self.config.id,
+                is_byok=is_byok,
+            )
+        elif self.config.type == ModelType.EMBED:
+            billing.has_embedding_quota(
+                model_id=self.config.id,
+                is_byok=is_byok,
+            )
+        elif self.config.type == ModelType.RERANK:
+            billing.has_reranker_quota(
+                model_id=self.config.id,
+                is_byok=is_byok,
+            )
+
+    def _get_byok_key(self, provider: str) -> str:
+        if provider in self._byok_key_cache:
+            return self._byok_key_cache[provider]
+        billing = getattr(getattr(self.request, "state", None), "billing", None)
+        if billing is None or not hasattr(billing, "get_byok_key"):
+            self._byok_key_cache[provider] = ""
+        else:
+            self._byok_key_cache[provider] = billing.get_byok_key(provider)
+        return self._byok_key_cache[provider]
+
+    async def _get_system_key(self, provider: str) -> str:
+        api_key = ""
+        if self.organization.id == "0":
+            api_key = self.organization.get_external_key(provider)
+        else:
+            async with async_session() as session:
+                tsp_org = await CACHE.get_organization_async("0", session)
+                api_key = "" if tsp_org is None else tsp_org.get_external_key(provider)
+        if not api_key:
+            api_key = ENV_CONFIG.get_api_key(provider)
+        return api_key
+
+    def _byok_cooldown_key(self, deployment_id: str) -> str:
+        return f"byok_cooldown:{self.organization.id}:{deployment_id}"
+
+    async def _is_byok_cooldown_active(self, deployment_id: str) -> bool:
+        return bool(await CACHE.exists(self._byok_cooldown_key(deployment_id)))
+
+    async def _cooldown_byok_deployment(
+        self,
+        deployment_id: str,
+        cooldown_time: timedelta,
+    ) -> None:
+        if cooldown_time.total_seconds() <= 0:
+            logger.warning(
+                f"{self.id} - BYOK cooldown time is zero or negative for deployment {deployment_id}. Skipping cooldown."
+            )
+            return
+        try:
+            await CACHE.set(
+                self._byok_cooldown_key(deployment_id),
+                "1",
+                ex=max(1, int(cooldown_time.total_seconds())),
+            )
+            logger.warning(
+                f"{self.id} - Cooling down BYOK path for deployment {deployment_id} in org {self.organization.id} for {cooldown_time.total_seconds()} seconds."
+            )
+        except Exception as exc:
+            logger.warning(f"{self.id} - Failed to cooldown BYOK path: {repr(exc)}")
+
+    async def _resolve_credentials(self, deployment: Deployment_) -> list[ResolvedCredential]:
+        provider = deployment.provider.lower()
+        credentials: list[ResolvedCredential] = []
+        # org key
+        byok_key = self._get_byok_key(provider)
+        if byok_key and not await self._is_byok_cooldown_active(deployment.id):
+            credentials.append(
+                ResolvedCredential(
+                    api_key=byok_key,
+                    provider=provider,
+                    source="org",
+                    is_byok=True,
+                )
+            )
+        # tsp or env key
+        system_key = await self._get_system_key(provider)
+        if system_key:
+            credentials.append(
+                ResolvedCredential(
+                    api_key=system_key,
+                    provider=provider,
+                    source="system",
+                    is_byok=False,
+                )
+            )
+
+        if len(credentials) == 0:
+            credentials.append(
+                ResolvedCredential(
+                    api_key="DUMMY_KEY",
+                    provider=provider,
+                    source="dummy",
+                    is_byok=False,
+                )
+            )
+        return credentials
 
     def _litellm_model_id(self, deployment: Deployment_):
         """
@@ -562,28 +687,38 @@ class DeploymentRouter:
                 raise UnavailableError(f'No deployments found for model "{name}".')
         else:
             deployments = self.config.deployments
-        deployments = [d for d in deployments if d.cooldown_until <= now()]
-        if len(deployments) == 0:
+
+        active_deployments = [d for d in deployments if d.cooldown_until <= now()]
+        if len(active_deployments) == 0:
             raise UnavailableError(f'All deployments are on cooldown for model "{name}".')
-        deployment = random.choices(deployments, weights=[d.weight for d in deployments], k=1)[0]
-        # Get API key
-        provider = deployment.provider.lower()
-        api_key = ""
-        if self.organization.id == "0" or (
-            ENV_CONFIG.enable_byok and provider not in OnPremProvider
-        ):
-            # Use Organization keys
-            api_key = self.organization.get_external_key(provider)
-        if (not api_key) and self.organization.id != "0":
-            # Use TSP keys
-            async with async_session() as session:
-                tsp_org = await CACHE.get_organization_async("0", session)
-                api_key = "" if tsp_org is None else tsp_org.get_external_key(provider)
-        if not api_key:
-            # Use System keys
-            api_key = ENV_CONFIG.get_api_key(provider)
-        if not api_key:
-            api_key = "DUMMY_KEY"
+
+        billing = getattr(getattr(self.request, "state", None), "billing", None)
+        if billing is None:
+            candidate_deployments = active_deployments
+        else:
+            byok_deployments: list[Deployment_] = []
+            for deployment in active_deployments:
+                has_byok_key = self._get_byok_key(deployment.provider.lower())
+                if has_byok_key and not await self._is_byok_cooldown_active(deployment.id):
+                    byok_deployments.append(deployment)
+            candidate_deployments = byok_deployments or active_deployments
+
+        deployment = random.choices(
+            candidate_deployments,
+            weights=[d.weight for d in candidate_deployments],
+            k=1,
+        )[0]
+        credential = (await self._resolve_credentials(deployment))[0]
+        provider = credential.provider
+        try:
+            self._check_quota(credential.is_byok)
+        except InsufficientCreditsError as exc:
+            if self._pending_byok_retry_error is not None:
+                pending_error = self._pending_byok_retry_error
+                self._pending_byok_retry_error = None
+                raise pending_error from exc
+            raise
+        api_key = credential.api_key
         # Get model routing ID
         routing_id = self._litellm_model_id(deployment)
         # Check if its a reasoning model
@@ -606,6 +741,8 @@ class DeploymentRouter:
                 inference_provider=self._inference_provider(provider, self.config.owned_by),
                 is_reasoning_model=is_reasoning_model,
             )
+            self.chosen_credential = credential
+            self._pending_byok_retry_error = None
             self.request.state.timing["external_call"] = perf_counter() - t0
             logger.info(
                 f'Request completed for model "{self.config.id}" ({provider=}, {routing_id=}, {self.id}).'
@@ -613,11 +750,11 @@ class DeploymentRouter:
         except Exception as e:
             mapped_e = self._map_and_log_exception(e, deployment, api_key, **hyperparams)
             if isinstance(mapped_e, (ModelOverloadError, RateLimitExceedError)):
-                # Cooldown deployment
-                if len(deployments) > 1:
-                    cooldown_time = timedelta(
-                        seconds=getattr(mapped_e, "retry_after", self.cooldown)
-                    )
+                cooldown_time = timedelta(seconds=getattr(mapped_e, "retry_after", self.cooldown))
+                if credential.is_byok:
+                    self._pending_byok_retry_error = mapped_e
+                    await self._cooldown_byok_deployment(deployment.id, cooldown_time)
+                elif len(candidate_deployments) > 1:
                     await self._cooldown_deployment(deployment, cooldown_time)
             raise mapped_e from e
 
@@ -1597,6 +1734,8 @@ class LMEngine:
                         model_id=model,
                         input_tokens=self._chat_usage.prompt_tokens,
                         output_tokens=self._chat_usage.completion_tokens,
+                        model_provider=router.chosen_credential.provider,
+                        is_byok=router.chosen_credential.is_byok,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create LLM events due to error: {repr(e)}")
@@ -2075,6 +2214,8 @@ class LMEngine:
         self,
         *,
         model_id: str,
+        model_provider: str,
+        is_byok: bool,
         usage: Usage | None,
         source: Literal["image_endpoint", "completion"],
     ) -> None:
@@ -2119,6 +2260,8 @@ class LMEngine:
                 text_output_token=text_output_token,
                 image_input_token=image_input_token,
                 image_output_token=image_output_token,
+                model_provider=model_provider,
+                is_byok=is_byok,
             )
         except Exception as e:
             logger.warning(f"Failed to create image gen events due to error: {repr(e)}")
@@ -2147,6 +2290,8 @@ class LMEngine:
             )
             self._record_image_usage(
                 model_id=resolved_model,
+                model_provider=router.chosen_credential.provider,
+                is_byok=router.chosen_credential.is_byok,
                 usage=provider_result.usage,
                 source=provider_result.source,
             )
@@ -2183,6 +2328,8 @@ class LMEngine:
             )
             self._record_image_usage(
                 model_id=resolved_model,
+                model_provider=router.chosen_credential.provider,
+                is_byok=router.chosen_credential.is_byok,
                 usage=provider_result.usage,
                 source=provider_result.source,
             )
@@ -2242,6 +2389,8 @@ class LMEngine:
                     self.billing.create_embedding_events(
                         model_id=model,
                         token_usage=self._embed_usage.total_tokens,
+                        model_provider=router.chosen_credential.provider,
+                        is_byok=router.chosen_credential.is_byok,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create embedding events due to error: {repr(e)}")
@@ -2380,6 +2529,8 @@ class LMEngine:
                     self.billing.create_reranker_events(
                         model_id=model,
                         num_searches=self._rerank_usage.documents,
+                        model_provider=router.chosen_credential.provider,
+                        is_byok=router.chosen_credential.is_byok,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to create reranker events due to error: {repr(e)}")

@@ -160,8 +160,9 @@ async def chat_completion(
 ) -> Response:
     # Check quota
     billing: BillingManager = request.state.billing
-    billing.has_llm_quota(body.model)
     billing.has_egress_quota()
+    # Reject obvious no-path requests before doing endpoint setup work.
+    billing.has_model_preflight_access(body.model)
     _, project, org = auth_info
     body.id = request.state.id
     llm = LMEngine(organization=org, project=project, request=request)
@@ -231,8 +232,9 @@ async def generate_embeddings(
 ) -> EmbeddingResponse:
     # Check quota
     billing: BillingManager = request.state.billing
-    billing.has_embedding_quota(body.model)
     billing.has_egress_quota()
+    # Reject obvious no-path requests before doing endpoint setup work.
+    billing.has_model_preflight_access(body.model)
     _, project, org = auth_info
     embedder = LMEngine(organization=org, project=project, request=request)
     if isinstance(body.input, str):
@@ -264,8 +266,9 @@ async def generate_rankings(
 ) -> RerankingResponse:
     # Check quota
     billing: BillingManager = request.state.billing
-    billing.has_reranker_quota(body.model)
     billing.has_egress_quota()
+    # Reject obvious no-path requests before doing endpoint setup work.
+    billing.has_model_preflight_access(body.model)
     _, project, org = auth_info
     reranker = LMEngine(organization=org, project=project, request=request)
     return await reranker.rerank_documents(**body.model_dump())

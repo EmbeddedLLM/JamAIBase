@@ -544,16 +544,38 @@ class BillingManager:
     def has_gen_table_quota(self, table: GenerativeTableCore) -> bool:
         return True
 
+    def model_has_byok_deployment(self, model: ModelConfigRead) -> bool:
+        return False
+
+    def get_byok_key(self, provider: str) -> str:
+        return ""
+
+    def has_model_preflight_access(self, model_id: str) -> bool:
+        return True
+
     # --- LLM Usage --- #
 
-    def has_llm_quota(self, model_id: str) -> bool:
+    def has_llm_quota(
+        self,
+        model_id: str,
+        is_byok: bool = False,
+    ) -> bool:
         return True
+
+    def has_image_gen_quota(
+        self,
+        model_id: str,
+        is_byok: bool = False,
+    ) -> bool:
+        return self.has_llm_quota(model_id, is_byok=is_byok)
 
     def create_llm_events(
         self,
         model_id: str,
         input_tokens: int,
         output_tokens: int,
+        model_provider: str = "",
+        is_byok: bool = False,
         *,
         create_usage: bool = True,
     ) -> None:
@@ -598,6 +620,8 @@ class BillingManager:
         text_output_token: int,
         image_input_token: int,
         image_output_token: int,
+        model_provider: str = "",
+        is_byok: bool = False,
         create_usage: bool = True,
     ) -> None:
         text_input_token = int(text_input_token)
@@ -651,13 +675,19 @@ class BillingManager:
 
     # --- Embedding Usage --- #
 
-    def has_embedding_quota(self, model_id: str) -> bool:
+    def has_embedding_quota(
+        self,
+        model_id: str,
+        is_byok: bool = False,
+    ) -> bool:
         return True
 
     def create_embedding_events(
         self,
         model_id: str,
         token_usage: int,
+        model_provider: str = "",
+        is_byok: bool = False,
         *,
         create_usage: bool = True,
     ) -> None:
@@ -690,13 +720,19 @@ class BillingManager:
 
     # --- Reranker Usage --- #
 
-    def has_reranker_quota(self, model_id: str) -> bool:
+    def has_reranker_quota(
+        self,
+        model_id: str,
+        is_byok: bool = False,
+    ) -> bool:
         return True
 
     def create_reranker_events(
         self,
         model_id: str,
         num_searches: int,
+        model_provider: str = "",
+        is_byok: bool = False,
         *,
         create_usage: bool = True,
     ) -> None:
