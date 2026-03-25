@@ -1436,7 +1436,7 @@ class DeploymentRouter:
                             hyperparams["input_type"] = "search_document"
                         batch_size = 96  # limit on cohere server
                     elif ctx.deployment.provider == CloudProvider.BEDROCK:
-                        batch_size = 96
+                        batch_size = 96  # limit on bedrock server
                     elif ctx.deployment.provider == CloudProvider.JINA_AI:
                         batch_size = 128  # don't know limit, but too large will timeout
                     elif ctx.deployment.provider == CloudProvider.VOYAGE:

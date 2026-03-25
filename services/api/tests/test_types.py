@@ -31,7 +31,9 @@ GOOD_IDS = [
     pytest.param("!@#$", id="Symbols"),
     pytest.param("😊", id="Single emoji"),
     pytest.param("你好", id="CJK characters"),
-    pytest.param("مرحبا", id="Arabic characters"),
+    pytest.param("مَرْحَبًا بِكُمْ", id="Arabic characters"),
+    pytest.param("สวัสดีครับ คามุย อิอิ", id="Thai characters"),
+    pytest.param("ยืนยันแจ้งซ่อม", id="Thai characters"),
     pytest.param("Привет", id="Cyrillic/Russian characters"),
     pytest.param("Hello 😊 World", id="Text with emoji"),
     pytest.param("Text with  multiple   spaces", id="Internal multiple spaces"),
@@ -53,6 +55,7 @@ BAD_IDS = [
     pytest.param("█ ▄ ▀", id="Block elements"),
     pytest.param("─ │ ┌ ┐", id="Box drawing"),
     pytest.param("⠲⠳⠴⠵", id="Braille"),
+    pytest.param("H̵̛͕̞̦̰̜͍̰̥̟͆̏͂̌͑ͅä̷͔̟͓̬̯̟͍̭͉͈̮͙̣̯̬͚̞̭̍̀̾͠m̴̡̧̛̝̯̹̗̹̤̲̺̟̥̈̏͊̔̑̍͆̌̀̚͝͝b̴̢̢̫̝̠̗̼̬̻̮̺̭͔̘͑̆̎̚ư̵̧̡̥̙̭̿̈̀̒̐̊͒͑r̷̡̡̲̼̖͎̫̮̜͇̬͌͘g̷̹͍͎̬͕͓͕̐̃̈́̓̆̚͝ẻ̵̡̼̬̥̹͇̭͔̯̉͛̈́̕r̸̮̖̻̮̣̗͚͖̝̂͌̾̓̀̿̔̀͋̈́͌̈́̋͜", id="Zalgo text"),
 ]
 
 
@@ -66,14 +69,6 @@ def test_id_string_good(value: str):
 def test_id_string_bad(value: str):
     with pytest.raises(ValidationError):
         IdTest(id=value)
-
-
-def test_string_normalisation():
-    with pytest.raises(ValidationError, match="Text contains excessive combining marks"):
-        IdTest(id=("H̵̛͕̞̦̰̜͍̰̥̟͆̏͂̌͑ͅä̷͔̟͓̬̯̟͍̭͉͈̮͙̣̯̬͚̞̭̍̀̾͠m̴̡̧̛̝̯̹̗̹̤̲̺̟̥̈̏͊̔̑̍͆̌̀̚͝͝b̴̢̢̫̝̠̗̼̬̻̮̺̭͔̘͑̆̎̚ư̵̧̡̥̙̭̿̈̀̒̐̊͒͑r̷̡̡̲̼̖͎̫̮̜͇̬͌͘g̷̹͍͎̬͕͓͕̐̃̈́̓̆̚͝ẻ̵̡̼̬̥̹͇̭͔̯̉͛̈́̕r̸̮̖̻̮̣̗͚͖̝̂͌̾̓̀̿̔̀͋̈́͌̈́̋͜"))
-
-    assert IdTest(id="مَرْحَبًا بِكُمْ").id == "مَرْحَبًا بِكُمْ"
-    assert IdTest(id="สวัสดีครับ คามุย อิอิ").id == "สวัสดีครับ คามุย อิอิ"
 
 
 def test_datetime_utc():

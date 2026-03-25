@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from loguru import logger
 from sqlmodel import delete, func, select
 
@@ -56,6 +56,12 @@ from owl.utils.exceptions import (
 )
 from owl.utils.mcp import MCP_TOOL_TAG
 from owl.utils.metrics import Telemetry
+from owl.utils.notifications import (
+    dispatch_notification_intent,
+    notify_org_member_joined,
+    notify_org_owner_updated,
+    notify_org_role_updated,
+)
 
 router = APIRouter()
 telemetry = Telemetry()
@@ -357,6 +363,7 @@ async def delete_organization(
 async def update_organization_owner(
     request: Request,
     user: Annotated[UserAuth, Depends(auth_user_service_key)],
+    background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(yield_async_session)],
     new_owner_id: Annotated[str, Query(min_length=1, description="New owner User ID.")],
     organization_id: Annotated[str, Query(min_length=1, description="Organization ID.")],
@@ -404,6 +411,15 @@ async def update_organization_owner(
         )
     )
 
+    intent = notify_org_owner_updated(
+        actor_id=user.id,
+        actor_name=user.name,
+        organization_id=organization_id,
+        org_name=organization.name,
+        subject_id=new_owner_id,
+        subject_name=new_owner_user.name,
+    )
+    background_tasks.add_task(dispatch_notification_intent, intent)
     # Clear cache
     await CACHE.refresh_organization_async(organization_id, session)
     return organization
@@ -421,6 +437,7 @@ async def update_organization_owner(
 async def join_organization(
     request: Request,
     user: Annotated[UserAuth, Depends(auth_user_service_key)],
+    background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(yield_async_session)],
     user_id: Annotated[str, Query(min_length=1, description="ID of the user joining the org.")],
     invite_code: Annotated[
@@ -523,6 +540,13 @@ async def join_organization(
             f'organization "{organization.name}" as "{role.name}".'
         )
     )
+    intent = notify_org_member_joined(
+        organization_id=organization.id,
+        org_name=organization.name,
+        subject_id=joining_user.id,
+        subject_name=joining_user.preferred_name,
+    )
+    background_tasks.add_task(dispatch_notification_intent, intent)
     return org_member
 
 
@@ -580,6 +604,7 @@ async def get_organization_member(
 @handle_exception
 async def update_member_role(
     user: Annotated[UserAuth, Depends(auth_user_service_key)],
+    background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(yield_async_session)],
     user_id: Annotated[str, Query(min_length=1, description="User ID.")],
     organization_id: Annotated[str, Query(min_length=1, description="Organization ID.")],
@@ -596,6 +621,15 @@ async def update_member_role(
     # Update
     member.role = role
     await session.commit()
+    intent = notify_org_role_updated(
+        actor_id=user.id,
+        actor_name=user.name,
+        target_user_id=user_id,
+        organization_id=organization_id,
+        org_name=member.organization.name,
+        role=role.name,
+    )
+    background_tasks.add_task(dispatch_notification_intent, intent)
     return member
 
 

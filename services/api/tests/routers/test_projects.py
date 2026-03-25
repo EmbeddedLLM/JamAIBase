@@ -10,6 +10,7 @@ from jamaibase import JamAI
 from jamaibase.types import (
     GetURLResponse,
     LLMGenConfig,
+    NotificationType,
     OrganizationCreate,
     OrgMemberRead,
     Page,
@@ -390,6 +391,14 @@ def test_update_project_owner():
         assert new_proj.updated_at != ctx.projects[1].updated_at
         assert new_proj.owner == org_admin.id
 
+        # Verify PROJECT_OWNER_UPDATED notification was sent to project members
+        for uid in (ctx.user.id, org_admin.id):
+            page = JamAI(user_id=uid).notifications.list_notifications()
+            assert (
+                page.items[0].notification_group.event_type
+                == NotificationType.PROJECT_OWNER_UPDATED
+            )
+
         # Should fail because this user is no longer the owner
         with pytest.raises(
             ForbiddenError, match="Only the owner can transfer the ownership of a project."
@@ -415,6 +424,49 @@ def test_update_project_owner():
 
         # Should succeed after returning the project to the old owner.
         org_admin_client.projects.leave_project(org_admin.id, ctx.projects[1].id)
+
+
+@pytest.mark.cloud
+def test_update_project_member_role():
+    with (
+        setup_projects() as ctx,
+        create_user(dict(email="proj-role-target@up.com", name="Role Target")) as target,
+    ):
+        admin_client = JamAI(user_id=ctx.user.id)
+        target_client = JamAI(user_id=target.id)
+
+        # Add target to org first, then project as GUEST
+        admin_client.organizations.join_organization(
+            target.id, organization_id=ctx.org.id, role=Role.GUEST
+        )
+        membership = admin_client.projects.join_project(
+            target.id, project_id=ctx.projects[1].id, role=Role.GUEST
+        )
+        assert isinstance(membership, ProjectMemberRead)
+        assert membership.role == Role.GUEST
+
+        # Non-admin cannot update roles
+        with pytest.raises(ForbiddenError):
+            target_client.projects.update_member_role(
+                user_id=target.id, project_id=ctx.projects[1].id, role=Role.MEMBER
+            )
+
+        # Target not a member
+        with pytest.raises(ResourceNotFoundError):
+            admin_client.projects.update_member_role(
+                user_id="fake_user", project_id=ctx.projects[1].id, role=Role.MEMBER
+            )
+
+        # Admin updates role
+        updated = admin_client.projects.update_member_role(
+            user_id=target.id, project_id=ctx.projects[1].id, role=Role.MEMBER
+        )
+        assert isinstance(updated, ProjectMemberRead)
+        assert updated.role == Role.MEMBER
+
+        # Verify PROJECT_ROLE_UPDATED notification
+        page = target_client.notifications.list_notifications()
+        assert page.items[0].notification_group.event_type == NotificationType.PROJECT_ROLE_UPDATED
 
 
 @dataclass(slots=True)

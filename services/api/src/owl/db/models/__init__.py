@@ -5,6 +5,8 @@ from owl.db.models.oss import (  # noqa: F401
     JamaiSQLModel,
     ModelConfig,
     ModelInfo,
+    Notification,
+    NotificationGroup,
     Organization,
     OrgMember,
     PricePlan,

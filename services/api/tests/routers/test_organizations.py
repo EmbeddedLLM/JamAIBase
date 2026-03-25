@@ -2,6 +2,7 @@ import pytest
 
 from jamaibase import JamAI
 from jamaibase.types import (
+    NotificationType,
     OrganizationRead,
     OrganizationUpdate,
     OrgMemberRead,
@@ -349,6 +350,13 @@ def test_update_organization_owner():
         assert new_org.updated_at != ctx.org.updated_at
         assert new_org.owner == org_admin.id
 
+        # Verify ORG_OWNER_UPDATED notification was sent to org members
+        for uid in (ctx.user.id, org_admin.id):
+            page = JamAI(user_id=uid).notifications.list_notifications()
+            assert (
+                page.items[0].notification_group.event_type == NotificationType.ORG_OWNER_UPDATED
+            )
+
         # Should fail because this user is no longer the owner
         with pytest.raises(
             ForbiddenError, match="Only the owner can transfer the ownership of an organization."
@@ -374,6 +382,46 @@ def test_update_organization_owner():
 
         # Should succeed after returning the organization to the old owner.
         org_admin_client.organizations.leave_organization(org_admin.id, ctx.org.id)
+
+
+@pytest.mark.cloud
+def test_update_org_member_role():
+    with (
+        setup_organizations() as ctx,
+        create_user(dict(email="role-target@up.com", name="Role Target")) as target,
+    ):
+        admin_client = JamAI(user_id=ctx.user.id)
+        target_client = JamAI(user_id=target.id)
+
+        # Add target as GUEST
+        membership = admin_client.organizations.join_organization(
+            target.id, organization_id=ctx.org.id, role=Role.GUEST
+        )
+        assert isinstance(membership, OrgMemberRead)
+        assert membership.role == Role.GUEST
+
+        # Non-admin cannot update roles
+        with pytest.raises(ForbiddenError):
+            target_client.organizations.update_member_role(
+                user_id=target.id, organization_id=ctx.org.id, role=Role.MEMBER
+            )
+
+        # Target not a member
+        with pytest.raises(ResourceNotFoundError):
+            admin_client.organizations.update_member_role(
+                user_id="fake_user", organization_id=ctx.org.id, role=Role.MEMBER
+            )
+
+        # Admin updates role
+        updated = admin_client.organizations.update_member_role(
+            user_id=target.id, organization_id=ctx.org.id, role=Role.MEMBER
+        )
+        assert isinstance(updated, OrgMemberRead)
+        assert updated.role == Role.MEMBER
+
+        # Verify ORG_ROLE_UPDATED notification
+        page = target_client.notifications.list_notifications()
+        assert page.items[0].notification_group.event_type == NotificationType.ORG_ROLE_UPDATED
 
 
 def test_organisation_model_catalogue():

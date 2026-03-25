@@ -21,18 +21,25 @@ from loguru import logger
 
 from jamaibase import JamAI
 from jamaibase import types as t
+from owl.configs import ENV_CONFIG
 from owl.types import (
     ChatEntry,
     ChatRequest,
+    CloudProvider,
     ColumnSchemaCreate,
     EmbeddingRequest,
+    ImageGenConfig,
     LLMGenConfig,
+    ModelCapability,
+    ModelConfigCreate,
+    ModelType,
     OrganizationRead,
     PaymentState,
     PricePlan_,
     PriceTier,
     Product,
     Products,
+    ProductType,
     ProjectRead,
     RAGParams,
     RerankingRequest,
@@ -40,6 +47,7 @@ from owl.types import (
     UserRead,
 )
 from owl.utils.dates import now
+from owl.utils.notifications import _PRODUCT_TO_NOTIFICATION_TYPE, _PRODUCT_UNIT
 from owl.utils.test import (
     ELLM_DESCRIBE_CONFIG,
     ELLM_DESCRIBE_DEPLOYMENT,
@@ -80,6 +88,7 @@ class BillingContext:
     embedding_model_id: str
     ellm_rerank_model_id: str
     rerank_model_id: str
+    ellm_image_gen_model_id: str
 
 
 @pytest.fixture(scope="module")
@@ -90,7 +99,7 @@ def setup():
     """
     with setup_organizations() as ctx:
         with create_project(user_id=ctx.user.id, organization_id=ctx.org.id) as project:
-            # Create ELLM and External models for all types (Chat, Embed, Rerank)
+            # Create ELLM and External models for all types (Chat, Embed, Rerank, ImageGen)
             with (
                 # --- Chat Models ---
                 create_model_config(ELLM_DESCRIBE_CONFIG) as ellm_chat_model,
@@ -110,6 +119,18 @@ def setup():
                     )
                 ) as ellm_rerank_model,
                 create_model_config(RERANK_ENGLISH_v3_SMALL_CONFIG) as rerank_model,
+                # --- Image Gen Model ---
+                create_model_config(
+                    ModelConfigCreate(
+                        id="ellm/mock-image-gen",
+                        type=ModelType.IMAGE_GEN,
+                        name="ELLM Mock Image Gen",
+                        capabilities=[ModelCapability.IMAGE_OUT, ModelCapability.IMAGE],
+                        context_length=8192,
+                        languages=["en"],
+                        owned_by="ellm",
+                    )
+                ) as ellm_image_gen_model,
                 # --- Deployments ---
                 create_deployment(ELLM_DESCRIBE_DEPLOYMENT),
                 create_deployment(GPT_41_NANO_DEPLOYMENT),
@@ -125,6 +146,15 @@ def setup():
                     )
                 ),
                 create_deployment(RERANK_ENGLISH_v3_SMALL_DEPLOYMENT),
+                create_deployment(
+                    dict(
+                        model_id=ellm_image_gen_model.id,
+                        name="Mock Image Gen Deployment",
+                        provider=CloudProvider.ELLM,
+                        routing_id=ellm_image_gen_model.id,
+                        api_base=ENV_CONFIG.test_llm_api_base,
+                    )
+                ),
             ):
                 yield BillingContext(
                     user=ctx.user,
@@ -136,6 +166,7 @@ def setup():
                     embedding_model_id=embed_model.id,
                     ellm_rerank_model_id=ellm_rerank_model.id,
                     rerank_model_id=rerank_model.id,
+                    ellm_image_gen_model_id=ellm_image_gen_model.id,
                 )
 
 
@@ -616,3 +647,252 @@ def test_tiered_billing():
     billing.create_egress_events(usage)
     billing.org.egress_usage_gib += usage
     assert round(billing.cost, 2) == 1.6
+
+
+def _set_org_quotas(
+    org_id: str,
+    quota_col: str,
+    usage_col: str,
+    quota: float,
+    usage: float,
+    updated_at_col: str = None,
+):
+    """Update a single org quota and usage column pair in the DB. For storages, backdate to trigger measurement."""
+    from sqlalchemy import text as sa_text
+
+    from owl.db import SCHEMA, sync_session
+
+    with sync_session() as session:
+        session.exec(
+            sa_text(
+                f'UPDATE {SCHEMA}."Organization" '
+                f'SET "{quota_col}" = :quota, "{usage_col}" = :usage '
+                f"{f', "{updated_at_col}" = NOW() - INTERVAL \'1 hour\' ' if updated_at_col else ''} "
+                f"WHERE id = :org_id"
+            ),
+            params=dict(quota=quota, usage=usage, org_id=org_id),
+        )
+        session.commit()
+
+
+_PRODUCT_TYPE_QUOTA_CONFIG = {
+    ProductType.LLM_TOKENS: {
+        "quota_col": "llm_tokens_quota_mtok",
+        "usage_col": "llm_tokens_usage_mtok",
+        "quota": 0.00008,  # 80 tokens
+        "usage": 0.00002,  # 25%
+    },
+    ProductType.EMBEDDING_TOKENS: {
+        "quota_col": "embedding_tokens_quota_mtok",
+        "usage_col": "embedding_tokens_usage_mtok",
+        "quota": 0.00005,  # 50 tokens
+        "usage": 0.00002,  # 40%
+    },
+    ProductType.RERANKER_SEARCHES: {
+        "quota_col": "reranker_quota_ksearch",
+        "usage_col": "reranker_usage_ksearch",
+        "quota": 0.002,  # 2 searches
+        "usage": 0.0009,  # 45%
+    },
+    ProductType.EGRESS: {
+        "quota_col": "egress_quota_gib",
+        "usage_col": "egress_usage_gib",
+        "quota": 0.0000012,  # 1.2 MiB
+        "usage": 0.00000005,  # 4%
+    },
+    ProductType.IMAGE_TOKENS: {
+        "quota_col": "image_tokens_quota_mtok",
+        "usage_col": "image_tokens_usage_mtok",
+        "quota": 0.000005,  # 5 tokens
+        "usage": 0.000002,  # 40%
+    },
+    ProductType.DB_STORAGE: {
+        "quota_col": "db_quota_gib",
+        "usage_col": "db_usage_gib",
+        "updated_at_col": "db_usage_updated_at",
+        "quota": 0.00035,  # ~350 MB
+        "usage": 0.00014,  # 40%
+    },
+    ProductType.FILE_STORAGE: {
+        "quota_col": "file_quota_gib",
+        "usage_col": "file_usage_gib",
+        "updated_at_col": "file_usage_updated_at",
+        "quota": 0.0000001,  # ~100 bytes
+        "usage": 0,  # 0%
+    },
+}
+
+
+@pytest.mark.cloud
+@pytest.mark.parametrize("product_type", _PRODUCT_TYPE_QUOTA_CONFIG.keys())
+def test_quota_limit_notifications(setup: BillingContext, product_type: ProductType):
+    """
+    End-to-end execution, verify that process_all (run as BackgroundTask)
+    dispatches 50% and 80% threshold notifications.
+    """
+    client = JamAI(user_id=setup.user.id, project_id=setup.project.id)
+    config = _PRODUCT_TYPE_QUOTA_CONFIG[product_type]
+    _set_org_quotas(setup.org.id, **config)
+
+    gen_config_kwargs = dict(
+        system_prompt="Be concise.",
+        prompt="${input}",
+        max_tokens=10,
+        temperature=0.001,
+        top_p=0.001,
+    )
+
+    notifications = []
+    try:
+        if product_type == ProductType.LLM_TOKENS:
+            cols = [
+                ColumnSchemaCreate(id="input", dtype="str"),
+                ColumnSchemaCreate(
+                    id="output",
+                    dtype="str",
+                    gen_config=LLMGenConfig(model=setup.ellm_chat_model_id, **gen_config_kwargs),
+                ),
+            ]
+            with create_table(client, TableType.ACTION, cols=cols) as table:
+                add_table_rows(
+                    client,
+                    TableType.ACTION,
+                    table.id,
+                    [{"input": "Say hi."}] * 3,
+                    stream=True,
+                )
+
+        elif product_type == ProductType.EMBEDDING_TOKENS:
+            with create_table(
+                client,
+                TableType.KNOWLEDGE,
+                embedding_model=setup.ellm_embedding_model_id,
+                cols=[],
+            ) as kt:
+                client.table.embed_file(file_path=FILES["weather.txt"], table_id=kt.id)
+
+        elif product_type == ProductType.RERANKER_SEARCHES:
+            with create_table(
+                client,
+                TableType.KNOWLEDGE,
+                embedding_model=setup.ellm_embedding_model_id,
+                cols=[],
+            ) as kt:
+                client.table.embed_file(file_path=FILES["weather.txt"], table_id=kt.id)
+                cols = [
+                    ColumnSchemaCreate(id="input", dtype="str"),
+                    ColumnSchemaCreate(
+                        id="output",
+                        dtype="str",
+                        gen_config=LLMGenConfig(
+                            model=setup.ellm_chat_model_id,
+                            rag_params=RAGParams(
+                                reranking_model=setup.ellm_rerank_model_id,
+                                table_id=kt.id,
+                                search_query="${input}",
+                                k=2,
+                            ),
+                            **gen_config_kwargs,
+                        ),
+                    ),
+                ]
+                with create_table(client, TableType.ACTION, cols=cols) as table:
+                    add_table_rows(
+                        client,
+                        TableType.ACTION,
+                        table.id,
+                        [{"input": "What is the temperature?"}],
+                        stream=False,
+                    )
+
+        elif product_type == ProductType.EGRESS:
+            with create_table(
+                client,
+                TableType.KNOWLEDGE,
+                embedding_model=setup.ellm_embedding_model_id,
+                cols=[],
+            ) as kt:
+                client.table.embed_file(file_path=FILES["weather.txt"], table_id=kt.id)
+
+        elif product_type == ProductType.IMAGE_TOKENS:
+            cols = [
+                ColumnSchemaCreate(id="prompt", dtype="str"),
+                ColumnSchemaCreate(
+                    id="image_gen",
+                    dtype="image",
+                    gen_config=ImageGenConfig(
+                        model=setup.ellm_image_gen_model_id,
+                        prompt="Generate ${prompt}",
+                        size="1024x1024",
+                    ),
+                ),
+                ColumnSchemaCreate(
+                    id="image_edit",
+                    dtype="image",
+                    gen_config=ImageGenConfig(
+                        model=setup.ellm_image_gen_model_id,
+                        prompt="Edit ${image_gen} with opposite color and shape.",
+                        size="1024x1024",
+                    ),
+                ),
+            ]
+            with create_table(client, TableType.ACTION, cols=cols) as table:
+                add_table_rows(
+                    client,
+                    TableType.ACTION,
+                    table.id,
+                    [{"prompt": "A red square"}],
+                    stream=False,
+                    check_usage=False,
+                )
+
+        elif product_type in [ProductType.DB_STORAGE, ProductType.FILE_STORAGE]:
+            with create_table(
+                client, TableType.KNOWLEDGE, embedding_model=setup.ellm_embedding_model_id, cols=[]
+            ) as kt:
+                client.table.embed_file(file_path=FILES["weather.txt"], table_id=kt.id)
+
+                cols = [
+                    ColumnSchemaCreate(id="input", dtype="str"),
+                    ColumnSchemaCreate(
+                        id="output",
+                        dtype="str",
+                        gen_config=LLMGenConfig(
+                            model=setup.ellm_chat_model_id, **gen_config_kwargs
+                        ),
+                    ),
+                ]
+                with create_table(client, TableType.ACTION, cols=cols) as table:
+                    add_table_rows(
+                        client,
+                        TableType.ACTION,
+                        table.id,
+                        [{"input": "Trigger storage measurement."}],
+                        stream=False,
+                    )
+        event_type = _PRODUCT_TO_NOTIFICATION_TYPE[product_type]
+        unit = _PRODUCT_UNIT[product_type]
+        sleep(2.0)  # Wait for notification BackgroundTasks to execute
+        page = client.notifications.list_notifications()
+        notifications = [n for n in page.items if n.notification_group.event_type == event_type]
+        if product_type in [ProductType.DB_STORAGE, ProductType.FILE_STORAGE]:
+            assert len(notifications) >= 2, (
+                f"Expected at least 2 notifications, got {len(notifications)}"
+            )
+        else:
+            assert len(notifications) == 2, f"Expected 2 notifications, got {len(notifications)}"
+        assert "**80%**" in notifications[-2].body, (
+            f"Expected 80% notification, got {notifications[-2].body}"
+        )
+        assert "**50%**" in notifications[-1].body, (
+            f"Expected 50% notification, got {notifications[-1].body}"
+        )
+        assert all(unit in n.body for n in notifications), (
+            f"Expected unit '{unit}' in notifications, got {[n.body for n in notifications]}"
+        )
+    finally:
+        admin_client = JamAI(user_id="0")
+        for n in notifications:
+            admin_client.notification_groups.delete_notification_group(
+                n.notification_group_id, missing_ok=True
+            )

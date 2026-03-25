@@ -498,7 +498,7 @@ class DeploymentUpdate(_BaseModel):
 
 
 class DeploymentCreate(DeploymentUpdate):
-    model_id: SanitisedNonEmptyStr = Field(
+    model_id: str = Field(
         description="Model ID.",
     )
     name: SanitisedNonEmptyStr = Field(
@@ -845,10 +845,10 @@ class OrgMemberUpdate(_BaseModel):
 
 
 class OrgMemberCreate(OrgMemberUpdate):
-    user_id: SanitisedNonEmptyStr = Field(
+    user_id: str = Field(
         description="User ID.",
     )
-    organization_id: SanitisedNonEmptyStr = Field(
+    organization_id: str = Field(
         description="Organization ID.",
     )
 
@@ -869,10 +869,10 @@ class ProjectMemberUpdate(_BaseModel):
 
 
 class ProjectMemberCreate(ProjectMemberUpdate):
-    user_id: SanitisedNonEmptyStr = Field(
+    user_id: str = Field(
         description="User ID.",
     )
-    project_id: SanitisedNonEmptyStr = Field(
+    project_id: str = Field(
         description="Project ID.",
     )
 
@@ -1095,7 +1095,7 @@ class Organization_(OrganizationCreate, _TableBase):
     #     "",
     #     description="Stripe Subscription ID.",
     # )
-    price_plan_id: SanitisedNonEmptyStr | None = Field(
+    price_plan_id: str | None = Field(
         description="Price plan ID.",
     )
     payment_state: PaymentState = Field(
@@ -1201,7 +1201,7 @@ class ProjectUpdate(_BaseModel):
 
 
 class ProjectCreate(ProjectUpdate):
-    organization_id: SanitisedNonEmptyStr = Field(
+    organization_id: str = Field(
         description="Organization ID.",
     )
     name: SanitisedNonEmptyStr = Field(
@@ -1255,11 +1255,11 @@ class VerificationCodeCreate(VerificationCodeUpdate):
     expiry: DatetimeUTC = Field(
         description="Code expiry datetime (UTC).",
     )
-    organization_id: SanitisedNonEmptyStr | None = Field(
+    organization_id: str | None = Field(
         None,
         description="Organization ID.",
     )
-    project_id: SanitisedNonEmptyStr | None = Field(
+    project_id: str | None = Field(
         None,
         description="Project ID.",
     )
@@ -1304,7 +1304,7 @@ class ProjectKeyCreate(ProjectKeyUpdate):
         max_length=255,
         description="Name.",
     )
-    project_id: SanitisedNonEmptyStr | None = Field(
+    project_id: str | None = Field(
         None,
         description="Project ID.",
     )
@@ -1321,6 +1321,105 @@ class ProjectKey_(ProjectKeyCreate, _TableBase):
 
 class ProjectKeyRead(ProjectKey_):
     pass
+
+
+class NotificationScope(StrEnum):
+    SYSTEM = "SYSTEM"
+    ORGANIZATION = "ORGANIZATION"
+    PROJECT = "PROJECT"
+    USER = "USER"
+
+
+class NotificationType(StrEnum):
+    # Membership
+    ORG_INVITATION = "ORG_INVITATION"
+    PROJECT_INVITATION = "PROJECT_INVITATION"
+    ORG_INVITATION_REVOKED = "ORG_INVITATION_REVOKED"
+    PROJECT_INVITATION_REVOKED = "PROJECT_INVITATION_REVOKED"
+    ORG_MEMBER_JOINED = "ORG_MEMBER_JOINED"
+    PROJECT_MEMBER_JOINED = "PROJECT_MEMBER_JOINED"
+    ORG_ROLE_UPDATED = "ORG_ROLE_UPDATED"
+    PROJECT_ROLE_UPDATED = "PROJECT_ROLE_UPDATED"
+    ORG_OWNER_UPDATED = "ORG_OWNER_UPDATED"
+    PROJECT_OWNER_UPDATED = "PROJECT_OWNER_UPDATED"
+    # Limit Alerts
+    LLM_TOKEN_LIMIT = "LLM_TOKEN_LIMIT"
+    IMAGE_TOKEN_LIMIT = "IMAGE_TOKEN_LIMIT"
+    EMBEDDING_TOKEN_LIMIT = "EMBEDDING_TOKEN_LIMIT"
+    RERANKER_LIMIT = "RERANKER_LIMIT"
+    EGRESS_LIMIT = "EGRESS_LIMIT"
+    DB_STORAGE_LIMIT = "DB_STORAGE_LIMIT"
+    FILE_STORAGE_LIMIT = "FILE_STORAGE_LIMIT"
+    # Marketing & Announcements
+    MARKETING = "MARKETING"
+    ANNOUNCEMENT = "ANNOUNCEMENT"
+
+
+class NotificationGroupCreate(_BaseModel):
+    scope: NotificationScope = Field(
+        description="Notification scope.",
+    )
+    event_type: NotificationType = Field(
+        description="Notification event type.",
+    )
+    organization_id: str | None = Field(
+        None,
+        description="Organization ID.",
+    )
+    project_id: str | None = Field(
+        None,
+        description="Project ID.",
+    )
+    actor_id: str | None = Field(
+        None,
+        description="ID of the user who triggered the event.",
+    )
+    recipient_ids: list[str] = Field(
+        [],
+        description="Explicit recipient user IDs. Used for fan-out.",
+    )
+
+
+class NotificationGroup_(NotificationGroupCreate, _TableBase):
+    id: str = Field(
+        description="Notification group ID.",
+    )
+
+
+class NotificationGroupRead(NotificationGroup_):
+    actor: "User_ | None" = Field(
+        None,
+        description="User who triggered the event.",
+    )
+
+
+class NotificationCreate(_BaseModel):
+    user_id: str = Field(
+        description="Recipient user ID.",
+    )
+    notification_group_id: str = Field(
+        description="Notification group ID.",
+    )
+    body: str = Field(
+        description="Notification body text.",
+    )
+
+
+class Notification_(NotificationCreate, _TableBase):
+    opened_at: DatetimeUTC | None = Field(
+        None,
+        description="Datetime when the notification was opened (UTC).",
+    )
+    deleted_at: DatetimeUTC | None = Field(
+        None,
+        description="Datetime when the user soft-deleted this notification (UTC).",
+    )
+
+
+class NotificationRead(Notification_):
+    notification_group: NotificationGroup_ = Field(
+        description="Notification group (event details).",
+    )
 
 
 class SecretUpdate(BaseModel):

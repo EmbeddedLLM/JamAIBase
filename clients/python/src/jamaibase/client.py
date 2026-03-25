@@ -58,6 +58,9 @@ from jamaibase.types import (
     MultiRowDeleteRequest,
     MultiRowRegenRequest,
     MultiRowUpdateRequest,
+    NotificationGroupCreate,
+    NotificationGroupRead,
+    NotificationRead,
     OkResponse,
     OrganizationCreate,
     OrganizationRead,
@@ -3985,6 +3988,144 @@ class _SecretsAsync(_ClientAsync):
         )
 
 
+class _NotificationGroupsAsync(_ClientAsync):
+    """NotificationGroup methods (admin)."""
+
+    async def create_notification_group(
+        self,
+        body: NotificationGroupCreate,
+        **kwargs,
+    ) -> NotificationGroupRead:
+        return await self._post(
+            "/v2/notification/group",
+            body=body,
+            response_model=NotificationGroupRead,
+            **kwargs,
+        )
+
+    async def list_notification_groups(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "created_at",
+        order_ascending: bool = False,
+        **kwargs,
+    ) -> Page[NotificationGroupRead]:
+        return await self._get(
+            "/v2/notification/group/list",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+            ),
+            response_model=Page[NotificationGroupRead],
+            **kwargs,
+        )
+
+    async def get_notification_group(
+        self,
+        notification_group_id: str,
+        **kwargs,
+    ) -> NotificationGroupRead:
+        return await self._get(
+            "/v2/notification/group",
+            params=dict(notification_group_id=notification_group_id),
+            response_model=NotificationGroupRead,
+            **kwargs,
+        )
+
+    async def delete_notification_group(
+        self,
+        notification_group_id: str,
+        *,
+        missing_ok: bool = True,
+        **kwargs,
+    ) -> OkResponse:
+        response = await self._delete(
+            "/v2/notification/group",
+            params=dict(notification_group_id=notification_group_id),
+            response_model=None,
+            ignore_code=404 if missing_ok else None,
+            **kwargs,
+        )
+        if response.status_code == 404 and missing_ok:
+            return OkResponse()
+        else:
+            return OkResponse.model_validate_json(response.text)
+
+
+class _NotificationsAsync(_ClientAsync):
+    """Notification methods (user)."""
+
+    async def list_notifications(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "created_at",
+        order_ascending: bool = False,
+        unread_only: bool = False,
+        **kwargs,
+    ) -> Page[NotificationRead]:
+        return await self._get(
+            "/v2/notifications/list",
+            params=dict(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                unread_only=unread_only,
+            ),
+            response_model=Page[NotificationRead],
+            **kwargs,
+        )
+
+    async def get_notification(
+        self,
+        notification_group_id: str,
+        **kwargs,
+    ) -> NotificationRead:
+        return await self._get(
+            "/v2/notifications",
+            params=dict(notification_group_id=notification_group_id),
+            response_model=NotificationRead,
+            **kwargs,
+        )
+
+    async def delete_notification(
+        self,
+        notification_group_id: str,
+        **kwargs,
+    ) -> OkResponse:
+        return await self._delete(
+            "/v2/notifications",
+            params=dict(notification_group_id=notification_group_id),
+            response_model=OkResponse,
+            **kwargs,
+        )
+
+    async def set_opened(
+        self,
+        notification_group_id: str,
+        **kwargs,
+    ) -> OkResponse:
+        return await self._patch(
+            "/v2/notifications/opened",
+            params=dict(notification_group_id=notification_group_id),
+            response_model=OkResponse,
+            **kwargs,
+        )
+
+    async def set_all_opened(self, **kwargs) -> OkResponse:
+        return await self._patch(
+            "/v2/notifications/opened/all",
+            response_model=OkResponse,
+            **kwargs,
+        )
+
+
 class JamAIAsync(_ClientAsync):
     def __init__(
         self,
@@ -4063,6 +4204,8 @@ class JamAIAsync(_ClientAsync):
         self.tasks = _TaskClientAsync(**kwargs)
         self.conversations = _ConversationClientAsync(**kwargs)
         self.secrets = _SecretsAsync(**kwargs)
+        self.notification_groups = _NotificationGroupsAsync(**kwargs)
+        self.notifications = _NotificationsAsync(**kwargs)
 
     async def health(self) -> dict[str, Any]:
         """
@@ -6602,6 +6745,85 @@ class _Secrets(_SecretsAsync):
         )
 
 
+class _NotificationGroups(_NotificationGroupsAsync):
+    """Synchronous NotificationGroup methods."""
+
+    def create_notification_group(
+        self, body: NotificationGroupCreate, **kwargs
+    ) -> NotificationGroupRead:
+        return LOOP.run(super().create_notification_group(body, **kwargs))
+
+    def list_notification_groups(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "created_at",
+        order_ascending: bool = False,
+        **kwargs,
+    ) -> Page[NotificationGroupRead]:
+        return LOOP.run(
+            super().list_notification_groups(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                **kwargs,
+            )
+        )
+
+    def get_notification_group(
+        self, notification_group_id: str, **kwargs
+    ) -> NotificationGroupRead:
+        return LOOP.run(super().get_notification_group(notification_group_id, **kwargs))
+
+    def delete_notification_group(
+        self, notification_group_id: str, *, missing_ok: bool = True, **kwargs
+    ) -> OkResponse:
+        return LOOP.run(
+            super().delete_notification_group(
+                notification_group_id, missing_ok=missing_ok, **kwargs
+            )
+        )
+
+
+class _Notifications(_NotificationsAsync):
+    """Synchronous Notification methods."""
+
+    def list_notifications(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        order_by: str = "created_at",
+        order_ascending: bool = False,
+        unread_only: bool = False,
+        **kwargs,
+    ) -> Page[NotificationRead]:
+        return LOOP.run(
+            super().list_notifications(
+                offset=offset,
+                limit=limit,
+                order_by=order_by,
+                order_ascending=order_ascending,
+                unread_only=unread_only,
+                **kwargs,
+            )
+        )
+
+    def get_notification(self, notification_group_id: str, **kwargs) -> NotificationRead:
+        return LOOP.run(super().get_notification(notification_group_id, **kwargs))
+
+    def delete_notification(self, notification_group_id: str, **kwargs) -> OkResponse:
+        return LOOP.run(super().delete_notification(notification_group_id, **kwargs))
+
+    def set_opened(self, notification_group_id: str, **kwargs) -> OkResponse:
+        return LOOP.run(super().set_opened(notification_group_id, **kwargs))
+
+    def set_all_opened(self, **kwargs) -> OkResponse:
+        return LOOP.run(super().set_all_opened(**kwargs))
+
+
 class JamAI(JamAIAsync):
     def __init__(
         self,
@@ -6670,6 +6892,8 @@ class JamAI(JamAIAsync):
         self.tasks = _TaskClient(**kwargs)
         self.conversations = _ConversationClient(**kwargs)
         self.secrets = _Secrets(**kwargs)
+        self.notification_groups = _NotificationGroups(**kwargs)
+        self.notifications = _Notifications(**kwargs)
 
     def health(self) -> dict[str, Any]:
         """

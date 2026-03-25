@@ -22,6 +22,7 @@ from owl.routers import (
     gen_table_v1,
     meters,
     models,
+    notification,
     organizations,
     projects,
     serving,
@@ -191,6 +192,11 @@ app.include_router(
     meters.router,
     prefix="/api",
     tags=["Meters" + internal_api_tag],
+)
+app.include_router(
+    notification.router,
+    prefix="/api",
+    tags=["Notifications"],
 )
 if ENV_CONFIG.is_cloud:
     from owl.routers.cloud import logs, prices

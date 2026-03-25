@@ -55,6 +55,12 @@ from owl.utils.exceptions import (
 )
 from owl.utils.io import json_dumps, json_loads, open_uri_async, s3_upload
 from owl.utils.mcp import MCP_TOOL_TAG
+from owl.utils.notifications import (
+    dispatch_notification_intent,
+    notify_project_member_joined,
+    notify_project_owner_updated,
+    notify_project_role_updated,
+)
 
 router = APIRouter()
 
@@ -350,6 +356,7 @@ async def delete_project(
 async def update_project_owner(
     request: Request,
     user: Annotated[UserAuth, Depends(auth_user)],
+    background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(yield_async_session)],
     new_owner_id: Annotated[str, Query(min_length=1, description="New owner User ID.")],
     project_id: Annotated[str, Query(min_length=1, description="Project ID.")],
@@ -396,6 +403,16 @@ async def update_project_owner(
             f"to you. ({request.state.id})"
         )
     )
+    intent = notify_project_owner_updated(
+        actor_id=user.id,
+        actor_name=user.name,
+        project_id=project_id,
+        project_name=project.name,
+        organization_id=project.organization_id,
+        subject_id=new_owner_id,
+        subject_name=new_owner_user.name,
+    )
+    background_tasks.add_task(dispatch_notification_intent, intent)
     return project
 
 
@@ -411,6 +428,7 @@ async def update_project_owner(
 async def join_project(
     request: Request,
     user: Annotated[UserAuth, Depends(auth_user)],
+    background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(yield_async_session)],
     user_id: Annotated[
         str, Query(min_length=1, description="ID of the user joining the project.")
@@ -504,6 +522,14 @@ async def join_project(
             f'project "{project.name}" as "{role.name}".'
         )
     )
+    intent = notify_project_member_joined(
+        project_id=project.id,
+        project_name=project.name,
+        organization_id=project.organization_id,
+        subject_id=joining_user.id,
+        subject_name=joining_user.preferred_name,
+    )
+    background_tasks.add_task(dispatch_notification_intent, intent)
     return project_member
 
 
@@ -579,6 +605,7 @@ async def get_project_member(
 @handle_exception
 async def update_member_role(
     user: Annotated[UserAuth, Depends(auth_user)],
+    background_tasks: BackgroundTasks,
     session: Annotated[AsyncSession, Depends(yield_async_session)],
     user_id: Annotated[str, Query(min_length=1, description="User ID.")],
     project_id: Annotated[str, Query(min_length=1, description="Project ID.")],
@@ -602,6 +629,16 @@ async def update_member_role(
     # Update
     member.role = role
     await session.commit()
+    intent = notify_project_role_updated(
+        actor_id=user.id,
+        actor_name=user.name,
+        target_user_id=user_id,
+        project_id=project_id,
+        project_name=project.name,
+        organization_id=project.organization_id,
+        role=role.name,
+    )
+    background_tasks.add_task(dispatch_notification_intent, intent)
     return member
 
 

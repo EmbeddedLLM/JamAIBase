@@ -476,7 +476,7 @@ class BillingManager:
         self._price_plan = None
         self._events = []
         self._deltas: dict[ProductType, float] = defaultdict(float)
-        self._values: dict[ProductType, float] = defaultdict(float)
+        self._storage_deltas: dict[ProductType, float] = defaultdict(float)
         self._llm_usage_events: list[LlmUsageData] = []
         self._image_gen_usage_events: list[ImageGenUsageData] = []
         self._embed_usage_events: list[EmbedUsageData] = []

@@ -48,6 +48,8 @@ from owl.types import (
     LanguageCodeList,
     ModelCapability,
     ModelType,
+    NotificationScope,
+    NotificationType,
     Page,
     PaymentState,
     PositiveNonZeroInt,
@@ -1587,3 +1589,75 @@ class Secret(_TableBase, table=True):
             if search_conditions:
                 selection = selection.where(or_(*search_conditions))
         return selection
+
+
+class NotificationGroup(_TableBase, table=True):
+    id: str = SqlField(
+        default_factory=lambda: uuid7_str("notif_"),
+        primary_key=True,
+        description="Notification group ID.",
+    )
+    scope: NotificationScope = SqlField(
+        description="Notification scope.",
+    )
+    event_type: NotificationType = SqlField(
+        index=True,
+        description="Notification event type.",
+    )
+    organization_id: str | None = SqlField(
+        None,
+        foreign_key="Organization.id",
+        nullable=True,
+        index=True,
+        ondelete="CASCADE",
+        description="Organization ID.",
+    )
+    project_id: str | None = SqlField(
+        None,
+        foreign_key="Project.id",
+        nullable=True,
+        index=True,
+        ondelete="CASCADE",
+        description="Project ID.",
+    )
+    actor_id: str | None = SqlField(
+        None,
+        foreign_key="User.id",
+        nullable=True,
+        ondelete="SET NULL",
+        description="ID of the user who triggered the event.",
+    )
+    actor: "User" = _relationship(None, selectin=True, cascade=None)
+    notifications: list["Notification"] = _relationship("notification_group")
+
+
+class Notification(_TableBase, table=True):
+    user_id: str = SqlField(
+        foreign_key="User.id",
+        primary_key=True,
+        ondelete="CASCADE",
+        description="Recipient user ID.",
+    )
+    notification_group_id: str = SqlField(
+        foreign_key="NotificationGroup.id",
+        primary_key=True,
+        ondelete="CASCADE",
+        description="Notification group ID.",
+    )
+    body: str = SqlField(
+        description="Notification body text.",
+    )
+    opened_at: DatetimeUTC | None = SqlField(
+        None,
+        sa_type=DateTime(timezone=True),
+        nullable=True,
+        description="Datetime when the notification was opened (UTC).",
+    )
+    deleted_at: DatetimeUTC | None = SqlField(
+        None,
+        sa_type=DateTime(timezone=True),
+        nullable=True,
+        description="Datetime when the user soft-deleted this notification (UTC).",
+    )
+    notification_group: NotificationGroup = _relationship("notifications")
+    user: "User" = _relationship(None, selectin=False, cascade=None)

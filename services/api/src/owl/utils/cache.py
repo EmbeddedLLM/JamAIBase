@@ -100,10 +100,10 @@ class Cache:
     async def get(self, key: str) -> str | None:
         return await self._redis_async.get(key)
 
-    async def set(self, key: str, value: str, **kwargs) -> None:
+    async def set(self, key: str, value: str, **kwargs):
         if not isinstance(value, str):
             raise TypeError(f"`value` must be a str, received: {type(value)}")
-        await self._redis_async.set(key, value, **kwargs)
+        return await self._redis_async.set(key, value, **kwargs)
 
     async def delete(self, key: str) -> None:
         await self._redis_async.delete(key)
