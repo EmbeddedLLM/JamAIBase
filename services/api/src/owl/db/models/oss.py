@@ -1593,7 +1593,7 @@ class Secret(_TableBase, table=True):
 
 class NotificationGroup(_TableBase, table=True):
     id: str = SqlField(
-        default_factory=lambda: uuid7_str("notif_"),
+        default_factory=uuid7_str,
         primary_key=True,
         description="Notification group ID.",
     )

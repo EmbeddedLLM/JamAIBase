@@ -68,7 +68,6 @@ def test_create_notification_group():
                 meta=config["meta"],
             )
             assert isinstance(g1, NotificationGroupRead)
-            assert g1.id.startswith("notif_")
             assert g1.scope == config["scope"]
             assert g1.event_type == config["event_type"]
             assert g1.meta == config["meta"]
