@@ -1627,7 +1627,29 @@ class NotificationGroup(_TableBase, table=True):
         ondelete="SET NULL",
         description="ID of the user who triggered the event.",
     )
-    actor: "User" = _relationship(None, selectin=True, cascade=None)
+    subject_id: str | None = SqlField(
+        None,
+        foreign_key="User.id",
+        nullable=True,
+        ondelete="SET NULL",
+        description="ID of the subject user (e.g. invitee, new owner).",
+    )
+    message: str = SqlField(
+        "",
+        description="Notification message text (Markdown).",
+    )
+    actor: "User" = _relationship(
+        None,
+        selectin=True,
+        cascade=None,
+        sa_kwargs=dict(foreign_keys="[NotificationGroup.actor_id]"),
+    )
+    subject: "User" = _relationship(
+        None,
+        selectin=True,
+        cascade=None,
+        sa_kwargs=dict(foreign_keys="[NotificationGroup.subject_id]"),
+    )
     notifications: list["Notification"] = _relationship("notification_group")
 
 
@@ -1644,8 +1666,9 @@ class Notification(_TableBase, table=True):
         ondelete="CASCADE",
         description="Notification group ID.",
     )
-    body: str = SqlField(
-        description="Notification body text.",
+    message: str = SqlField(
+        "",
+        description="Notification message text (Markdown).",
     )
     opened_at: DatetimeUTC | None = SqlField(
         None,

@@ -55,8 +55,9 @@ async def create_notification_group(
     intent = NotificationIntent(
         scope=body.scope,
         event_type=body.event_type,
-        meta=body.meta,
+        message=body.message,
         actor_id=body.actor_id,
+        subject_id=body.subject_id,
         organization_id=body.organization_id,
         project_id=body.project_id,
         recipient_ids=body.recipient_ids,
@@ -209,23 +210,28 @@ async def delete_notification(
 
 @router.patch(
     "/v2/notifications/opened",
-    summary="Mark a notification as opened.",
+    summary="Mark one or more notifications as opened.",
     description="Permissions: notification owner.",
 )
 @handle_exception
 async def set_opened(
     user: Annotated[UserAuth, Depends(auth_user_service_key)],
     session: Annotated[AsyncSession, Depends(yield_async_session)],
-    notification_group_id: Annotated[
-        str, Query(min_length=1, description="Notification group ID.")
+    notification_group_ids: Annotated[
+        list[str], Query(min_length=1, description="List of notification group IDs.")
     ],
 ) -> OkResponse:
-    notif = await session.get(Notification, (user.id, notification_group_id))
-    if notif is None or notif.deleted_at is not None:
-        raise ResourceNotFoundError("Notification not found.")
     timestamp = now()
-    notif.opened_at = timestamp
-    notif.updated_at = timestamp
+    await session.exec(
+        update(Notification)
+        .where(
+            Notification.user_id == user.id,
+            Notification.notification_group_id.in_(notification_group_ids),
+            Notification.opened_at.is_(None),
+            Notification.deleted_at.is_(None),
+        )
+        .values(opened_at=timestamp, updated_at=timestamp)
+    )
     await session.commit()
     return OkResponse()
 

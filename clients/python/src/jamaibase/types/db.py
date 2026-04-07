@@ -1374,9 +1374,17 @@ class NotificationGroupCreate(_BaseModel):
         None,
         description="ID of the user who triggered the event.",
     )
+    subject_id: str | None = Field(
+        None,
+        description="ID of the subject user (e.g. invitee, new owner).",
+    )
     recipient_ids: list[str] = Field(
         [],
         description="Explicit recipient user IDs. Used for fan-out.",
+    )
+    message: str = Field(
+        "",
+        description="Notification text (Markdown).",
     )
 
 
@@ -1391,6 +1399,10 @@ class NotificationGroupRead(NotificationGroup_):
         None,
         description="User who triggered the event.",
     )
+    subject: "User_ | None" = Field(
+        None,
+        description="Subject user (e.g. invitee, new owner).",
+    )
 
 
 class NotificationCreate(_BaseModel):
@@ -1400,8 +1412,8 @@ class NotificationCreate(_BaseModel):
     notification_group_id: str = Field(
         description="Notification group ID.",
     )
-    body: str = Field(
-        description="Notification body text.",
+    message: str = Field(
+        description="Notification text (Markdown).",
     )
 
 

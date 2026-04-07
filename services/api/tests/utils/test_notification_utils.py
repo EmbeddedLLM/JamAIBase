@@ -16,7 +16,7 @@ def _check_quota_thresholds(
     product_type: ProductType,
 ) -> list[dict]:
     results = []
-    intents = check_quota_thresholds(
+    threshold_intents = check_quota_thresholds(
         organization_id="test_org",
         old_usage=old_usage,
         new_usage=new_usage,
@@ -24,14 +24,11 @@ def _check_quota_thresholds(
         product_type=product_type,
         quota_alert_thresholds=QUOTA_ALERT_THRESHOLDS,
     )
-    for intent in intents:
+    for threshold, intent in threshold_intents:
         results.append(
             dict(
                 event_type=intent.event_type,
-                threshold=intent.meta["threshold"],
-                usage=intent.meta["usage"],
-                quota=intent.meta["quota"],
-                unit=intent.meta["unit"],
+                threshold=threshold,
             )
         )
     return results

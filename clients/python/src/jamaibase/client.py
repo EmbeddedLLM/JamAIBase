@@ -4108,12 +4108,14 @@ class _NotificationsAsync(_ClientAsync):
 
     async def set_opened(
         self,
-        notification_group_id: str,
+        notification_group_ids: str | list[str],
         **kwargs,
     ) -> OkResponse:
+        if isinstance(notification_group_ids, str):
+            notification_group_ids = [notification_group_ids]
         return await self._patch(
             "/v2/notifications/opened",
-            params=dict(notification_group_id=notification_group_id),
+            params=dict(notification_group_ids=notification_group_ids),
             response_model=OkResponse,
             **kwargs,
         )
@@ -6817,8 +6819,8 @@ class _Notifications(_NotificationsAsync):
     def delete_notification(self, notification_group_id: str, **kwargs) -> OkResponse:
         return LOOP.run(super().delete_notification(notification_group_id, **kwargs))
 
-    def set_opened(self, notification_group_id: str, **kwargs) -> OkResponse:
-        return LOOP.run(super().set_opened(notification_group_id, **kwargs))
+    def set_opened(self, notification_group_ids: str | list[str], **kwargs) -> OkResponse:
+        return LOOP.run(super().set_opened(notification_group_ids, **kwargs))
 
     def set_all_opened(self, **kwargs) -> OkResponse:
         return LOOP.run(super().set_all_opened(**kwargs))

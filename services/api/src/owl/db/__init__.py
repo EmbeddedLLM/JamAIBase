@@ -649,6 +649,56 @@ async def _migrate_modeltype_enum(engine: AsyncEngine) -> bool:
         return True
 
 
+async def _migrate_notification_schema(engine: AsyncEngine) -> bool:
+    """
+    Migrate NotificationGroup and Notification tables:
+    - Add `subject_id` (FK→User SET NULL) and `message` columns to NotificationGroup
+    - Rename `body` → `message` in Notification
+    """
+    group_table = "NotificationGroup"
+    notif_table = "Notification"
+
+    async with engine.connect() as conn:
+        group_has_message = await _check_column_exists(conn, group_table, "message")
+        group_has_subject = await _check_column_exists(conn, group_table, "subject_id")
+        notif_has_message = await _check_column_exists(conn, notif_table, "message")
+
+    if group_has_message and group_has_subject and notif_has_message:
+        return False
+
+    async with engine.begin() as conn:
+        if not group_has_subject:
+            await conn.execute(
+                text(
+                    f"""
+                    ALTER TABLE {SCHEMA}."{group_table}"
+                    ADD COLUMN subject_id TEXT DEFAULT NULL
+                    REFERENCES {SCHEMA}."User"(id) ON DELETE SET NULL;
+                    """
+                )
+            )
+        if not group_has_message:
+            await conn.execute(
+                text(
+                    f"""
+                    ALTER TABLE {SCHEMA}."{group_table}"
+                    ADD COLUMN message TEXT NOT NULL DEFAULT '';
+                    """
+                )
+            )
+        if not notif_has_message:
+            await conn.execute(
+                text(
+                    f"""
+                    ALTER TABLE {SCHEMA}."{notif_table}"
+                    RENAME COLUMN body TO message;
+                    """
+                )
+            )
+    logger.info("Successfully migrated notification schema (subject_id, message, body→message).")
+    return True
+
+
 async def migrate_db():
     engine = create_db_engine_async()
     migrated = [
@@ -664,6 +714,7 @@ async def migrate_db():
         await _backfill_price_plan_image_products(engine),
         await _migrate_verification_codes(engine),
         await _migrate_reasoning_jsonb_keys(engine),
+        await _migrate_notification_schema(engine),
     ]
     if any(migrated):
         logger.success("DB migrations performed.")

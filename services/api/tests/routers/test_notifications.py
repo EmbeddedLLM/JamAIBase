@@ -33,7 +33,9 @@ def _create_notification_group(
     recipient_ids: list[str] | None = None,
     organization_id: str | None = None,
     project_id: str | None = None,
-    meta: dict | None = None,
+    message: str = "",
+    actor_id: str | None = None,
+    subject_id: str | None = None,
 ) -> NotificationGroupRead:
     notif_group = client.notification_groups.create_notification_group(
         NotificationGroupCreate(
@@ -42,7 +44,9 @@ def _create_notification_group(
             recipient_ids=recipient_ids or [],
             organization_id=organization_id,
             project_id=project_id,
-            meta=meta or {},
+            message=message,
+            actor_id=actor_id,
+            subject_id=subject_id,
         )
     )
     sleep(0.5)
@@ -57,7 +61,7 @@ def test_create_notification_group():
         config = {
             "scope": NotificationScope.USER,
             "event_type": NotificationType.MARKETING,
-            "meta": {"message": "Welcome to our service!"},
+            "message": "Welcome to our service!",
         }
         try:
             g1 = _create_notification_group(
@@ -65,12 +69,12 @@ def test_create_notification_group():
                 scope=config["scope"],
                 event_type=config["event_type"],
                 recipient_ids=[ctx.superuser.id],
-                meta=config["meta"],
+                message=config["message"],
             )
             assert isinstance(g1, NotificationGroupRead)
             assert g1.scope == config["scope"]
             assert g1.event_type == config["event_type"]
-            assert g1.meta == config["meta"]
+            assert g1.message == config["message"]
             # verify user has the notification
             page = JamAI(user_id=ctx.superuser.id).notifications.list_notifications()
             assert len(page.items) == 1
@@ -88,15 +92,15 @@ def test_create_notification_group():
         assert len(superuser_notifs) == len(user_notifs) == 1
         assert superuser_notifs[0].notification_group_id == user_notifs[0].notification_group_id
         assert (
-            superuser_notifs[0].body
-            == user_notifs[0].body
+            superuser_notifs[0].message
+            == user_notifs[0].message
             == "**User** joined organization **System**."
         )
 
         config2 = {
             "scope": NotificationScope.ORGANIZATION,
             "event_type": NotificationType.ANNOUNCEMENT,
-            "meta": {"message": "Product update: new features released!"},
+            "message": "Product update: new features released!",
         }
         try:
             g2 = _create_notification_group(
@@ -104,12 +108,12 @@ def test_create_notification_group():
                 scope=config2["scope"],
                 event_type=config2["event_type"],
                 organization_id=ctx.superorg.id,
-                meta=config2["meta"],
+                message=config2["message"],
             )
             assert isinstance(g2, NotificationGroupRead)
             assert g2.scope == config2["scope"]
             assert g2.event_type == config2["event_type"]
-            assert g2.meta == config2["meta"]
+            assert g2.message == config2["message"]
             # verify both users have the notification
             superuser_notifs = (
                 JamAI(user_id=ctx.superuser.id).notifications.list_notifications().items
@@ -119,7 +123,7 @@ def test_create_notification_group():
             assert (
                 superuser_notifs[0].notification_group_id == user_notifs[0].notification_group_id
             )
-            assert superuser_notifs[0].body == user_notifs[0].body == config2["meta"]["message"]
+            assert superuser_notifs[0].message == user_notifs[0].message == config2["message"]
         finally:
             client.notification_groups.delete_notification_group(g2.id)
 
@@ -138,8 +142,8 @@ def test_create_notification_group():
         assert len(superuser_notifs) == len(user_notifs) == 2
         assert superuser_notifs[0].notification_group_id == user_notifs[0].notification_group_id
         assert (
-            superuser_notifs[0].body
-            == user_notifs[0].body
+            superuser_notifs[0].message
+            == user_notifs[0].message
             == "**User** joined project **Project Notif**."
         )
 
@@ -162,16 +166,16 @@ def test_create_notification_group():
                 == user2_notifs[0].notification_group_id
             )
             assert (
-                superuser_notifs[0].body
-                == user_notifs[0].body
-                == user2_notifs[0].body
+                superuser_notifs[0].message
+                == user_notifs[0].message
+                == user2_notifs[0].message
                 == "**User 2** joined organization **System**."
             )
 
             config3 = {
                 "scope": NotificationScope.PROJECT,
                 "event_type": NotificationType.ANNOUNCEMENT,
-                "meta": {"message": "New model available in project!"},
+                "message": "New model available in project!",
             }
             try:
                 g3 = _create_notification_group(
@@ -179,12 +183,12 @@ def test_create_notification_group():
                     scope=config3["scope"],
                     event_type=config3["event_type"],
                     project_id=project_id,
-                    meta=config3["meta"],
+                    message=config3["message"],
                 )
                 assert isinstance(g3, NotificationGroupRead)
                 assert g3.scope == config3["scope"]
                 assert g3.event_type == config3["event_type"]
-                assert g3.meta == config3["meta"]
+                assert g3.message == config3["message"]
                 # verify first 2 users get the notification
                 superuser_notifs = (
                     JamAI(user_id=ctx.superuser.id).notifications.list_notifications().items
@@ -196,9 +200,7 @@ def test_create_notification_group():
                     == user_notifs[0].notification_group_id
                     == g3.id
                 )
-                assert (
-                    superuser_notifs[0].body == user_notifs[0].body == config3["meta"]["message"]
-                )
+                assert superuser_notifs[0].message == user_notifs[0].message == config3["message"]
                 # verify user2 doesn't receive the notification
                 user2_notifs = JamAI(user_id=user2.id).notifications.list_notifications().items
                 assert len(user2_notifs) == 1
@@ -210,7 +212,7 @@ def test_create_notification_group():
         config4 = {
             "scope": NotificationScope.SYSTEM,
             "event_type": NotificationType.ANNOUNCEMENT,
-            "meta": {"message": "System-wide announcement!"},
+            "message": "System-wide announcement!",
         }
         with create_user(dict(email="org-user@up.com", name="User 3")) as user3:
             try:
@@ -218,12 +220,12 @@ def test_create_notification_group():
                     client,
                     scope=config4["scope"],
                     event_type=config4["event_type"],
-                    meta=config4["meta"],
+                    message=config4["message"],
                 )
                 assert isinstance(g4, NotificationGroupRead)
                 assert g4.scope == config4["scope"]
                 assert g4.event_type == config4["event_type"]
-                assert g4.meta == config4["meta"]
+                assert g4.message == config4["message"]
                 # verify all 3 users get the notification
                 superuser_notifs = (
                     JamAI(user_id=ctx.superuser.id).notifications.list_notifications().items
@@ -239,10 +241,10 @@ def test_create_notification_group():
                     == g4.id
                 )
                 assert (
-                    superuser_notifs[0].body
-                    == user_notifs[0].body
-                    == user3_notifs[0].body
-                    == config4["meta"]["message"]
+                    superuser_notifs[0].message
+                    == user_notifs[0].message
+                    == user3_notifs[0].message
+                    == config4["message"]
                 )
             finally:
                 client.notification_groups.delete_notification_group(g4.id)
@@ -255,9 +257,7 @@ def test_get_notification_group():
     """
     with setup_organizations() as ctx:
         client = _admin_client(ctx.superuser.id)
-        group = _create_notification_group(
-            client, recipient_ids=[ctx.superuser.id], meta={"message": "hi"}
-        )
+        group = _create_notification_group(client, recipient_ids=[ctx.superuser.id], message="hi")
         try:
             fetched = client.notification_groups.get_notification_group(group.id)
             assert isinstance(fetched, NotificationGroupRead)
@@ -278,7 +278,7 @@ def test_list_notification_groups():
         try:
             for i in range(3):
                 g = _create_notification_group(
-                    client, recipient_ids=[ctx.superuser.id], meta={"message": f"msg {i}"}
+                    client, recipient_ids=[ctx.superuser.id], message=f"msg {i}"
                 )
                 groups.append(g)
 
@@ -303,9 +303,7 @@ def test_delete_notification_group():
         user_client = JamAI(user_id=ctx.superuser.id)
 
         # Hard-delete
-        g1 = _create_notification_group(
-            client, recipient_ids=[ctx.superuser.id], meta={"message": "bye"}
-        )
+        g1 = _create_notification_group(client, recipient_ids=[ctx.superuser.id], message="bye")
         resp = client.notification_groups.delete_notification_group(g1.id)
         assert isinstance(resp, OkResponse)
         with pytest.raises(ResourceNotFoundError):
@@ -319,7 +317,7 @@ def test_delete_notification_group():
 
         # Cascade
         g2 = _create_notification_group(
-            client, recipient_ids=[ctx.superuser.id], meta={"message": "cascade"}
+            client, recipient_ids=[ctx.superuser.id], message="cascade"
         )
         notif = user_client.notifications.get_notification(g2.id)
         assert isinstance(notif, NotificationRead)
@@ -343,11 +341,11 @@ def test_list_notifications():
                 # Create 5 for superuser, 1 for other
                 for i in range(5):
                     g = _create_notification_group(
-                        client, recipient_ids=[ctx.superuser.id], meta={"message": f"msg {i}"}
+                        client, recipient_ids=[ctx.superuser.id], message=f"msg {i}"
                     )
                     groups.append(g)
                 g_other = _create_notification_group(
-                    client, recipient_ids=[other.id], meta={"message": "for other"}
+                    client, recipient_ids=[other.id], message="for other"
                 )
                 groups.append(g_other)
 
@@ -384,21 +382,21 @@ def test_list_notifications():
 
 def test_get_notification():
     """
-    - Get by group ID: verify body, opened_at, deleted_at, nested notification_group.
+    - Get by group ID: verify message, opened_at, deleted_at, nested notification_group.
     - Nonexistent raises ResourceNotFoundError.
     """
     with setup_organizations() as ctx:
         client = _admin_client(ctx.superuser.id)
         user_client = JamAI(user_id=ctx.superuser.id)
         group = _create_notification_group(
-            client, recipient_ids=[ctx.superuser.id], meta={"message": "get me"}
+            client, recipient_ids=[ctx.superuser.id], message="get me"
         )
         try:
             notif = user_client.notifications.get_notification(group.id)
             assert isinstance(notif, NotificationRead)
             assert notif.user_id == ctx.superuser.id
             assert notif.notification_group_id == group.id
-            assert notif.body == "get me"
+            assert notif.message == "get me"
             assert notif.opened_at is None
             assert notif.deleted_at is None
             assert notif.notification_group.id == group.id
@@ -418,9 +416,7 @@ def test_delete_notification():
     with setup_organizations() as ctx:
         client = _admin_client(ctx.superuser.id)
         user_client = JamAI(user_id=ctx.superuser.id)
-        group = _create_notification_group(
-            client, recipient_ids=[ctx.superuser.id], meta={"message": "del"}
-        )
+        group = _create_notification_group(client, recipient_ids=[ctx.superuser.id], message="del")
         try:
             resp = user_client.notifications.delete_notification(group.id)
             assert isinstance(resp, OkResponse)
@@ -442,18 +438,18 @@ def test_delete_notification():
 
 def test_set_opened():
     """
-    - Mark opened: opened_at is set.
-    - Nonexistent raises ResourceNotFoundError.
-    - Soft-deleted raises ResourceNotFoundError.
+    - Mark single notification as opened.
+    - Batch mark multiple notifications as opened.
+    - Nonexistent/soft-deleted silently skipped (batch semantics).
     """
     with setup_organizations() as ctx:
         client = _admin_client(ctx.superuser.id)
         user_client = JamAI(user_id=ctx.superuser.id)
         groups = []
         try:
-            # Mark opened
+            # Mark single opened
             g1 = _create_notification_group(
-                client, recipient_ids=[ctx.superuser.id], meta={"message": "open"}
+                client, recipient_ids=[ctx.superuser.id], message="open"
             )
             groups.append(g1)
             resp = user_client.notifications.set_opened(g1.id)
@@ -461,18 +457,30 @@ def test_set_opened():
             notif = user_client.notifications.get_notification(g1.id)
             assert notif.opened_at is not None
 
-            # Nonexistent
-            with pytest.raises(ResourceNotFoundError):
-                user_client.notifications.set_opened("notif_nonexistent")
-
-            # Soft-deleted
+            # Batch mark opened
             g2 = _create_notification_group(
-                client, recipient_ids=[ctx.superuser.id], meta={"message": "x"}
+                client, recipient_ids=[ctx.superuser.id], message="batch1"
             )
-            groups.append(g2)
-            user_client.notifications.delete_notification(g2.id)
-            with pytest.raises(ResourceNotFoundError):
-                user_client.notifications.set_opened(g2.id)
+            g3 = _create_notification_group(
+                client, recipient_ids=[ctx.superuser.id], message="batch2"
+            )
+            groups.extend([g2, g3])
+            resp = user_client.notifications.set_opened([g2.id, g3.id])
+            assert isinstance(resp, OkResponse)
+            for gid in (g2.id, g3.id):
+                notif = user_client.notifications.get_notification(gid)
+                assert notif.opened_at is not None
+
+            # Nonexistent silently skipped (batch semantics)
+            resp = user_client.notifications.set_opened(["notif_nonexistent"])
+            assert isinstance(resp, OkResponse)
+
+            # Soft-deleted silently skipped
+            g4 = _create_notification_group(client, recipient_ids=[ctx.superuser.id], message="x")
+            groups.append(g4)
+            user_client.notifications.delete_notification(g4.id)
+            resp = user_client.notifications.set_opened([g4.id])
+            assert isinstance(resp, OkResponse)
         finally:
             for g in groups:
                 client.notification_groups.delete_notification_group(g.id)
@@ -489,13 +497,13 @@ def test_set_all_opened():
         groups = []
         try:
             g1 = _create_notification_group(
-                client, recipient_ids=[ctx.superuser.id], meta={"message": "keep"}
+                client, recipient_ids=[ctx.superuser.id], message="keep"
             )
             g2 = _create_notification_group(
-                client, recipient_ids=[ctx.superuser.id], meta={"message": "del"}
+                client, recipient_ids=[ctx.superuser.id], message="del"
             )
             g3 = _create_notification_group(
-                client, recipient_ids=[ctx.superuser.id], meta={"message": "also"}
+                client, recipient_ids=[ctx.superuser.id], message="also"
             )
             groups.extend([g1, g2, g3])
 
@@ -520,40 +528,77 @@ def test_set_all_opened():
                 client.notification_groups.delete_notification_group(g.id)
 
 
-def test_body_template():
+def test_user_deletion_preserves_notifications():
     """
-    - ANNOUNCEMENT: {message} substitution.
-    - ORG_INVITATION: actor_name and org_name substitution.
+    - Deleting the actor user sets actor_id to NULL (ON DELETE SET NULL).
+    - Deleting the subject user sets subject_id to NULL (ON DELETE SET NULL).
+    - Deleting a recipient user cascades their Notification rows only.
+    - Other recipients' notifications and the group remain intact.
     """
     with setup_organizations() as ctx:
         client = _admin_client(ctx.superuser.id)
-        user_client = JamAI(user_id=ctx.superuser.id)
-        groups = []
-        try:
-            # ANNOUNCEMENT
-            g1 = _create_notification_group(
-                client,
-                event_type=NotificationType.ANNOUNCEMENT,
-                recipient_ids=[ctx.superuser.id],
-                meta={"message": "System maintenance at 2am UTC."},
-            )
-            groups.append(g1)
-            notif = user_client.notifications.get_notification(g1.id)
-            assert notif.body == "System maintenance at 2am UTC."
+        with create_user(dict(email="actor@test.com", name="Actor")) as actor:
+            with create_user(dict(email="subject@test.com", name="Subject")) as subject:
+                with create_user(dict(email="recipient@test.com", name="Recipient")) as recipient:
+                    # Create group with actor_id and subject_id, fan out to superuser + recipient
+                    group = _create_notification_group(
+                        client,
+                        scope=NotificationScope.USER,
+                        event_type=NotificationType.ANNOUNCEMENT,
+                        actor_id=actor.id,
+                        subject_id=subject.id,
+                        recipient_ids=[ctx.superuser.id, recipient.id],
+                        message="Test notification for user deletion.",
+                    )
+                    r_client = JamAI(user_id=recipient.id)
 
-            # ORG_INVITATION
-            g2 = _create_notification_group(
-                client,
-                event_type=NotificationType.ORG_INVITATION,
-                recipient_ids=[ctx.superuser.id],
-                meta={"actor_name": "Alice", "org_name": "Acme Corp", "role": "MEMBER"},
-            )
-            groups.append(g2)
-            notif = user_client.notifications.get_notification(g2.id)
-            assert (
-                notif.body
-                == "**Alice** invited you to join organization **Acme Corp** with role **MEMBER**."
-            )
-        finally:
-            for g in groups:
-                client.notification_groups.delete_notification_group(g.id)
+                    try:
+                        # Verify initial state
+                        assert group.actor_id == actor.id
+                        assert group.subject_id == subject.id
+                        su_notif = client.notifications.get_notification(group.id)
+                        r_notif = r_client.notifications.get_notification(group.id)
+                        assert su_notif.notification_group_id == group.id
+                        assert r_notif.notification_group_id == group.id
+
+                        # Delete actor: actor_id SET NULL, notifications unaffected
+                        JamAI(user_id=actor.id).users.delete_user()
+                        group_after = client.notification_groups.get_notification_group(group.id)
+                        assert group_after.actor_id is None
+                        assert group_after.actor is None
+                        assert group_after.subject_id == subject.id  # subject unchanged
+
+                        # Notifications remain accessible
+                        su_notif = client.notifications.get_notification(group.id)
+                        assert su_notif.notification_group_id == group.id
+                        r_notif = r_client.notifications.get_notification(group.id)
+                        assert r_notif.notification_group_id == group.id
+
+                        # Delete subject: subject_id SET NULL, notifications unaffected
+                        JamAI(user_id=subject.id).users.delete_user()
+                        group_after = client.notification_groups.get_notification_group(group.id)
+                        assert group_after.subject_id is None
+                        assert group_after.subject is None
+                        assert group_after.actor_id is None  # null from previous step
+
+                        # Notifications remain accessible
+                        su_notif = client.notifications.get_notification(group.id)
+                        assert su_notif.notification_group_id == group.id
+                        r_notif = r_client.notifications.get_notification(group.id)
+                        assert r_notif.notification_group_id == group.id
+
+                        # Delete recipient: recipient's notification CASCADE-deleted
+                        JamAI(user_id=recipient.id).users.delete_user()
+
+                        # Notification group still exists
+                        group_after = client.notification_groups.get_notification_group(group.id)
+                        assert group_after is not None
+                        assert group_after.id == group.id
+
+                        # Superuser's notification still intact and listable
+                        su_page = client.notifications.list_notifications()
+                        assert len(su_page.items) == 1
+                        assert su_page.items[0].notification_group_id == group.id
+
+                    finally:
+                        client.notification_groups.delete_notification_group(group.id)

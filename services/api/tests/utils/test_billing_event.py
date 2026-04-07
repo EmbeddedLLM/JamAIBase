@@ -881,14 +881,14 @@ def test_quota_limit_notifications(setup: BillingContext, product_type: ProductT
             )
         else:
             assert len(notifications) == 2, f"Expected 2 notifications, got {len(notifications)}"
-        assert "**80%**" in notifications[-2].body, (
-            f"Expected 80% notification, got {notifications[-2].body}"
+        assert "**80%**" in notifications[-2].message, (
+            f"Expected 80% notification, got {notifications[-2].message}"
         )
-        assert "**50%**" in notifications[-1].body, (
-            f"Expected 50% notification, got {notifications[-1].body}"
+        assert "**50%**" in notifications[-1].message, (
+            f"Expected 50% notification, got {notifications[-1].message}"
         )
-        assert all(unit in n.body for n in notifications), (
-            f"Expected unit '{unit}' in notifications, got {[n.body for n in notifications]}"
+        assert all(unit in n.message for n in notifications), (
+            f"Expected unit '{unit}' in notifications, got {[n.message for n in notifications]}"
         )
     finally:
         admin_client = JamAI(user_id="0")

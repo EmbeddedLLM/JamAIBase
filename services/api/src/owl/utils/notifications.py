@@ -32,6 +32,16 @@ _PRODUCT_UNIT: dict[ProductType, str] = {
     ProductType.EGRESS: "GiB",
 }
 
+_PRODUCT_LABEL: dict[ProductType, str] = {
+    ProductType.LLM_TOKENS: "LLM token",
+    ProductType.IMAGE_TOKENS: "Image token",
+    ProductType.EMBEDDING_TOKENS: "Embedding token",
+    ProductType.RERANKER_SEARCHES: "Reranker",
+    ProductType.DB_STORAGE: "DB storage",
+    ProductType.FILE_STORAGE: "File storage",
+    ProductType.EGRESS: "Egress",
+}
+
 QUOTA_ALERT_THRESHOLDS = (50, 80, 100)
 
 
@@ -41,58 +51,20 @@ class NotificationIntent:
 
     scope: NotificationScope
     event_type: NotificationType
-    meta: dict
+    message: str
     actor_id: str | None = None
+    subject_id: str | None = None
     organization_id: str | None = None
     project_id: str | None = None
     recipient_ids: list[str] = field(default_factory=list)
     notif_admin_only: bool = False
 
 
-class _SafeFormatDict(dict):
-    """Returns '{key}' for missing keys instead of raising KeyError."""
-
-    def __missing__(self, key: str) -> str:
-        return f"{{{key}}}"
-
-
-_BODY_TEMPLATES: dict[NotificationType, str] = {
-    # Membership
-    NotificationType.ORG_INVITATION: "**{actor_name}** invited you to join organization **{org_name}** with role **{role}**.",
-    NotificationType.PROJECT_INVITATION: "**{actor_name}** invited you to join project **{project_name}** with role **{role}**.",
-    NotificationType.ORG_INVITATION_REVOKED: "**{actor_name}** revoked your invitation to organization **{org_name}**.",
-    NotificationType.PROJECT_INVITATION_REVOKED: "**{actor_name}** revoked your invitation to project **{project_name}**.",
-    NotificationType.ORG_MEMBER_JOINED: "**{subject_name}** joined organization **{org_name}**.",
-    NotificationType.PROJECT_MEMBER_JOINED: "**{subject_name}** joined project **{project_name}**.",
-    NotificationType.ORG_ROLE_UPDATED: "**{actor_name}** changed your role to **{role}** in organization **{org_name}**.",
-    NotificationType.PROJECT_ROLE_UPDATED: "**{actor_name}** changed your role to **{role}** in project **{project_name}**.",
-    NotificationType.ORG_OWNER_UPDATED: "**{actor_name}** transferred ownership of organization **{org_name}** to **{subject_name}**.",
-    NotificationType.PROJECT_OWNER_UPDATED: "**{actor_name}** transferred ownership of project **{project_name}** to **{subject_name}**.",
-    # Limit alerts
-    NotificationType.LLM_TOKEN_LIMIT: "LLM token usage has reached **{threshold}%** of quota ({usage}/{quota} {unit}).",
-    NotificationType.IMAGE_TOKEN_LIMIT: "Image token usage has reached **{threshold}%** of quota ({usage}/{quota} {unit}).",
-    NotificationType.EMBEDDING_TOKEN_LIMIT: "Embedding token usage has reached **{threshold}%** of quota ({usage}/{quota} {unit}).",
-    NotificationType.RERANKER_LIMIT: "Reranker usage has reached **{threshold}%** of quota ({usage}/{quota} {unit}).",
-    NotificationType.DB_STORAGE_LIMIT: "DB storage usage has reached **{threshold}%** of quota ({usage}/{quota} {unit}).",
-    NotificationType.FILE_STORAGE_LIMIT: "File storage usage has reached **{threshold}%** of quota ({usage}/{quota} {unit}).",
-    NotificationType.EGRESS_LIMIT: "Egress usage has reached **{threshold}%** of quota ({usage}/{quota} {unit}).",
-    # Marketing & Announcements
-    NotificationType.MARKETING: "{message}",
-    NotificationType.ANNOUNCEMENT: "{message}",
-}
-
-
-def build_body(event_type: NotificationType, meta: dict) -> str:
-    """Build notification body from event type and meta context."""
-    template = _BODY_TEMPLATES.get(event_type, "")
-    return template.format_map(_SafeFormatDict(meta))
-
-
 async def _fan_out_notifications(
     session,
     *,
     group_id: str,
-    body: str,
+    message: str,
     scope: NotificationScope,
     organization_id: str | None = None,
     project_id: str | None = None,
@@ -100,9 +72,9 @@ async def _fan_out_notifications(
     notif_admin_only: bool = False,
 ) -> int:
     """INSERT...SELECT fan-out. Returns number of rows inserted."""
-    base_cols = f'{SCHEMA}."Notification" (user_id, notification_group_id, body, meta, created_at, updated_at)'
-    base_vals = ":group_id, :body, '{}'::jsonb, :ts, :ts"
-    params: dict = dict(group_id=group_id, body=body, ts=now())
+    base_cols = f'{SCHEMA}."Notification" (user_id, notification_group_id, message, meta, created_at, updated_at)'
+    base_vals = ":group_id, :message, '{}'::jsonb, :ts, :ts"
+    params: dict = dict(group_id=group_id, message=message, ts=now())
 
     if scope == NotificationScope.ORGANIZATION:
         where = "om.organization_id = :org_id"
@@ -148,17 +120,17 @@ async def dispatch_notification_intent(
                     organization_id=intent.organization_id,
                     project_id=intent.project_id,
                     actor_id=intent.actor_id,
-                    meta=intent.meta,
+                    subject_id=intent.subject_id,
+                    message=intent.message,
                 )
                 session.add(group)
                 await session.flush()
                 group_id = group.id
 
-            body = build_body(intent.event_type, intent.meta)
             row_count = await _fan_out_notifications(
                 session,
                 group_id=group_id,
-                body=body,
+                message=intent.message,
                 scope=intent.scope,
                 organization_id=intent.organization_id,
                 project_id=intent.project_id,
@@ -195,10 +167,11 @@ def notify_org_invitation(
     return NotificationIntent(
         scope=NotificationScope.USER,
         event_type=NotificationType.ORG_INVITATION,
+        message=f"**{actor_name}** invited you to join organization **{org_name}** with role **{role}**.",
         actor_id=actor_id,
+        subject_id=invitee_user_id,
         organization_id=organization_id,
         recipient_ids=[invitee_user_id],
-        meta=dict(actor_name=actor_name, org_name=org_name, role=role),
     )
 
 
@@ -215,11 +188,12 @@ def notify_project_invitation(
     return NotificationIntent(
         scope=NotificationScope.USER,
         event_type=NotificationType.PROJECT_INVITATION,
+        message=f"**{actor_name}** invited you to join project **{project_name}** with role **{role}**.",
         actor_id=actor_id,
+        subject_id=invitee_user_id,
         organization_id=organization_id,
         project_id=project_id,
         recipient_ids=[invitee_user_id],
-        meta=dict(actor_name=actor_name, project_name=project_name, role=role),
     )
 
 
@@ -234,10 +208,11 @@ def notify_org_invitation_revoked(
     return NotificationIntent(
         scope=NotificationScope.USER,
         event_type=NotificationType.ORG_INVITATION_REVOKED,
+        message=f"**{actor_name}** revoked your invitation to organization **{org_name}**.",
         actor_id=actor_id,
+        subject_id=invitee_user_id,
         organization_id=organization_id,
         recipient_ids=[invitee_user_id],
-        meta=dict(actor_name=actor_name, org_name=org_name),
     )
 
 
@@ -253,11 +228,12 @@ def notify_project_invitation_revoked(
     return NotificationIntent(
         scope=NotificationScope.USER,
         event_type=NotificationType.PROJECT_INVITATION_REVOKED,
+        message=f"**{actor_name}** revoked your invitation to project **{project_name}**.",
         actor_id=actor_id,
+        subject_id=invitee_user_id,
         organization_id=organization_id,
         project_id=project_id,
         recipient_ids=[invitee_user_id],
-        meta=dict(actor_name=actor_name, project_name=project_name),
     )
 
 
@@ -271,8 +247,9 @@ def notify_org_member_joined(
     return NotificationIntent(
         scope=NotificationScope.ORGANIZATION,
         event_type=NotificationType.ORG_MEMBER_JOINED,
+        message=f"**{subject_name}** joined organization **{org_name}**.",
+        subject_id=subject_id,
         organization_id=organization_id,
-        meta=dict(subject_name=subject_name, org_name=org_name, subject_id=subject_id),
     )
 
 
@@ -287,9 +264,10 @@ def notify_project_member_joined(
     return NotificationIntent(
         scope=NotificationScope.PROJECT,
         event_type=NotificationType.PROJECT_MEMBER_JOINED,
+        message=f"**{subject_name}** joined project **{project_name}**.",
+        subject_id=subject_id,
         organization_id=organization_id,
         project_id=project_id,
-        meta=dict(subject_name=subject_name, project_name=project_name, subject_id=subject_id),
     )
 
 
@@ -305,10 +283,11 @@ def notify_org_role_updated(
     return NotificationIntent(
         scope=NotificationScope.USER,
         event_type=NotificationType.ORG_ROLE_UPDATED,
+        message=f"**{actor_name}** changed your role to **{role}** in organization **{org_name}**.",
         actor_id=actor_id,
+        subject_id=target_user_id,
         organization_id=organization_id,
         recipient_ids=[target_user_id],
-        meta=dict(actor_name=actor_name, org_name=org_name, role=role),
     )
 
 
@@ -325,11 +304,12 @@ def notify_project_role_updated(
     return NotificationIntent(
         scope=NotificationScope.USER,
         event_type=NotificationType.PROJECT_ROLE_UPDATED,
+        message=f"**{actor_name}** changed your role to **{role}** in project **{project_name}**.",
         actor_id=actor_id,
+        subject_id=target_user_id,
         organization_id=organization_id,
         project_id=project_id,
         recipient_ids=[target_user_id],
-        meta=dict(actor_name=actor_name, project_name=project_name, role=role),
     )
 
 
@@ -345,14 +325,10 @@ def notify_org_owner_updated(
     return NotificationIntent(
         scope=NotificationScope.ORGANIZATION,
         event_type=NotificationType.ORG_OWNER_UPDATED,
+        message=f"**{actor_name}** transferred ownership of organization **{org_name}** to **{subject_name}**.",
         actor_id=actor_id,
+        subject_id=subject_id,
         organization_id=organization_id,
-        meta=dict(
-            actor_name=actor_name,
-            org_name=org_name,
-            subject_id=subject_id,
-            subject_name=subject_name,
-        ),
     )
 
 
@@ -369,15 +345,11 @@ def notify_project_owner_updated(
     return NotificationIntent(
         scope=NotificationScope.PROJECT,
         event_type=NotificationType.PROJECT_OWNER_UPDATED,
+        message=f"**{actor_name}** transferred ownership of project **{project_name}** to **{subject_name}**.",
         actor_id=actor_id,
+        subject_id=subject_id,
         organization_id=organization_id,
         project_id=project_id,
-        meta=dict(
-            actor_name=actor_name,
-            project_name=project_name,
-            subject_id=subject_id,
-            subject_name=subject_name,
-        ),
     )
 
 
@@ -391,17 +363,13 @@ def notify_quota_limit(
 ) -> NotificationIntent:
     unit = _PRODUCT_UNIT[product_type]
     event_type = _PRODUCT_TO_NOTIFICATION_TYPE[product_type]
+    label = _PRODUCT_LABEL[product_type]
     return NotificationIntent(
         scope=NotificationScope.ORGANIZATION,
         event_type=event_type,
+        message=f"{label} usage has reached **{threshold}%** of quota ({usage:,.2f}/{quota:,.2f} {unit}).",
         organization_id=organization_id,
         notif_admin_only=False,
-        meta=dict(
-            threshold=threshold,
-            usage=f"{usage:,.2f}",
-            quota=f"{quota:,.2f}",
-            unit=unit,
-        ),
     )
 
 
@@ -413,22 +381,25 @@ def check_quota_thresholds(
     quota: float | None,
     product_type: ProductType,
     quota_alert_thresholds: tuple[int, ...] = QUOTA_ALERT_THRESHOLDS,
-) -> list[NotificationIntent]:
-    """Return NotificationIntents for any quota thresholds crossed between old and new usage."""
+) -> list[tuple[int, NotificationIntent]]:
+    """Return (threshold, NotificationIntent) pairs for any quota thresholds crossed."""
     if quota is None or quota <= 0:
         return []
     old_pct = old_usage / quota * 100
     new_pct = new_usage / quota * 100
-    intents = []
+    results = []
     for threshold in quota_alert_thresholds:
         if old_pct < threshold <= new_pct:
-            intents.append(
-                notify_quota_limit(
-                    organization_id=organization_id,
-                    product_type=product_type,
-                    threshold=threshold,
-                    usage=new_usage,
-                    quota=quota,
+            results.append(
+                (
+                    threshold,
+                    notify_quota_limit(
+                        organization_id=organization_id,
+                        product_type=product_type,
+                        threshold=threshold,
+                        usage=new_usage,
+                        quota=quota,
+                    ),
                 )
             )
-    return intents
+    return results
