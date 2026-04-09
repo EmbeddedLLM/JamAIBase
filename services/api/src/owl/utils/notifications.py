@@ -7,7 +7,7 @@ from sqlalchemy import text
 
 from owl.db import SCHEMA, async_session
 from owl.db.models import NotificationGroup
-from owl.types import NotificationScope, NotificationType, ProductType, Role
+from owl.types import NotificationAudience, NotificationType, ProductType, Role
 from owl.utils.dates import now
 
 # Mapping from ProductType to NotificationType for limit alerts
@@ -49,7 +49,7 @@ QUOTA_ALERT_THRESHOLDS = (50, 80, 100)
 class NotificationIntent:
     """Plain data carrier for a notification to be dispatched in the background."""
 
-    scope: NotificationScope
+    audience: NotificationAudience
     event_type: NotificationType
     message: str
     actor_id: str | None = None
@@ -65,7 +65,7 @@ async def _fan_out_notifications(
     *,
     group_id: str,
     message: str,
-    scope: NotificationScope,
+    audience: NotificationAudience,
     organization_id: str | None = None,
     project_id: str | None = None,
     recipient_ids: list[str] | None = None,
@@ -76,7 +76,7 @@ async def _fan_out_notifications(
     base_vals = ":group_id, :message, '{}'::jsonb, :ts, :ts"
     params: dict = dict(group_id=group_id, message=message, ts=now())
 
-    if scope == NotificationScope.ORGANIZATION:
+    if audience == NotificationAudience.ORGANIZATION:
         where = "om.organization_id = :org_id"
         params["org_id"] = organization_id
         if notif_admin_only:
@@ -84,7 +84,7 @@ async def _fan_out_notifications(
             params["role"] = Role.ADMIN.value
         sql = f'INSERT INTO {base_cols} SELECT om.user_id, {base_vals} FROM {SCHEMA}."OrgMember" om WHERE {where}'
 
-    elif scope == NotificationScope.PROJECT:
+    elif audience == NotificationAudience.PROJECT:
         where = "pm.project_id = :proj_id"
         params["proj_id"] = project_id
         if notif_admin_only:
@@ -92,11 +92,11 @@ async def _fan_out_notifications(
             params["role"] = Role.ADMIN.value
         sql = f'INSERT INTO {base_cols} SELECT pm.user_id, {base_vals} FROM {SCHEMA}."ProjectMember" pm WHERE {where}'
 
-    elif scope == NotificationScope.USER:
+    elif audience == NotificationAudience.USER:
         params["user_ids"] = recipient_ids or []
         sql = f'INSERT INTO {base_cols} SELECT u.id, {base_vals} FROM {SCHEMA}."User" u WHERE u.id = ANY(:user_ids)'
 
-    elif scope == NotificationScope.SYSTEM:
+    elif audience == NotificationAudience.SYSTEM:
         sql = f'INSERT INTO {base_cols} SELECT u.id, {base_vals} FROM {SCHEMA}."User" u'
 
     else:
@@ -115,7 +115,7 @@ async def dispatch_notification_intent(
         async with async_session() as session:
             if group_id is None:
                 group = NotificationGroup(
-                    scope=intent.scope,
+                    audience=intent.audience,
                     event_type=intent.event_type,
                     organization_id=intent.organization_id,
                     project_id=intent.project_id,
@@ -131,7 +131,7 @@ async def dispatch_notification_intent(
                 session,
                 group_id=group_id,
                 message=intent.message,
-                scope=intent.scope,
+                audience=intent.audience,
                 organization_id=intent.organization_id,
                 project_id=intent.project_id,
                 recipient_ids=intent.recipient_ids,
@@ -142,7 +142,7 @@ async def dispatch_notification_intent(
             if row_count == 0:
                 logger.warning(
                     f"No recipients resolved for notification {intent.event_type} "
-                    f"(scope={intent.scope}, org={intent.organization_id}, proj={intent.project_id})"
+                    f"(audience={intent.audience}, org={intent.organization_id}, proj={intent.project_id})"
                 )
             else:
                 logger.bind(
@@ -165,7 +165,7 @@ def notify_org_invitation(
     role: str,
 ) -> NotificationIntent:
     return NotificationIntent(
-        scope=NotificationScope.USER,
+        audience=NotificationAudience.USER,
         event_type=NotificationType.ORG_INVITATION,
         message=f"**{actor_name}** invited you to join organization **{org_name}** with role **{role}**.",
         actor_id=actor_id,
@@ -186,7 +186,7 @@ def notify_project_invitation(
     role: str,
 ) -> NotificationIntent:
     return NotificationIntent(
-        scope=NotificationScope.USER,
+        audience=NotificationAudience.USER,
         event_type=NotificationType.PROJECT_INVITATION,
         message=f"**{actor_name}** invited you to join project **{project_name}** with role **{role}**.",
         actor_id=actor_id,
@@ -206,7 +206,7 @@ def notify_org_invitation_revoked(
     org_name: str,
 ) -> NotificationIntent:
     return NotificationIntent(
-        scope=NotificationScope.USER,
+        audience=NotificationAudience.USER,
         event_type=NotificationType.ORG_INVITATION_REVOKED,
         message=f"**{actor_name}** revoked your invitation to organization **{org_name}**.",
         actor_id=actor_id,
@@ -226,7 +226,7 @@ def notify_project_invitation_revoked(
     organization_id: str,
 ) -> NotificationIntent:
     return NotificationIntent(
-        scope=NotificationScope.USER,
+        audience=NotificationAudience.USER,
         event_type=NotificationType.PROJECT_INVITATION_REVOKED,
         message=f"**{actor_name}** revoked your invitation to project **{project_name}**.",
         actor_id=actor_id,
@@ -245,7 +245,7 @@ def notify_org_member_joined(
     subject_name: str,
 ) -> NotificationIntent:
     return NotificationIntent(
-        scope=NotificationScope.ORGANIZATION,
+        audience=NotificationAudience.ORGANIZATION,
         event_type=NotificationType.ORG_MEMBER_JOINED,
         message=f"**{subject_name}** joined organization **{org_name}**.",
         subject_id=subject_id,
@@ -262,7 +262,7 @@ def notify_project_member_joined(
     subject_name: str,
 ) -> NotificationIntent:
     return NotificationIntent(
-        scope=NotificationScope.PROJECT,
+        audience=NotificationAudience.PROJECT,
         event_type=NotificationType.PROJECT_MEMBER_JOINED,
         message=f"**{subject_name}** joined project **{project_name}**.",
         subject_id=subject_id,
@@ -281,7 +281,7 @@ def notify_org_role_updated(
     role: str,
 ) -> NotificationIntent:
     return NotificationIntent(
-        scope=NotificationScope.USER,
+        audience=NotificationAudience.USER,
         event_type=NotificationType.ORG_ROLE_UPDATED,
         message=f"**{actor_name}** changed your role to **{role}** in organization **{org_name}**.",
         actor_id=actor_id,
@@ -302,7 +302,7 @@ def notify_project_role_updated(
     role: str,
 ) -> NotificationIntent:
     return NotificationIntent(
-        scope=NotificationScope.USER,
+        audience=NotificationAudience.USER,
         event_type=NotificationType.PROJECT_ROLE_UPDATED,
         message=f"**{actor_name}** changed your role to **{role}** in project **{project_name}**.",
         actor_id=actor_id,
@@ -323,7 +323,7 @@ def notify_org_owner_updated(
     subject_name: str,
 ) -> NotificationIntent:
     return NotificationIntent(
-        scope=NotificationScope.ORGANIZATION,
+        audience=NotificationAudience.ORGANIZATION,
         event_type=NotificationType.ORG_OWNER_UPDATED,
         message=f"**{actor_name}** transferred ownership of organization **{org_name}** to **{subject_name}**.",
         actor_id=actor_id,
@@ -343,7 +343,7 @@ def notify_project_owner_updated(
     subject_name: str,
 ) -> NotificationIntent:
     return NotificationIntent(
-        scope=NotificationScope.PROJECT,
+        audience=NotificationAudience.PROJECT,
         event_type=NotificationType.PROJECT_OWNER_UPDATED,
         message=f"**{actor_name}** transferred ownership of project **{project_name}** to **{subject_name}**.",
         actor_id=actor_id,
@@ -365,7 +365,7 @@ def notify_quota_limit(
     event_type = _PRODUCT_TO_NOTIFICATION_TYPE[product_type]
     label = _PRODUCT_LABEL[product_type]
     return NotificationIntent(
-        scope=NotificationScope.ORGANIZATION,
+        audience=NotificationAudience.ORGANIZATION,
         event_type=event_type,
         message=f"{label} usage has reached **{threshold}%** of quota ({usage:,.2f}/{quota:,.2f} {unit}).",
         organization_id=organization_id,

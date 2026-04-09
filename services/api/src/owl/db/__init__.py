@@ -654,49 +654,72 @@ async def _migrate_notification_schema(engine: AsyncEngine) -> bool:
     Migrate NotificationGroup and Notification tables:
     - Add `subject_id` (FK→User SET NULL) and `message` columns to NotificationGroup
     - Rename `body` → `message` in Notification
+    - Rename `scope` → `audience` in NotificationGroup
+    - Retype audience column from PG enum `notificationscope` to `notificationaudience`, drop old enum
     """
     group_table = "NotificationGroup"
     notif_table = "Notification"
-
-    async with engine.connect() as conn:
-        group_has_message = await _check_column_exists(conn, group_table, "message")
-        group_has_subject = await _check_column_exists(conn, group_table, "subject_id")
-        notif_has_message = await _check_column_exists(conn, notif_table, "message")
-
-    if group_has_message and group_has_subject and notif_has_message:
-        return False
+    migrated = False
 
     async with engine.begin() as conn:
-        if not group_has_subject:
+        if not await _check_column_exists(conn, group_table, "subject_id"):
             await conn.execute(
                 text(
-                    f"""
-                    ALTER TABLE {SCHEMA}."{group_table}"
-                    ADD COLUMN subject_id TEXT DEFAULT NULL
-                    REFERENCES {SCHEMA}."User"(id) ON DELETE SET NULL;
-                    """
+                    f'ALTER TABLE {SCHEMA}."{group_table}" '
+                    f"ADD COLUMN subject_id TEXT DEFAULT NULL "
+                    f'REFERENCES {SCHEMA}."User"(id) ON DELETE SET NULL'
                 )
             )
-        if not group_has_message:
+            migrated = True
+
+        if not await _check_column_exists(conn, group_table, "message"):
             await conn.execute(
                 text(
-                    f"""
-                    ALTER TABLE {SCHEMA}."{group_table}"
-                    ADD COLUMN message TEXT NOT NULL DEFAULT '';
-                    """
+                    f'ALTER TABLE {SCHEMA}."{group_table}" '
+                    f"ADD COLUMN message TEXT NOT NULL DEFAULT ''"
                 )
             )
-        if not notif_has_message:
+            migrated = True
+
+        if await _check_column_exists(conn, notif_table, "body"):
+            if not await _check_column_exists(conn, notif_table, "message"):
+                await conn.execute(
+                    text(f'ALTER TABLE {SCHEMA}."{notif_table}" RENAME COLUMN body TO message')
+                )
+                migrated = True
+
+        if await _check_column_exists(conn, group_table, "scope"):
+            if not await _check_column_exists(conn, group_table, "audience"):
+                await conn.execute(
+                    text(f'ALTER TABLE {SCHEMA}."{group_table}" RENAME COLUMN scope TO audience')
+                )
+                migrated = True
+
+        # Retype audience column: PG enum notificationscope → notificationaudience
+        old_enum_exists = (
             await conn.execute(
                 text(
-                    f"""
-                    ALTER TABLE {SCHEMA}."{notif_table}"
-                    RENAME COLUMN body TO message;
-                    """
+                    f"SELECT EXISTS (SELECT 1 FROM pg_type t "
+                    f"JOIN pg_namespace n ON n.oid = t.typnamespace "
+                    f"WHERE n.nspname = '{SCHEMA}' AND t.typname = 'notificationscope')"
                 )
             )
-    logger.info("Successfully migrated notification schema (subject_id, message, body→message).")
-    return True
+        ).scalar()
+        if old_enum_exists:
+            await conn.execute(
+                text(
+                    f'ALTER TABLE {SCHEMA}."{group_table}" '
+                    f"ALTER COLUMN audience TYPE {SCHEMA}.notificationaudience "
+                    f"USING audience::text::{SCHEMA}.notificationaudience"
+                )
+            )
+            await conn.execute(text(f"DROP TYPE {SCHEMA}.notificationscope"))
+            logger.info("Retyped audience column and dropped old PG enum notificationscope.")
+            migrated = True
+
+    if migrated:
+        logger.info("Successfully migrated notification schema.")
+    return migrated
 
 
 async def migrate_db():

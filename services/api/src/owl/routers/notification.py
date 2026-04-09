@@ -53,7 +53,7 @@ async def create_notification_group(
 
     # Fan-out in background
     intent = NotificationIntent(
-        scope=body.scope,
+        audience=body.audience,
         event_type=body.event_type,
         message=body.message,
         actor_id=body.actor_id,

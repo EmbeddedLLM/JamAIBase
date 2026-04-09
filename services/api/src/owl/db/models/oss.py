@@ -48,7 +48,7 @@ from owl.types import (
     LanguageCodeList,
     ModelCapability,
     ModelType,
-    NotificationScope,
+    NotificationAudience,
     NotificationType,
     Page,
     PaymentState,
@@ -1597,8 +1597,8 @@ class NotificationGroup(_TableBase, table=True):
         primary_key=True,
         description="Notification group ID.",
     )
-    scope: NotificationScope = SqlField(
-        description="Notification scope.",
+    audience: NotificationAudience = SqlField(
+        description="Notification audience.",
     )
     event_type: NotificationType = SqlField(
         index=True,

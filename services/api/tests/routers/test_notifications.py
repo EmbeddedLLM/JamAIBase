@@ -4,10 +4,10 @@ import pytest
 
 from jamaibase import JamAI
 from jamaibase.types import (
+    NotificationAudience,
     NotificationGroupCreate,
     NotificationGroupRead,
     NotificationRead,
-    NotificationScope,
     NotificationType,
     OkResponse,
     Page,
@@ -28,7 +28,7 @@ def _admin_client(user_id: str = "0") -> JamAI:
 def _create_notification_group(
     client: JamAI,
     *,
-    scope: str = NotificationScope.USER,
+    audience: str = NotificationAudience.USER,
     event_type: str = NotificationType.ANNOUNCEMENT,
     recipient_ids: list[str] | None = None,
     organization_id: str | None = None,
@@ -39,7 +39,7 @@ def _create_notification_group(
 ) -> NotificationGroupRead:
     notif_group = client.notification_groups.create_notification_group(
         NotificationGroupCreate(
-            scope=scope,
+            audience=audience,
             event_type=event_type,
             recipient_ids=recipient_ids or [],
             organization_id=organization_id,
@@ -59,20 +59,20 @@ def test_create_notification_group():
 
         # USER scope
         config = {
-            "scope": NotificationScope.USER,
+            "audience": NotificationAudience.USER,
             "event_type": NotificationType.MARKETING,
             "message": "Welcome to our service!",
         }
         try:
             g1 = _create_notification_group(
                 client,
-                scope=config["scope"],
+                audience=config["audience"],
                 event_type=config["event_type"],
                 recipient_ids=[ctx.superuser.id],
                 message=config["message"],
             )
             assert isinstance(g1, NotificationGroupRead)
-            assert g1.scope == config["scope"]
+            assert g1.audience == config["audience"]
             assert g1.event_type == config["event_type"]
             assert g1.message == config["message"]
             # verify user has the notification
@@ -98,20 +98,20 @@ def test_create_notification_group():
         )
 
         config2 = {
-            "scope": NotificationScope.ORGANIZATION,
+            "audience": NotificationAudience.ORGANIZATION,
             "event_type": NotificationType.ANNOUNCEMENT,
             "message": "Product update: new features released!",
         }
         try:
             g2 = _create_notification_group(
                 client,
-                scope=config2["scope"],
+                audience=config2["audience"],
                 event_type=config2["event_type"],
                 organization_id=ctx.superorg.id,
                 message=config2["message"],
             )
             assert isinstance(g2, NotificationGroupRead)
-            assert g2.scope == config2["scope"]
+            assert g2.audience == config2["audience"]
             assert g2.event_type == config2["event_type"]
             assert g2.message == config2["message"]
             # verify both users have the notification
@@ -173,20 +173,20 @@ def test_create_notification_group():
             )
 
             config3 = {
-                "scope": NotificationScope.PROJECT,
+                "audience": NotificationAudience.PROJECT,
                 "event_type": NotificationType.ANNOUNCEMENT,
                 "message": "New model available in project!",
             }
             try:
                 g3 = _create_notification_group(
                     client,
-                    scope=config3["scope"],
+                    audience=config3["audience"],
                     event_type=config3["event_type"],
                     project_id=project_id,
                     message=config3["message"],
                 )
                 assert isinstance(g3, NotificationGroupRead)
-                assert g3.scope == config3["scope"]
+                assert g3.audience == config3["audience"]
                 assert g3.event_type == config3["event_type"]
                 assert g3.message == config3["message"]
                 # verify first 2 users get the notification
@@ -210,7 +210,7 @@ def test_create_notification_group():
 
         # System scope - user3 should get it even without org membership
         config4 = {
-            "scope": NotificationScope.SYSTEM,
+            "audience": NotificationAudience.SYSTEM,
             "event_type": NotificationType.ANNOUNCEMENT,
             "message": "System-wide announcement!",
         }
@@ -218,12 +218,12 @@ def test_create_notification_group():
             try:
                 g4 = _create_notification_group(
                     client,
-                    scope=config4["scope"],
+                    audience=config4["audience"],
                     event_type=config4["event_type"],
                     message=config4["message"],
                 )
                 assert isinstance(g4, NotificationGroupRead)
-                assert g4.scope == config4["scope"]
+                assert g4.audience == config4["audience"]
                 assert g4.event_type == config4["event_type"]
                 assert g4.message == config4["message"]
                 # verify all 3 users get the notification
@@ -543,7 +543,7 @@ def test_user_deletion_preserves_notifications():
                     # Create group with actor_id and subject_id, fan out to superuser + recipient
                     group = _create_notification_group(
                         client,
-                        scope=NotificationScope.USER,
+                        audience=NotificationAudience.USER,
                         event_type=NotificationType.ANNOUNCEMENT,
                         actor_id=actor.id,
                         subject_id=subject.id,

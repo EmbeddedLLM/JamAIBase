@@ -1323,7 +1323,7 @@ class ProjectKeyRead(ProjectKey_):
     pass
 
 
-class NotificationScope(StrEnum):
+class NotificationAudience(StrEnum):
     SYSTEM = "SYSTEM"
     ORGANIZATION = "ORGANIZATION"
     PROJECT = "PROJECT"
@@ -1356,8 +1356,8 @@ class NotificationType(StrEnum):
 
 
 class NotificationGroupCreate(_BaseModel):
-    scope: NotificationScope = Field(
-        description="Notification scope.",
+    audience: NotificationAudience = Field(
+        description="Notification audience.",
     )
     event_type: NotificationType = Field(
         description="Notification event type.",
