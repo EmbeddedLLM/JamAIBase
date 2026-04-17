@@ -1728,13 +1728,12 @@ class LMEngine:
         finally:
             # # Consume rate limits
             # await asyncio.gather(rpm_limiter.hit(), tpm_limiter.hit(self._chat_usage.total_tokens))
-            if self.billing is not None:
+            if self.billing is not None and router.chosen_credential is not None:
                 try:
                     self.billing.create_llm_events(
                         model_id=model,
                         input_tokens=self._chat_usage.prompt_tokens,
                         output_tokens=self._chat_usage.completion_tokens,
-                        model_provider=router.chosen_credential.provider,
                         is_byok=router.chosen_credential.is_byok,
                     )
                 except Exception as e:
@@ -2214,7 +2213,6 @@ class LMEngine:
         self,
         *,
         model_id: str,
-        model_provider: str,
         is_byok: bool,
         usage: Usage | None,
         source: Literal["image_endpoint", "completion"],
@@ -2260,7 +2258,6 @@ class LMEngine:
                 text_output_token=text_output_token,
                 image_input_token=image_input_token,
                 image_output_token=image_output_token,
-                model_provider=model_provider,
                 is_byok=is_byok,
             )
         except Exception as e:
@@ -2290,7 +2287,6 @@ class LMEngine:
             )
             self._record_image_usage(
                 model_id=resolved_model,
-                model_provider=router.chosen_credential.provider,
                 is_byok=router.chosen_credential.is_byok,
                 usage=provider_result.usage,
                 source=provider_result.source,
@@ -2328,7 +2324,6 @@ class LMEngine:
             )
             self._record_image_usage(
                 model_id=resolved_model,
-                model_provider=router.chosen_credential.provider,
                 is_byok=router.chosen_credential.is_byok,
                 usage=provider_result.usage,
                 source=provider_result.source,
@@ -2384,12 +2379,11 @@ class LMEngine:
             # await asyncio.gather(
             #     rpm_limiter.hit(), tpm_limiter.hit(self._embed_usage.total_tokens)
             # )
-            if self.billing is not None:
+            if self.billing is not None and router.chosen_credential is not None:
                 try:
                     self.billing.create_embedding_events(
                         model_id=model,
                         token_usage=self._embed_usage.total_tokens,
-                        model_provider=router.chosen_credential.provider,
                         is_byok=router.chosen_credential.is_byok,
                     )
                 except Exception as e:
@@ -2524,12 +2518,11 @@ class LMEngine:
         finally:
             # # Consume rate limits
             # await asyncio.gather(rpm_limiter.hit(), spm_limiter.hit(self._rerank_usage.documents))
-            if self.billing is not None:
+            if self.billing is not None and router.chosen_credential is not None:
                 try:
                     self.billing.create_reranker_events(
                         model_id=model,
                         num_searches=self._rerank_usage.documents,
-                        model_provider=router.chosen_credential.provider,
                         is_byok=router.chosen_credential.is_byok,
                     )
                 except Exception as e:
