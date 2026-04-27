@@ -1,7 +1,10 @@
+import asyncio
 from contextlib import asynccontextmanager, suppress
 from random import random
+from time import time_ns
 from typing import Any, AsyncGenerator, Type, TypeVar
 
+from loguru import logger
 from pottery import AIORedlock, ReleaseUnlockedLock
 from redis import Redis
 from redis.asyncio import Redis as RedisAsync
@@ -33,7 +36,8 @@ class Cache:
             decode_responses=True,
         )
         self._redis = Redis.from_url(**self._redis_kwargs)
-        self._redis_async = RedisAsync.from_url(**self._redis_kwargs)
+        self._redis_async: RedisAsync | None = None
+        self._redis_async_loop: asyncio.AbstractEventLoop | None = None
         self.clickhouse_buffer_key = clickhouse_buffer_key
         self.cache_expiration = int(cache_expiration)
         # try:
@@ -95,21 +99,140 @@ class Cache:
 
     async def aclose(self):
         self._redis.close()
-        await self._redis_async.aclose()
+        if self._redis_async is not None:
+            await self._redis_async.aclose()
+            self._redis_async = None
+            self._redis_async_loop = None
+
+    async def _aredis(self) -> RedisAsync:
+        # redis.asyncio connections are bound to the event loop that created them.
+        # Tests and background helpers can use this process-global CACHE from
+        # different loops, so recreate the async client when the loop changes.
+        loop = asyncio.get_running_loop()
+        if (
+            self._redis_async is None
+            or self._redis_async_loop is None
+            or self._redis_async_loop is not loop
+            or self._redis_async_loop.is_closed()
+        ):
+            if self._redis_async is not None and self._redis_async_loop is not None:
+                # Closing transports owned by an already-closed loop can raise
+                # "Event loop is closed"; in that case just drop the stale client.
+                if not self._redis_async_loop.is_closed():
+                    try:
+                        await self._redis_async.aclose()
+                    except Exception as e:
+                        logger.warning(f"Failed to close Redis async client: {repr(e)}")
+            self._redis_async = RedisAsync.from_url(**self._redis_kwargs)
+            self._redis_async_loop = loop
+        return self._redis_async
 
     async def get(self, key: str) -> str | None:
-        return await self._redis_async.get(key)
+        return await (await self._aredis()).get(key)
 
     async def set(self, key: str, value: str, **kwargs):
         if not isinstance(value, str):
             raise TypeError(f"`value` must be a str, received: {type(value)}")
-        return await self._redis_async.set(key, value, **kwargs)
+        return await (await self._aredis()).set(key, value, **kwargs)
 
     async def delete(self, key: str) -> None:
-        await self._redis_async.delete(key)
+        await (await self._aredis()).delete(key)
 
     async def exists(self, *keys: str) -> int:
-        return await self._redis_async.exists(*keys)
+        return await (await self._aredis()).exists(*keys)
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        return await (await self._aredis()).expire(key, seconds)
+
+    async def acquire_lock_value(self, key: str, value: str, *, ex: int) -> bool:
+        return bool(await self.set(key, value, ex=ex, nx=True))
+
+    async def get_lock_value(self, key: str) -> str | None:
+        return await self.get(key)
+
+    async def release_lock_value(self, key: str, value: str) -> bool:
+        redis = await self._aredis()
+        released = await redis.eval(
+            """
+            if redis.call("GET", KEYS[1]) == ARGV[1] then
+                return redis.call("DEL", KEYS[1])
+            end
+            return 0
+            """,
+            1,
+            key,
+            value,
+        )
+        return bool(released)
+
+    async def refresh_lock_value(self, key: str, value: str, *, ex: int) -> bool:
+        redis = await self._aredis()
+        refreshed = await redis.eval(
+            """
+            if redis.call("GET", KEYS[1]) == ARGV[1] then
+                return redis.call("EXPIRE", KEYS[1], ARGV[2])
+            end
+            return 0
+            """,
+            1,
+            key,
+            value,
+            ex,
+        )
+        return bool(refreshed)
+
+    async def add_recent_progress_key(
+        self,
+        index_key: str,
+        progress_key: str,
+        *,
+        ttl_sec: int,
+    ) -> None:
+        now_ns = time_ns()
+        redis = await self._aredis()
+        await redis.zremrangebyscore(
+            index_key,
+            "-inf",
+            now_ns - (ttl_sec * 1_000_000_000),
+        )
+        await redis.zadd(index_key, {progress_key: now_ns}, nx=True)
+        await redis.expire(index_key, ttl_sec)
+
+    async def remove_recent_progress_key(
+        self,
+        index_key: str,
+        progress_key: str,
+    ) -> None:
+        await (await self._aredis()).zrem(index_key, progress_key)
+
+    async def list_recent_progress_keys(
+        self,
+        index_key: str,
+        *,
+        ttl_sec: int,
+    ) -> list[str]:
+        now_ns = time_ns()
+        redis = await self._aredis()
+        await redis.zremrangebyscore(
+            index_key,
+            "-inf",
+            now_ns - (ttl_sec * 1_000_000_000),
+        )
+        keys = await redis.zrevrange(index_key, 0, -1)
+        keys = [key.decode() if isinstance(key, bytes) else key for key in keys]
+
+        existing_keys: list[str] = []
+        missing_keys: list[str] = []
+        for key in keys:
+            if await self.exists(key):
+                existing_keys.append(key)
+            else:
+                missing_keys.append(key)
+        if missing_keys:
+            await redis.zrem(index_key, *missing_keys)
+        if existing_keys:
+            await redis.expire(index_key, ttl_sec)
+        return existing_keys
 
     @asynccontextmanager
     async def alock(
@@ -118,9 +241,10 @@ class Cache:
         blocking: bool = True,
         expire: float = 60.0,
     ) -> AsyncGenerator[bool, None]:
+        redis = await self._aredis()
         lock = AIORedlock(
             key=key,
-            masters={self._redis_async},
+            masters={redis},
             auto_release_time=max(1.0, expire),
         )
         lock_acquired = await lock.acquire(blocking=blocking)
@@ -132,10 +256,9 @@ class Cache:
                     await lock.release()
 
     async def add_usage_to_buffer(self, usage: UsageData):
-        await self._redis_async.rpush(self.clickhouse_buffer_key, usage.model_dump_json())
-        await self._redis_async.incrby(
-            self.clickhouse_buffer_key + "_count", usage.total_usage_events
-        )
+        redis = await self._aredis()
+        await redis.rpush(self.clickhouse_buffer_key, usage.model_dump_json())
+        await redis.incrby(self.clickhouse_buffer_key + "_count", usage.total_usage_events)
 
     # def retrieve_usage_buffer(self) -> list[UsageData]:
     #     return [
@@ -144,7 +267,7 @@ class Cache:
     #     ]
 
     async def get_usage_buffer_count(self) -> int:
-        return int(await self._redis_async.get(self.clickhouse_buffer_key + "_count") or 0)
+        return int(await (await self._aredis()).get(self.clickhouse_buffer_key + "_count") or 0)
 
     # def reset_buffer_and_count(self):
     #     # Delete the buffer and count keys
@@ -189,7 +312,7 @@ class Cache:
         if not prog.key:
             return True
         # Returns True if set, None if not
-        return await self._redis_async.set(
+        return await (await self._aredis()).set(
             prog.key,
             prog.model_dump_json(),
             ex=ex,
@@ -214,7 +337,7 @@ class Cache:
         """
         from owl.utils.io import json_loads
 
-        prog = await self._redis_async.get(key)
+        prog = await (await self._aredis()).get(key)
         if response_model is None:
             return json_loads(prog) if prog else prog
         if prog:
@@ -226,9 +349,10 @@ class Cache:
         return int(self.cache_expiration * random() / 2)
 
     async def clear_all_async(self) -> None:
-        pipe = self._redis_async.pipeline()
+        redis = await self._aredis()
+        pipe = redis.pipeline()
         for prefix in ["user", "organization", "project", "models"]:
-            async for key in self._redis_async.scan_iter(match=f"{prefix}:*"):
+            async for key in redis.scan_iter(match=f"{prefix}:*"):
                 pipe.delete(key)
         await pipe.execute()
 

@@ -56,6 +56,10 @@ services:
       - ${PWD}/docker_data/owl/db:/usr/src/app/db
       - ${PWD}/services/api/src:/usr/src/app/api/src
 
+  starling:
+    volumes:
+      - ${PWD}/services/api/src:/usr/src/app/api/src
+
   kopi:
     ports:
       - 5569:3000

@@ -392,6 +392,31 @@ class GenConfigUpdateRequest(BaseModel):
         return self
 
 
+class GenTableModelReplaceRequest(BaseModel):
+    mapping: dict[str, str] = Field(
+        min_length=1,
+        description="Mapping of old model IDs to replacement model IDs.",
+    )
+    organization_ids: list[str] | None = Field(
+        None,
+        description="Optional organization IDs to scan. If omitted, all organizations are scanned.",
+    )
+
+    @model_validator(mode="after")
+    def check_mapping(self) -> Self:
+        for old_id, new_id in self.mapping.items():
+            if old_id == new_id:
+                raise ValueError(f'Model replacement maps "{old_id}" to itself.')
+        return self
+
+
+class GenTableModelReplaceProgressKeys(BaseModel):
+    items: list[str] = Field(
+        default_factory=list,
+        description="Recent GenTable model replacement progress keys, newest first.",
+    )
+
+
 class ColumnRenameRequest(BaseModel):
     table_id: str = Field(
         description="Table name or ID.",

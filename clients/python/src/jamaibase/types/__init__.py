@@ -164,6 +164,8 @@ from jamaibase.types.gen_table import (  # noqa: F401
     DiscriminatedGenConfig,
     EmbedGenConfig,
     GenConfigUpdateRequest,
+    GenTableModelReplaceProgressKeys,
+    GenTableModelReplaceRequest,
     ImageGenConfig,
     KnowledgeTableSchemaCreate,
     LLMGenConfig,

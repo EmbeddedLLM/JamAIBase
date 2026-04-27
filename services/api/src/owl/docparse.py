@@ -245,9 +245,7 @@ class GeneralDocLoader(BaseLoader):
                 md = await CACHE.get(cache_key)
             if md is not None:
                 # Extend cache TTL
-                await CACHE._redis_async.expire(
-                    cache_key, ENV_CONFIG.document_loader_cache_ttl_sec
-                )
+                await CACHE.expire(cache_key, ENV_CONFIG.document_loader_cache_ttl_sec)
                 logger.debug(f'File "{file_name}" loaded from cache (cache key="{cache_key}").')
                 return md
             try:
@@ -361,7 +359,7 @@ class GeneralDocLoader(BaseLoader):
                 chunk_json_str = await CACHE.get(cache_key)
             if chunk_json_str is not None:
                 # Extend cache TTL
-                await CACHE._redis_async.expire(cache_key, cache_ttl)
+                await CACHE.expire(cache_key, cache_ttl)
                 logger.info(
                     f'File chunks "{file_name}" loaded from cache (cache key="{cache_key}").'
                 )

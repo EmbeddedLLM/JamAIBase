@@ -42,6 +42,8 @@ from jamaibase.types import (
     EmbeddingResponse,
     FileUploadResponse,
     GenConfigUpdateRequest,
+    GenTableModelReplaceProgressKeys,
+    GenTableModelReplaceRequest,
     GetURLRequest,
     GetURLResponse,
     KnowledgeTableSchemaCreate,
@@ -1226,6 +1228,37 @@ class _ModelsAsync(_ClientAsync):
             "/v2/models/deployments",
             params=dict(deployment_id=deployment_id),
             response_model=OkResponse,
+            **kwargs,
+        )
+
+    async def replace_model_ids(
+        self,
+        request: GenTableModelReplaceRequest,
+        **kwargs,
+    ) -> OkResponse:
+        """
+        Replace model IDs in GenTable generation configs.
+
+        Args:
+            request (GenTableModelReplaceRequest): The model replacement request.
+
+        Returns:
+            response (OkResponse): Response containing the progress key.
+        """
+        return await self._post(
+            "/v2/models/replace",
+            body=request,
+            response_model=OkResponse,
+            **kwargs,
+        )
+
+    async def list_model_replace_progress_keys(
+        self,
+        **kwargs,
+    ) -> GenTableModelReplaceProgressKeys:
+        return await self._get(
+            "/v2/models/replace/progress_keys",
+            response_model=GenTableModelReplaceProgressKeys,
             **kwargs,
         )
 
@@ -4730,6 +4763,19 @@ class _Models(_ModelsAsync):
 
     def delete_deployment(self, deployment_id: str, **kwargs) -> OkResponse:
         return LOOP.run(super().delete_deployment(deployment_id, **kwargs))
+
+    def replace_model_ids(
+        self,
+        request: GenTableModelReplaceRequest,
+        **kwargs,
+    ) -> OkResponse:
+        return LOOP.run(super().replace_model_ids(request, **kwargs))
+
+    def list_model_replace_progress_keys(
+        self,
+        **kwargs,
+    ) -> GenTableModelReplaceProgressKeys:
+        return LOOP.run(super().list_model_replace_progress_keys(**kwargs))
 
 
 class _Organizations(_OrganizationsAsync):

@@ -75,6 +75,8 @@ from jamaibase.types import (  # noqa: F401
     FunctionCall,
     FunctionParameters,
     GenConfigUpdateRequest,
+    GenTableModelReplaceProgressKeys,
+    GenTableModelReplaceRequest,
     GetURLRequest,
     GetURLResponse,
     Host,

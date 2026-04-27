@@ -7,6 +7,7 @@ from owl.configs import celery_app
 from owl.db.gen_table import ActionTable, ChatTable, KnowledgeTable
 from owl.types import TableType
 from owl.utils.exceptions import JamaiException, ResourceExistsError
+from owl.utils.gen_table_model_replace import GenTableModelReplacer, release_model_replace_lock
 from owl.utils.io import open_uri_async
 
 TABLE_CLS: dict[TableType, ActionTable | KnowledgeTable | ChatTable] = {
@@ -60,3 +61,29 @@ def import_gen_table(
     table = asyncio.get_event_loop().run_until_complete(_task())
     logger.info("Generative Table import task completed.")
     return table.v1_meta_response.model_dump_json()
+
+
+@celery_app.task
+def replace_gen_table_models(
+    mapping: dict[str, str],
+    *,
+    organization_ids: list[str] | None = None,
+    progress_key: str = "",
+    requested_by: str = "",
+) -> dict[str, bool | int]:
+    async def _task():
+        try:
+            replacer = GenTableModelReplacer(
+                mapping=mapping,
+                organization_ids=organization_ids,
+                progress_key=progress_key,
+                requested_by=requested_by,
+            )
+            return await replacer.run()
+        finally:
+            await release_model_replace_lock(progress_key)
+
+    logger.info("GenTable model replace task started.")
+    result = asyncio.get_event_loop().run_until_complete(_task())
+    logger.info("GenTable model replace task completed.")
+    return result.to_dict()

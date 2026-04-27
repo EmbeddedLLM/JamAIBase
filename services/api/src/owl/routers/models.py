@@ -5,20 +5,25 @@ from loguru import logger
 from sqlmodel import func, select
 
 from owl.db import AsyncSession, yield_async_session
-from owl.db.models import Deployment, ModelConfig
+from owl.db.models import Deployment, ModelConfig, Organization
+from owl.tasks.gen_table import replace_gen_table_models
 from owl.types import (
     CloudProvider,
     DeploymentCreate,
     DeploymentRead,
     DeploymentUpdate,
+    GenTableModelReplaceProgressKeys,
+    GenTableModelReplaceRequest,
     ListQuery,
     ModelConfigCreate,
     ModelConfigRead,
     ModelConfigUpdate,
+    ModelType,
     OkResponse,
     Page,
     UserAuth,
 )
+from owl.utils import uuid7_str
 from owl.utils.auth import auth_user_service_key, has_permissions
 from owl.utils.dates import now
 from owl.utils.exceptions import (
@@ -26,6 +31,14 @@ from owl.utils.exceptions import (
     ResourceExistsError,
     ResourceNotFoundError,
     handle_exception,
+)
+from owl.utils.gen_table_model_replace import (
+    acquire_model_replace_lock,
+    delete_model_replace_progress,
+    get_model_replace_lock,
+    initialize_model_replace_progress,
+    list_recent_model_replace_progress_keys,
+    release_model_replace_lock,
 )
 
 router = APIRouter()
@@ -316,3 +329,76 @@ async def delete_deployment(
     await session.delete(deployment)
     await session.commit()
     return OkResponse()
+
+
+@router.post(
+    "/v2/models/replace",
+    summary="Replace model IDs in GenTable generation configs.",
+    description="Permissions: `system.MEMBER`.",
+)
+@handle_exception
+async def replace_gen_table_model_ids(
+    request: Request,
+    user: Annotated[UserAuth, Depends(auth_user_service_key)],
+    session: Annotated[AsyncSession, Depends(yield_async_session)],
+    body: GenTableModelReplaceRequest,
+) -> OkResponse:
+    logger.info(f"{request.state.id} - Replacing GenTable model IDs: {body}")
+    has_permissions(user, ["system.MEMBER"])
+    if body.organization_ids is not None:
+        for organization_id in body.organization_ids:
+            await Organization.get(session, organization_id, name="Organization")
+    model_configs = {
+        model_id: await ModelConfig.get(session, model_id, name="Model config")
+        for model_id in sorted(set(body.mapping) | set(body.mapping.values()))
+    }
+    embedding_model_ids = [
+        model_id
+        for model_id, model_config in model_configs.items()
+        if model_config is not None and model_config.type == ModelType.EMBED
+    ]
+    if embedding_model_ids:
+        raise BadInputError(f"Replacing embedding model is not supported: {embedding_model_ids}.")
+    progress_key = f"gen_table_model_replace:{uuid7_str()}"
+    if not await acquire_model_replace_lock(progress_key):
+        active_progress_key = await get_model_replace_lock()
+        raise ResourceExistsError(
+            (
+                "Another GenTable model replace task is already running"
+                + (f': progress_key="{active_progress_key}".' if active_progress_key else ".")
+            )
+        )
+    try:
+        await initialize_model_replace_progress(
+            progress_key=progress_key,
+            mapping=body.mapping,
+            organization_ids=body.organization_ids,
+            requested_by=user.id,
+        )
+        replace_gen_table_models.delay(
+            mapping=body.mapping,
+            organization_ids=body.organization_ids,
+            progress_key=progress_key,
+            requested_by=user.id,
+        )
+    except Exception:
+        await release_model_replace_lock(progress_key)
+        await delete_model_replace_progress(progress_key)
+        raise
+    logger.bind(user_id=user.id).info(
+        f'Enqueued GenTable model replace task progress_key="{progress_key}".'
+    )
+    return OkResponse(progress_key=progress_key)
+
+
+@router.get(
+    "/v2/models/replace/progress_keys",
+    summary="List recent GenTable model replacement progress keys.",
+    description="Permissions: `system.MEMBER`.",
+)
+@handle_exception
+async def list_gen_table_model_replace_progress_keys(
+    user: Annotated[UserAuth, Depends(auth_user_service_key)],
+) -> GenTableModelReplaceProgressKeys:
+    has_permissions(user, ["system.MEMBER"])
+    return GenTableModelReplaceProgressKeys(items=await list_recent_model_replace_progress_keys())
