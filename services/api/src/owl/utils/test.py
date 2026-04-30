@@ -395,6 +395,20 @@ OPENAI_O4_MINI_CONFIG = ModelConfigCreate(
     context_length=1280000,
     languages=["en"],
 )
+BEDROCK_CLAUDE_HAIKU_CONFIG = ModelConfigCreate(
+    id="anthropic/claude-haiku-4-5-bedrock",
+    name="Bedrock Claude 4.5 Haiku",
+    type=ModelType.LLM,
+    capabilities=[
+        ModelCapability.CHAT,
+        ModelCapability.IMAGE,
+        ModelCapability.REASONING,
+        ModelCapability.TOOL,
+    ],
+    context_length=128000,
+    languages=["en"],
+    owned_by="anthropic",
+)
 ELLM_DESCRIBE_CONFIG = ModelConfigCreate(
     id="ellm/describe",
     name="Describe Message",
@@ -479,6 +493,13 @@ OPENAI_O4_MINI_DEPLOYMENT = DeploymentCreate(
     name=f"{OPENAI_O4_MINI_CONFIG.name} Deployment",
     provider=CloudProvider.OPENAI,
     routing_id=OPENAI_O4_MINI_CONFIG.id,
+    api_base="",
+)
+BEDROCK_CLAUDE_HAIKU_DEPLOYMENT = DeploymentCreate(
+    model_id=BEDROCK_CLAUDE_HAIKU_CONFIG.id,
+    name=f"{BEDROCK_CLAUDE_HAIKU_CONFIG.name} Deployment",
+    provider=CloudProvider.BEDROCK,
+    routing_id="global.anthropic.claude-haiku-4-5-20251001-v1:0",
     api_base="",
 )
 ELLM_DESCRIBE_DEPLOYMENT = DeploymentCreate(

@@ -54,6 +54,8 @@ from owl.utils.exceptions import (
     ResourceNotFoundError,
 )
 from owl.utils.test import (
+    BEDROCK_CLAUDE_HAIKU_CONFIG,
+    BEDROCK_CLAUDE_HAIKU_DEPLOYMENT,
     ELLM_EMBEDDING_CONFIG,
     ELLM_EMBEDDING_DEPLOYMENT,
     GPT_4O_MINI_CONFIG,
@@ -146,6 +148,7 @@ def setup():
             create_model_config(GPT_4O_MINI_CONFIG),
             create_model_config(GPT_5_MINI_CONFIG),
             create_model_config(OPENAI_O4_MINI_CONFIG),
+            create_model_config(BEDROCK_CLAUDE_HAIKU_CONFIG),
             create_model_config(
                 {
                     # "id": "openai/Qwen/Qwen-2-Audio-7B",
@@ -166,6 +169,7 @@ def setup():
                 create_deployment(GPT_4O_MINI_DEPLOYMENT),
                 create_deployment(GPT_5_MINI_DEPLOYMENT),
                 create_deployment(OPENAI_O4_MINI_DEPLOYMENT),
+                create_deployment(BEDROCK_CLAUDE_HAIKU_DEPLOYMENT),
                 create_deployment(
                     DeploymentCreate(
                         model_id=llm_config_audio.id,
@@ -1759,6 +1763,60 @@ def test_chat_history_and_sequential_regen(
         assert "4" in output, output
         assert "5" in output, output
         assert "8" in output, output
+
+
+@pytest.mark.parametrize("table_type", TABLE_TYPES)
+@pytest.mark.parametrize("stream", **STREAM_PARAMS)
+def test_bedrock_multiturn_handle_blank_content(
+    setup: ServingContext,
+    table_type: TableType,
+    stream: bool,
+):
+    client = JamAI(user_id=setup.user_id, project_id=setup.project_id)
+    cols = [
+        ColumnSchemaCreate(id="input", dtype="str"),
+        ColumnSchemaCreate(
+            id="output",
+            dtype="str",
+            gen_config=LLMGenConfig(
+                system_prompt="You are a calculator.",
+                prompt="${input}",
+                multi_turn=True,
+                temperature=0.001,
+                top_p=0.001,
+                max_tokens=1050,  # higher than thinking.budget_tokens
+                model="anthropic/claude-haiku-4-5-bedrock",
+                reasoning_effort="low",
+            ),
+        ),
+    ]
+    with _create_table(client, table_type, cols=cols) as table:
+        assert isinstance(table, TableMetaResponse)
+        # Initialise chat thread and set output format
+        response = client.table.add_table_rows(
+            table_type,
+            MultiRowAddRequest(
+                table_id=table.id,
+                data=[
+                    dict(input="x = 0", output="0"),
+                    dict(input="Add 1", output=""),
+                    dict(input="Add 2", output=""),
+                    dict(input="Add 1", output="4"),
+                ],
+                stream=False,
+            ),
+        )
+        # Test adding one row
+        response = client.table.add_table_rows(
+            table_type,
+            MultiRowAddRequest(
+                table_id=table.id,
+                data=[dict(input="Add 1")],
+                stream=stream,
+            ),
+        )
+        output = _collect_text(response, "output")
+        assert "5" in output, output
 
 
 @pytest.mark.parametrize("table_type", TABLE_TYPES)

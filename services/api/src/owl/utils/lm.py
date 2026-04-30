@@ -760,6 +760,35 @@ class DeploymentRouter:
 
     ### --- Chat Completion --- ###
 
+    @staticmethod
+    def _prepare_bedrock_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Replace empty string with a dot as Bedrock provider treats empty string as no content and throws error."""
+        messages = deepcopy(messages)
+        for message in messages:
+            content = message.get("content", None)
+            if isinstance(content, str):
+                if content.strip() == "":
+                    message["content"] = "."
+            elif isinstance(content, list):
+                if len(content) == 0:
+                    message["content"] = [{"type": "text", "text": "."}]
+                    continue
+                for part in content:
+                    if (
+                        isinstance(part, dict)
+                        and part.get("type") == "text"
+                        and (part.get("text", "") or "").strip() == ""
+                    ):
+                        part["text"] = "."
+        return messages
+
+    def _prepare_provider_specific_messages(
+        self, messages: list[dict], ctx: DeploymentContext
+    ) -> list[dict]:
+        if ctx.deployment.provider == CloudProvider.BEDROCK:
+            return self._prepare_bedrock_messages(messages)
+        return messages
+
     async def _prepare_chat(
         self,
         *,
@@ -1154,10 +1183,10 @@ class DeploymentRouter:
             with attempt:
                 async with self._get_deployment(messages=messages, **hyperparams) as ctx:
                     self._prepare_hyperparams(ctx, hyperparams)
-                    # logger.warning(f"{hyperparams=}")
+                    prepared_messages = self._prepare_provider_specific_messages(messages, ctx)
                     if ctx.use_openai_responses:
                         async for chunk in self._openai_responses_stream(
-                            ctx, messages, **hyperparams
+                            ctx, prepared_messages, **hyperparams
                         ):
                             yield chunk
                     else:
@@ -1166,7 +1195,7 @@ class DeploymentRouter:
                             api_key=ctx.api_key,
                             base_url=ctx.deployment.api_base or None,
                             model=ctx.routing_id,
-                            messages=messages,
+                            messages=prepared_messages,
                             stream=True,
                             stream_options={"include_usage": True},
                             **hyperparams,
@@ -1191,14 +1220,15 @@ class DeploymentRouter:
             with attempt:
                 async with self._get_deployment(messages=messages, **hyperparams) as ctx:
                     self._prepare_hyperparams(ctx, hyperparams)
+                    prepared_messages = self._prepare_provider_specific_messages(messages, ctx)
                     if ctx.use_openai_responses:
-                        return await self._openai_responses(ctx, messages, **hyperparams)
+                        return await self._openai_responses(ctx, prepared_messages, **hyperparams)
                     response = await acompletion(
                         timeout=self.config.timeout,
                         api_key=ctx.api_key,
                         base_url=ctx.deployment.api_base or None,
                         model=ctx.routing_id,
-                        messages=messages,
+                        messages=prepared_messages,
                         stream=False,
                         **hyperparams,
                     )

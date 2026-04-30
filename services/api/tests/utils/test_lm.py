@@ -159,6 +159,42 @@ def _make_vllm_context(*, is_reasoning_model: bool = True) -> DeploymentContext:
     )
 
 
+def test_prepare_bedrock_messages_should_replace_blank_content() -> None:
+    messages = [
+        {"role": "system", "content": ""},
+        {"role": "user", "content": "  "},
+        {"role": "assistant", "content": ""},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": ""},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            ],
+        },
+        {"role": "user", "content": []},
+        {"role": "assistant", "content": "ok"},
+    ]
+
+    prepared = DeploymentRouter._prepare_bedrock_messages(messages)
+
+    assert prepared == [
+        {"role": "system", "content": "."},
+        {"role": "user", "content": "."},
+        {"role": "assistant", "content": "."},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "."},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            ],
+        },
+        {"role": "user", "content": [{"type": "text", "text": "."}]},
+        {"role": "assistant", "content": "ok"},
+    ]
+    assert messages[0]["content"] == ""
+    assert messages[3]["content"][0]["text"] == ""
+
+
 def test_inference_provider_should_prefer_vllm_cloud_over_owned_by() -> None:
     router = _make_router()
 

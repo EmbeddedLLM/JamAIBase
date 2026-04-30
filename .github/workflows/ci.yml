@@ -134,6 +134,7 @@ jobs:
           echo 'OWL_FLUSH_CLICKHOUSE_BUFFER_SEC=5' >> .env
         env:
           OWL_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OWL_BEDROCK_API_KEY: ${{ secrets.BEDROCK_API_KEY }}
           OWL_COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           OWL_DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           OWL_ELLM_API_KEY: ${{ secrets.CUSTOM_API_KEY }}
