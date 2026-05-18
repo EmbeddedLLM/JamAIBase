@@ -3,6 +3,44 @@
     "meta": {
       "icon": "openai"
     },
+    "id": "openai/gpt-5.5",
+    "name": "OpenAI GPT-5.5",
+    "type": "llm",
+    "context_length": 1050000,
+    "max_output_tokens": 128000,
+    "capabilities": ["chat", "image", "reasoning", "tool"],
+    "languages": ["en", "mul"],
+    "llm_input_cost_per_mtoken": 5.0,
+    "llm_output_cost_per_mtoken": 30.0,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": 272000,
+          "input_cost_per_mtoken": 5.0,
+          "cached_input_cost_per_mtoken": 0.5,
+          "output_cost_per_mtoken": 30.0
+        },
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 10.0,
+          "cached_input_cost_per_mtoken": 1.0,
+          "output_cost_per_mtoken": 45.0
+        }
+      ]
+    },
+    "deployments": [
+      {
+        "name": "OpenAI GPT-5.5 Deployment",
+        "provider": "openai",
+        "routing_id": "openai/gpt-5.5",
+        "api_base": ""
+      }
+    ]
+  },
+  {
+    "meta": {
+      "icon": "openai"
+    },
     "id": "openai/gpt-5.4",
     "name": "OpenAI GPT-5.4",
     "type": "llm",
@@ -12,6 +50,22 @@
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 2.5,
     "llm_output_cost_per_mtoken": 15.0,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": 272000,
+          "input_cost_per_mtoken": 2.5,
+          "cached_input_cost_per_mtoken": 0.25,
+          "output_cost_per_mtoken": 15.0
+        },
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 5.0,
+          "cached_input_cost_per_mtoken": 0.5,
+          "output_cost_per_mtoken": 22.5
+        }
+      ]
+    },
     "deployments": [
       {
         "name": "OpenAI GPT-5.4 Deployment",
@@ -34,6 +88,16 @@
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 0.75,
     "llm_output_cost_per_mtoken": 4.5,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 0.75,
+          "cached_input_cost_per_mtoken": 0.075,
+          "output_cost_per_mtoken": 4.5
+        }
+      ]
+    },
     "deployments": [
       {
         "name": "OpenAI GPT-5.4 Mini Deployment",
@@ -56,6 +120,16 @@
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 0.2,
     "llm_output_cost_per_mtoken": 1.25,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 0.2,
+          "cached_input_cost_per_mtoken": 0.02,
+          "output_cost_per_mtoken": 1.25
+        }
+      ]
+    },
     "deployments": [
       {
         "name": "OpenAI GPT-5.4 Nano Deployment",
@@ -67,110 +141,31 @@
   },
   {
     "meta": {
-      "icon": "openai"
+      "icon": "anthropic"
     },
-    "id": "openai/gpt-5.2",
-    "name": "OpenAI GPT-5.2",
+    "id": "anthropic/claude-opus-4-7",
+    "name": "Anthropic Claude Opus 4.7",
     "type": "llm",
-    "context_length": 400000,
-    "max_output_tokens": 128000,
+    "context_length": 200000,
+    "max_output_tokens": 64000,
     "capabilities": ["chat", "image", "reasoning", "tool"],
     "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 1.75,
-    "llm_output_cost_per_mtoken": 14.0,
-    "deployments": [
-      {
-        "name": "OpenAI GPT-5.2 Deployment",
-        "provider": "openai",
-        "routing_id": "openai/gpt-5.2",
-        "api_base": ""
-      }
-    ]
-  },
-  {
-    "meta": {
-      "icon": "openai"
+    "llm_input_cost_per_mtoken": 5.0,
+    "llm_output_cost_per_mtoken": 25.0,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 5.0,
+          "output_cost_per_mtoken": 25.0
+        }
+      ]
     },
-    "id": "openai/gpt-5.1",
-    "name": "OpenAI GPT-5.1",
-    "type": "llm",
-    "context_length": 400000,
-    "max_output_tokens": 128000,
-    "capabilities": ["chat", "image", "reasoning", "tool"],
-    "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 1.25,
-    "llm_output_cost_per_mtoken": 10.0,
     "deployments": [
       {
-        "name": "OpenAI GPT-5.1 Deployment",
-        "provider": "openai",
-        "routing_id": "openai/gpt-5.1",
-        "api_base": ""
-      }
-    ]
-  },
-  {
-    "meta": {
-      "icon": "openai"
-    },
-    "id": "openai/gpt-5",
-    "name": "OpenAI GPT-5",
-    "type": "llm",
-    "context_length": 400000,
-    "max_output_tokens": 128000,
-    "capabilities": ["chat", "image", "reasoning", "tool"],
-    "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 1.25,
-    "llm_output_cost_per_mtoken": 10.0,
-    "deployments": [
-      {
-        "name": "OpenAI GPT-5 Deployment",
-        "provider": "openai",
-        "routing_id": "openai/gpt-5",
-        "api_base": ""
-      }
-    ]
-  },
-  {
-    "meta": {
-      "icon": "openai"
-    },
-    "id": "openai/gpt-5-mini",
-    "name": "OpenAI GPT-5 Mini",
-    "type": "llm",
-    "context_length": 400000,
-    "max_output_tokens": 128000,
-    "capabilities": ["chat", "image", "reasoning", "tool"],
-    "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 0.25,
-    "llm_output_cost_per_mtoken": 2.0,
-    "deployments": [
-      {
-        "name": "OpenAI GPT-5 Mini Deployment",
-        "provider": "openai",
-        "routing_id": "openai/gpt-5-mini",
-        "api_base": ""
-      }
-    ]
-  },
-  {
-    "meta": {
-      "icon": "openai"
-    },
-    "id": "openai/gpt-5-nano",
-    "name": "OpenAI GPT-5 Nano",
-    "type": "llm",
-    "context_length": 400000,
-    "max_output_tokens": 128000,
-    "capabilities": ["chat", "image", "reasoning", "tool"],
-    "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 0.05,
-    "llm_output_cost_per_mtoken": 0.4,
-    "deployments": [
-      {
-        "name": "OpenAI GPT-5 Nano Deployment",
-        "provider": "openai",
-        "routing_id": "openai/gpt-5-nano",
+        "name": "Anthropic Claude Opus 4.7 Deployment",
+        "provider": "anthropic",
+        "routing_id": "anthropic/claude-opus-4-7",
         "api_base": ""
       }
     ]
@@ -188,33 +183,20 @@
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 5.0,
     "llm_output_cost_per_mtoken": 25.0,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 5.0,
+          "output_cost_per_mtoken": 25.0
+        }
+      ]
+    },
     "deployments": [
       {
         "name": "Anthropic Claude Opus 4.6 Deployment",
         "provider": "anthropic",
         "routing_id": "anthropic/claude-opus-4-6",
-        "api_base": ""
-      }
-    ]
-  },
-  {
-    "meta": {
-      "icon": "anthropic"
-    },
-    "id": "anthropic/claude-opus-4-5",
-    "name": "Anthropic Claude Opus 4.5",
-    "type": "llm",
-    "context_length": 200000,
-    "max_output_tokens": 64000,
-    "capabilities": ["chat", "image", "reasoning", "tool"],
-    "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 5.0,
-    "llm_output_cost_per_mtoken": 25.0,
-    "deployments": [
-      {
-        "name": "Anthropic Claude Opus 4.5 Deployment",
-        "provider": "anthropic",
-        "routing_id": "anthropic/claude-opus-4-5",
         "api_base": ""
       }
     ]
@@ -232,33 +214,20 @@
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 3.0,
     "llm_output_cost_per_mtoken": 15.0,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 3.0,
+          "output_cost_per_mtoken": 15.0
+        }
+      ]
+    },
     "deployments": [
       {
         "name": "Anthropic Claude Sonnet 4.6 Deployment",
         "provider": "anthropic",
         "routing_id": "anthropic/claude-sonnet-4-6",
-        "api_base": ""
-      }
-    ]
-  },
-  {
-    "meta": {
-      "icon": "anthropic"
-    },
-    "id": "anthropic/claude-sonnet-4-5",
-    "name": "Anthropic Claude Sonnet 4.5",
-    "type": "llm",
-    "context_length": 200000,
-    "max_output_tokens": 64000,
-    "capabilities": ["chat", "image", "reasoning", "tool"],
-    "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 3.0,
-    "llm_output_cost_per_mtoken": 15.0,
-    "deployments": [
-      {
-        "name": "Anthropic Claude Sonnet 4.5 Deployment",
-        "provider": "anthropic",
-        "routing_id": "anthropic/claude-sonnet-4-5",
         "api_base": ""
       }
     ]
@@ -276,6 +245,15 @@
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 1.0,
     "llm_output_cost_per_mtoken": 5.0,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 1.0,
+          "output_cost_per_mtoken": 5.0
+        }
+      ]
+    },
     "deployments": [
       {
         "name": "Anthropic Claude Haiku 4.5 Deployment",
@@ -298,6 +276,20 @@
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 4.0,
     "llm_output_cost_per_mtoken": 18.0,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": 200000,
+          "input_cost_per_mtoken": 2.0,
+          "output_cost_per_mtoken": 12.0
+        },
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 4.0,
+          "output_cost_per_mtoken": 18.0
+        }
+      ]
+    },
     "deployments": [
       {
         "name": "Google Gemini 3.1 Pro Preview Deployment",
@@ -320,6 +312,15 @@
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 0.5,
     "llm_output_cost_per_mtoken": 3.0,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 0.5,
+          "output_cost_per_mtoken": 3.0
+        }
+      ]
+    },
     "deployments": [
       {
         "name": "Google Gemini 3 Flash Preview Deployment",
@@ -331,25 +332,32 @@
   },
   {
     "meta": {
-      "icon": "meta"
+      "icon": "google"
     },
-    "id": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
-    "name": "Meta Llama 4 Maverick (400B-A17B)",
+    "id": "google/gemini-3.1-flash-lite",
+    "name": "Google Gemini 3.1 Flash Lite",
     "type": "llm",
-    "context_length": 262144,
-    "capabilities": ["chat", "image"],
+    "context_length": 1048576,
+    "max_output_tokens": 65536,
+    "capabilities": ["chat", "image", "reasoning", "tool"],
     "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 0.35,
-    "llm_output_cost_per_mtoken": 0.95,
+    "llm_input_cost_per_mtoken": 0.5,
+    "llm_output_cost_per_mtoken": 3.0,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 0.25,
+          "output_cost_per_mtoken": 1.5
+        }
+      ]
+    },
     "deployments": [
       {
-        "name": "Meta Llama 4 Maverick (400B-A17B) Deployment",
-        "huggingface_id": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
-        "cpu_count": "4",
-        "memory_gb": "24",
-        "required_vram": "320",
-        "num_replicas": 1,
-        "provider": "vllm"
+        "name": "Google Gemini 3.1 Flash Lite Deployment",
+        "provider": "gemini",
+        "routing_id": "gemini/gemini-3.1-flash-lite",
+        "api_base": ""
       }
     ]
   },
@@ -357,45 +365,30 @@
     "meta": {
       "icon": "deepseek"
     },
-    "id": "deepseek-ai/DeepSeek-V3.2",
-    "name": "DeepSeek V3.2 (685B-A22B)",
+    "id": "deepseek-ai/DeepSeek-V4-Flash",
+    "name": "DeepSeek V4 Flash (284B-A13B)",
     "type": "llm",
-    "context_length": 131072,
-    "capabilities": ["chat", "reasoning", "tool"],
-    "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 0.9,
-    "llm_output_cost_per_mtoken": 1.2,
-    "deployments": [
-      {
-        "name": "DeepSeek V3.2 (685B-A22B) Deployment",
-        "huggingface_id": "deepseek-ai/DeepSeek-V3.2",
-        "cpu_count": "4",
-        "memory_gb": "8",
-        "required_vram": "1100",
-        "num_replicas": 1,
-        "provider": "vllm"
-      }
-    ]
-  },
-  {
-    "meta": {
-      "icon": "deepseek"
-    },
-    "id": "deepseek-ai/DeepSeek-V3-0324",
-    "name": "DeepSeek V3 (685B-A22B)",
-    "type": "llm",
-    "context_length": 131072,
+    "context_length": 1048576,
     "capabilities": ["chat"],
     "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 0.9,
-    "llm_output_cost_per_mtoken": 1.2,
+    "llm_input_cost_per_mtoken": 0.45,
+    "llm_output_cost_per_mtoken": 1.35,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 0.45,
+          "output_cost_per_mtoken": 1.35
+        }
+      ]
+    },
     "deployments": [
       {
-        "name": "DeepSeek V3 (685B-A22B) Deployment",
-        "huggingface_id": "deepseek-ai/DeepSeek-V3-0324",
+        "name": "DeepSeek V4 Flash (284B-A13B) Deployment",
+        "huggingface_id": "deepseek-ai/DeepSeek-V4-Flash",
         "cpu_count": "4",
         "memory_gb": "8",
-        "required_vram": "1100",
+        "required_vram": "600",
         "num_replicas": 1,
         "provider": "vllm"
       }
@@ -405,21 +398,30 @@
     "meta": {
       "icon": "deepseek"
     },
-    "id": "deepseek-ai/DeepSeek-R1",
-    "name": "DeepSeek R1 (685B-A22B)",
+    "id": "deepseek-ai/DeepSeek-V4-Pro",
+    "name": "DeepSeek V4 Pro (1.6T-A49B)",
     "type": "llm",
-    "context_length": 131072,
+    "context_length": 1048576,
     "capabilities": ["chat"],
     "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 1.6,
-    "llm_output_cost_per_mtoken": 2.5,
+    "llm_input_cost_per_mtoken": 2.0,
+    "llm_output_cost_per_mtoken": 4.0,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 2.0,
+          "output_cost_per_mtoken": 4.0
+        }
+      ]
+    },
     "deployments": [
       {
-        "name": "DeepSeek R1 (685B-A22B) Deployment",
-        "huggingface_id": "deepseek-ai/DeepSeek-R1",
+        "name": "DeepSeek V4 Pro (1.6T-A49B) Deployment",
+        "huggingface_id": "deepseek-ai/DeepSeek-V4-Pro",
         "cpu_count": "4",
         "memory_gb": "8",
-        "required_vram": "1100",
+        "required_vram": "1600",
         "num_replicas": 1,
         "provider": "vllm"
       }
@@ -437,6 +439,15 @@
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 0.7,
     "llm_output_cost_per_mtoken": 3.8,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 0.7,
+          "output_cost_per_mtoken": 3.8
+        }
+      ]
+    },
     "deployments": [
       {
         "name": "Qwen 3.5 (397B-A17B) Deployment",
@@ -460,7 +471,16 @@
     "capabilities": ["chat", "image", "reasoning", "tool"],
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 0.4,
-    "llm_output_cost_per_mtoken": 2.0,
+    "llm_output_cost_per_mtoken": 0.95,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 0.4,
+          "output_cost_per_mtoken": 0.95
+        }
+      ]
+    },
     "deployments": [
       {
         "name": "Qwen 3.5 (122B-A10B) Deployment",
@@ -477,165 +497,30 @@
     "meta": {
       "icon": "qwen"
     },
-    "id": "Qwen/Qwen3.5-35B-A3B",
-    "name": "Qwen 3.5 (35B-A3B)",
+    "id": "Qwen/Qwen3.6-35B-A3B",
+    "name": "Qwen 3.6 (35B-A3B)",
     "type": "llm",
     "context_length": 256000,
     "capabilities": ["chat", "image", "reasoning", "tool"],
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 0.25,
-    "llm_output_cost_per_mtoken": 0.8,
+    "llm_output_cost_per_mtoken": 0.55,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 0.25,
+          "output_cost_per_mtoken": 0.55
+        }
+      ]
+    },
     "deployments": [
       {
-        "name": "Qwen 3.5 (35B-A3B) Deployment",
-        "huggingface_id": "Qwen/Qwen3.5-35B-A3B-FP8",
+        "name": "Qwen 3.6 (35B-A3B) Deployment",
+        "huggingface_id": "Qwen/Qwen3.6-35B-A3B-FP8",
         "cpu_count": "8",
         "memory_gb": "16",
         "required_vram": "50",
-        "num_replicas": 1,
-        "provider": "vllm"
-      }
-    ]
-  },
-  {
-    "meta": {
-      "icon": "qwen"
-    },
-    "id": "Qwen/Qwen3-235B-A22B-Thinking",
-    "name": "Qwen 3 Thinking (235B-A22B)",
-    "type": "llm",
-    "context_length": 256000,
-    "capabilities": ["chat", "reasoning"],
-    "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 0.7,
-    "llm_output_cost_per_mtoken": 0.7,
-    "deployments": [
-      {
-        "name": "Qwen 3 Thinking (235B-A22B) Deployment",
-        "huggingface_id": "Qwen/Qwen3-235B-A22B-Thinking-2507-FP8",
-        "cpu_count": "8",
-        "memory_gb": "16",
-        "required_vram": "280",
-        "num_replicas": 1,
-        "provider": "vllm"
-      }
-    ]
-  },
-  {
-    "meta": {
-      "icon": "qwen"
-    },
-    "id": "Qwen/Qwen3-235B-A22B-Instruct",
-    "name": "Qwen 3 (235B-A22B)",
-    "type": "llm",
-    "context_length": 256000,
-    "capabilities": ["chat"],
-    "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 0.7,
-    "llm_output_cost_per_mtoken": 0.7,
-    "deployments": [
-      {
-        "name": "Qwen 3 (235B-A22B) Deployment",
-        "huggingface_id": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8",
-        "cpu_count": "8",
-        "memory_gb": "16",
-        "required_vram": "280",
-        "num_replicas": 1,
-        "provider": "vllm"
-      }
-    ]
-  },
-  {
-    "meta": {
-      "icon": "qwen"
-    },
-    "id": "Qwen/Qwen3-30B-A3B-Instruct",
-    "name": "Qwen 3 (30B-A3B)",
-    "type": "llm",
-    "context_length": 256000,
-    "capabilities": ["chat"],
-    "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 0.25,
-    "llm_output_cost_per_mtoken": 0.25,
-    "deployments": [
-      {
-        "name": "Qwen 3 (30B-A3B) Deployment",
-        "huggingface_id": "Qwen/Qwen3-30B-A3B-Instruct-2507-FP8",
-        "cpu_count": "4",
-        "memory_gb": "8",
-        "required_vram": "42",
-        "num_replicas": 1,
-        "provider": "vllm"
-      }
-    ]
-  },
-  {
-    "meta": {
-      "icon": "qwen"
-    },
-    "id": "Qwen/Qwen3-VL-235B-A22B-Thinking",
-    "name": "Qwen 3 VL Thinking (235B-A22B)",
-    "type": "llm",
-    "context_length": 256000,
-    "capabilities": ["chat", "image", "reasoning"],
-    "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 0.75,
-    "llm_output_cost_per_mtoken": 0.75,
-    "deployments": [
-      {
-        "name": "Qwen 3 VL Thinking (235B-A22B) Deployment",
-        "huggingface_id": "Qwen/Qwen3-VL-235B-A22B-Thinking-FP8",
-        "cpu_count": "8",
-        "memory_gb": "32",
-        "required_vram": "280",
-        "num_replicas": 1,
-        "provider": "vllm"
-      }
-    ]
-  },
-  {
-    "meta": {
-      "icon": "qwen"
-    },
-    "id": "Qwen/Qwen3-VL-235B-A22B-Instruct",
-    "name": "Qwen 3 VL (235B-A22B)",
-    "type": "llm",
-    "context_length": 256000,
-    "capabilities": ["chat", "image"],
-    "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 0.75,
-    "llm_output_cost_per_mtoken": 0.75,
-    "deployments": [
-      {
-        "name": "Qwen 3 VL (235B-A22B) Deployment",
-        "huggingface_id": "Qwen/Qwen3-VL-235B-A22B-Instruct-FP8",
-        "cpu_count": "8",
-        "memory_gb": "32",
-        "required_vram": "280",
-        "num_replicas": 1,
-        "provider": "vllm"
-      }
-    ]
-  },
-  {
-    "meta": {
-      "icon": "qwen"
-    },
-    "id": "Qwen/Qwen3-VL-30B-A3B-Instruct",
-    "name": "Qwen 3 VL (30B-A3B)",
-    "type": "llm",
-    "context_length": 256000,
-    "capabilities": ["chat", "image"],
-    "languages": ["en", "mul"],
-    "llm_input_cost_per_mtoken": 0.3,
-    "llm_output_cost_per_mtoken": 0.3,
-    "deployments": [
-      {
-        "name": "Qwen 3 VL (30B-A3B) Deployment",
-        "huggingface_id": "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8",
-        "cpu_count": "4",
-        "memory_gb": "16",
-        "required_vram": "42",
         "num_replicas": 1,
         "provider": "vllm"
       }
@@ -653,6 +538,15 @@
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 0.4,
     "llm_output_cost_per_mtoken": 1.4,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 0.4,
+          "output_cost_per_mtoken": 1.4
+        }
+      ]
+    },
     "deployments": [
       {
         "name": "MiniMax M2.5 (230B-A10B) Deployment",
@@ -669,18 +563,27 @@
     "meta": {
       "icon": "z_ai"
     },
-    "id": "zai-org/GLM-5",
-    "name": "GLM 5 (744B-A40B)",
+    "id": "zai-org/GLM-5.1",
+    "name": "GLM 5.1 (744B-A40B)",
     "type": "llm",
     "context_length": 202752,
     "capabilities": ["chat", "reasoning", "tool"],
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 1.2,
     "llm_output_cost_per_mtoken": 3.4,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 1.2,
+          "output_cost_per_mtoken": 3.4
+        }
+      ]
+    },
     "deployments": [
       {
-        "name": "GLM 5 (744B-A40B) Deployment",
-        "huggingface_id": "zai-org/GLM-5",
+        "name": "GLM 5.1 (744B-A40B) Deployment",
+        "huggingface_id": "zai-org/GLM-5.1",
         "cpu_count": "4",
         "memory_gb": "16",
         "required_vram": "744",
@@ -693,18 +596,27 @@
     "meta": {
       "icon": "kimi"
     },
-    "id": "moonshotai/Kimi-K2.5",
-    "name": "Kimi K2.5 (1T-A32B)",
+    "id": "moonshotai/Kimi-K2.6",
+    "name": "Kimi K2.6 (1T-A32B)",
     "type": "llm",
     "context_length": 256000,
     "capabilities": ["chat", "image", "reasoning", "tool"],
     "languages": ["en", "mul"],
     "llm_input_cost_per_mtoken": 1.2,
     "llm_output_cost_per_mtoken": 3.4,
+    "llm_pricing_config": {
+      "tiers": [
+        {
+          "up_to_total_tokens": null,
+          "input_cost_per_mtoken": 1.2,
+          "output_cost_per_mtoken": 3.4
+        }
+      ]
+    },
     "deployments": [
       {
-        "name": "Kimi K2.5 (1T-A32B) Deployment",
-        "huggingface_id": "moonshotai/Kimi-K2.5",
+        "name": "Kimi K2.6 (1T-A32B) Deployment",
+        "huggingface_id": "moonshotai/Kimi-K2.6",
         "cpu_count": "4",
         "memory_gb": "16",
         "required_vram": "512",
