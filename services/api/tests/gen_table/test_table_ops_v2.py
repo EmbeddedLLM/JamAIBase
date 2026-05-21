@@ -295,6 +295,68 @@ def test_create_delete_table(
             client.table.get_table(table_type, table.id)
 
 
+def test_delete_table_with_child_table(
+    setup: ServingContext,
+):
+    client = JamAI(user_id=setup.superuser_id, project_id=setup.project_id)
+    with create_table(client, TableType.CHAT) as parent:
+        child = client.table.duplicate_table(
+            TableType.CHAT,
+            parent.id,
+            None,
+            create_as_child=True,
+        )
+        try:
+            assert isinstance(child, TableMetaResponse)
+            assert child.parent_id == parent.id
+            with pytest.raises(
+                BadInputError,
+                match=f'Cannot drop table "{parent.id}" because it has child tables.',
+            ):
+                client.table.delete_table(TableType.CHAT, parent.id)
+            assert client.table.get_table(TableType.CHAT, parent.id).id == parent.id
+        finally:
+            client.table.delete_table(TableType.CHAT, child.id)
+
+
+@pytest.mark.parametrize("table_type", TABLE_TYPES)
+def test_duplicate_child_table_as_child(
+    setup: ServingContext,
+    table_type: TableType,
+):
+    client = JamAI(user_id=setup.superuser_id, project_id=setup.project_id)
+    parent_id = "linked-list-parent"
+    child_id = "linked-list-child"
+    grandchild_id = "linked-list-grandchild"
+    client.table.delete_table(table_type, grandchild_id, missing_ok=True)
+    client.table.delete_table(table_type, child_id, missing_ok=True)
+    client.table.delete_table(table_type, parent_id, missing_ok=True)
+
+    with create_table(client, table_type, parent_id) as parent:
+        child = client.table.duplicate_table(
+            table_type,
+            parent.id,
+            child_id,
+            create_as_child=True,
+        )
+        try:
+            assert isinstance(child, TableMetaResponse)
+            assert child.parent_id == parent.id
+            with pytest.raises(
+                BadInputError,
+                match=f'Table "{child.id}" is not a parent table.',
+            ):
+                client.table.duplicate_table(
+                    table_type,
+                    child.id,
+                    grandchild_id,
+                    create_as_child=True,
+                )
+        finally:
+            client.table.delete_table(table_type, grandchild_id, missing_ok=True)
+            client.table.delete_table(table_type, child.id)
+
+
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 def test_get_list_tables(
     setup: ServingContext,

@@ -151,9 +151,13 @@ def setup() -> Generator[ConversationContext, None, None]:
                     multimodal_template_table_id=multimodal_template_id,
                 )
             finally:
-                client.table.delete_table(TableType.CHAT, template_id, missing_ok=True)
-                client.table.delete_table(TableType.CHAT, real_template_id, missing_ok=True)
-                client.table.delete_table(TableType.CHAT, multimodal_template_id, missing_ok=True)
+                template_ids = [template_id, real_template_id, multimodal_template_id]
+                for _template_id in template_ids:
+                    children = client.table.list_tables(TableType.CHAT, parent_id=_template_id)
+                    for child in children.items:
+                        client.table.delete_table(TableType.CHAT, child.id, missing_ok=True)
+                for _template_id in template_ids:
+                    client.table.delete_table(TableType.CHAT, _template_id, missing_ok=True)
 
 
 def _create_conversation_and_get_id(

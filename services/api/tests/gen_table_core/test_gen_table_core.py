@@ -666,6 +666,43 @@ class TestTableOperations:
             )
             assert exists
 
+    async def test_table_creation_with_child_parent(self, setup: Setup):
+        child = await GenerativeTableCore.duplicate_table(
+            project_id=setup.projects[0].id,
+            table_type=setup.table_type,
+            table_id_src=setup.table_id,
+            table_id_dst="Child Table",
+            create_as_child=True,
+        )
+
+        with pytest.raises(
+            BadInputError,
+            match=f'Table "{child.table_id}" is not a parent table.',
+        ):
+            await GenerativeTableCore.create_table(
+                project_id=setup.projects[0].id,
+                table_type=setup.table_type,
+                table_metadata=TableMetadata(
+                    table_id="Grandchild Table",
+                    title="Grandchild Table",
+                    parent_id=child.table_id,
+                    version="1",
+                    versioning_enabled=True,
+                    meta={},
+                ),
+                column_metadata_list=[
+                    ColumnMetadata(
+                        column_id="col",
+                        table_id="Grandchild Table",
+                        dtype=ColumnDtype.STR,
+                        vlen=0,
+                        gen_config=None,
+                        column_order=1,
+                        meta={},
+                    ),
+                ],
+            )
+
     async def test_table_creation_concurrent(self, session: Session):
         """Test creating a new data table with metadata concurrently"""
         table_type = TableType.ACTION

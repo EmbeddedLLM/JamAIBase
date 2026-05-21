@@ -7,22 +7,22 @@ from owl.utils import mask_content, mask_dict, merge_dict, validate_where_expr
 def test_mask_content():
     # mask_content(x: str | list | dict | np.ndarray | Any) -> str | list | dict | None
     x = "str"
-    assert mask_content(x) == "*** (str_len=3)"
+    assert mask_content(x) == "***"
     x = "long-string"
     assert mask_content(x) == "lo***ng (str_len=11)"
     x = 0
-    assert mask_content(x) is None
+    assert mask_content(x) == "*"
     x = False
-    assert mask_content(x) is None
+    assert mask_content(x) is False
     x = np.ones(3)
     assert mask_content(x) == "array(shape=(3,), dtype=float64)"
     x = ["long-string", np.ones(3), 0]
-    assert mask_content(x) == ["lo***ng (str_len=11)", "array(shape=(3,), dtype=float64)", None]
+    assert mask_content(x) == ["lo***ng (str_len=11)", "array(shape=(3,), dtype=float64)", "*"]
     x = dict(x=["long-string", np.ones(3), 0], y=0, z=dict(a="str"))
     assert mask_content(x) == dict(
-        x=["lo***ng (str_len=11)", "array(shape=(3,), dtype=float64)", None],
-        y=None,
-        z=dict(a="*** (str_len=3)"),
+        x=["lo***ng (str_len=11)", "array(shape=(3,), dtype=float64)", "*"],
+        y="*",
+        z=dict(a="***"),
     )
 
 

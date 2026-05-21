@@ -101,6 +101,7 @@ from owl.utils.exceptions import (
     ModelCapabilityError,
     ResourceExistsError,
     ResourceNotFoundError,
+    UnexpectedError,
 )
 from owl.utils.io import (
     df_to_csv,
@@ -506,7 +507,12 @@ class DBengine:
         )
 
     @contextlib.asynccontextmanager
-    async def transaction(self, schema_id: str = None) -> AsyncIterator[Connection]:
+    async def transaction(
+        self,
+        schema_id: str = None,
+        *,
+        meta: dict[str, Any] | None = None,
+    ) -> AsyncIterator[Connection]:
         """Provide a transactional scope for a series of operations."""
         async with (await self.get_conn_pool()).acquire() as conn:
             async with conn.transaction():
@@ -518,8 +524,8 @@ class DBengine:
                     # No need to log these errors
                     raise
                 except Exception as e:
-                    logger.error(f"Transaction failed: {e}")
-                    raise
+                    logger.bind(**meta).error(f"Transaction failed: {e}")
+                    raise UnexpectedError(str(e)) from e
 
 
 GENTABLE_ENGINE = DBengine()
@@ -552,6 +558,13 @@ class GenerativeTableCore:
         self.num_rows = num_rows
         self.request_id = request_id
         self.schema_id = f"{project_id}_{table_type}"
+        self._meta = {
+            "project_id": project_id,
+            "table_type": table_type,
+            "table_id": table_metadata.table_id,
+            "short_id": table_metadata.short_id,
+            "schema_id": self.schema_id,
+        }
         self.data_table_model = self._create_data_table_row_model(
             table_metadata.table_id, column_metadata_list
         )
@@ -1103,8 +1116,34 @@ class GenerativeTableCore:
             self (GenerativeTableCore): The table instance.
         """
         schema_id = f"{project_id}_{table_type}"
+        _meta = {
+            "project_id": project_id,
+            "table_type": table_type,
+            "table_id": table_metadata.table_id,
+            "short_id": table_metadata.short_id,
+            "schema_id": schema_id,
+        }
 
         ### --- VALIDATIONS --- ###
+        # Check that parent ID is not the same as new ID
+        if table_metadata.parent_id == table_metadata.table_id:
+            raise BadInputError("New table name cannot be the same as the parent table name.")
+        # Ensure parent table exists
+        if table_metadata.parent_id:
+            async with GENTABLE_ENGINE.transaction(meta=_meta) as conn:
+                try:
+                    parent_metadata = await conn.fetchrow(
+                        f'SELECT * FROM "{schema_id}"."TableMetadata" WHERE table_id = $1',
+                        table_metadata.parent_id,
+                    )
+                except UndefinedTableError:
+                    parent_metadata = None
+            if parent_metadata is None:
+                raise ResourceNotFoundError(
+                    f'Parent table "{table_metadata.parent_id}" is not found.'
+                )
+            if parent_metadata["parent_id"] is not None:
+                raise BadInputError(f'Table "{table_metadata.parent_id}" is not a parent table.')
         # Override info and state columns
         column_metadata_list = [
             col for col in column_metadata_list if not (col.is_info_column or col.is_state_column)
@@ -1133,7 +1172,7 @@ class GenerativeTableCore:
 
         ### --- Create metadata tables --- ###
         await cls.create_schemas(project_id)
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=_meta) as conn:
             # Validate column metadata
             await cls._check_columns(
                 conn=conn,
@@ -1162,7 +1201,7 @@ class GenerativeTableCore:
             for col_metadata in column_metadata_list:
                 await cls._upsert_column_metadata(conn, schema_id, col_metadata)
         # Reload table
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=_meta) as conn:
             return await cls._open_table(
                 conn=conn,
                 project_id=project_id,
@@ -1545,8 +1584,12 @@ class GenerativeTableCore:
         """
         Create the project's schemas and metadata tables.
         """
+        _meta = {
+            "project_id": project_id,
+        }
         try:
-            async with GENTABLE_ENGINE.transaction() as conn:
+            async with GENTABLE_ENGINE.transaction(meta=_meta) as conn:
+                await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", project_id)
                 for table_type in TableType:
                     schema_id = f"{project_id}_{table_type}"
                     await conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema_id}"')
@@ -1561,7 +1604,10 @@ class GenerativeTableCore:
         """
         Drops the project's schemas along with all metadata and data tables.
         """
-        async with GENTABLE_ENGINE.transaction() as conn:
+        _meta = {
+            "project_id": project_id,
+        }
+        async with GENTABLE_ENGINE.transaction(meta=_meta) as conn:
             for table_type in TableType:
                 schema_id = f"{project_id}_{table_type}"
                 await conn.execute(f'DROP SCHEMA IF EXISTS "{schema_id}" CASCADE')
@@ -1577,7 +1623,12 @@ class GenerativeTableCore:
         Drops the project's schema along with all metadata and data tables.
         """
         schema_id = f"{project_id}_{table_type}"
-        async with GENTABLE_ENGINE.transaction() as conn:
+        _meta = {
+            "project_id": project_id,
+            "table_type": table_type,
+            "schema_id": schema_id,
+        }
+        async with GENTABLE_ENGINE.transaction(meta=_meta) as conn:
             await conn.execute(f'DROP SCHEMA IF EXISTS "{schema_id}" CASCADE')
 
     ### --- Table CRUD --- ###
@@ -1656,7 +1707,14 @@ class GenerativeTableCore:
             include_data = True
         if isinstance(table_id_dst, str):
             table_id_dst = table_id_dst.strip()
-        async with GENTABLE_ENGINE.transaction() as conn:
+        _meta = {
+            "project_id": project_id,
+            "table_type": table_type,
+            "table_id_src": table_id_src,
+            "table_id_dst": table_id_dst,
+            "schema_id": schema_id,
+        }
+        async with GENTABLE_ENGINE.transaction(meta=_meta) as conn:
             try:
                 if table_id_dst:
                     try:
@@ -1670,10 +1728,10 @@ class GenerativeTableCore:
                     if table_metadata is not None:
                         raise ResourceExistsError(f'Table "{table_id_dst}" already exists.')
                 else:
-                    # Might need to truncate table name
-                    now_str = now().strftime("%Y-%m-%d-%H-%M-%S")
-                    base_name = f"{truncate_table_id(table_id_src)} {now_str}"
                     # Automatically find the next available table name
+                    now_str = now().strftime("%Y-%m-%d-%H-%M-%S")
+                    # Might need to truncate table name
+                    base_name = f"{truncate_table_id(table_id_src)} {now_str}"
                     # The function will raise UndefinedTableError if the table does not exist
                     await conn.execute(
                         f"""
@@ -1736,6 +1794,8 @@ class GenerativeTableCore:
                     raise ResourceNotFoundError(
                         f'Table metadata for "{table_id_src}" is not found.'
                     )
+                if create_as_child and table_meta["parent_id"] is not None:
+                    raise BadInputError(f'Table "{table_id_src}" is not a parent table.')
                 table_meta = dict(table_meta)
                 table_meta["table_id"] = table_id_dst
                 table_meta.pop("short_id", None)
@@ -1810,7 +1870,12 @@ class GenerativeTableCore:
         Returns:
             self (GenerativeTableCore): The table instance.
         """
-        async with GENTABLE_ENGINE.transaction() as conn:
+        _meta = {
+            "project_id": project_id,
+            "table_type": table_type,
+            "table_id": table_id,
+        }
+        async with GENTABLE_ENGINE.transaction(meta=_meta) as conn:
             table = await cls._open_table(
                 conn=conn,
                 project_id=project_id,
@@ -1905,7 +1970,12 @@ class GenerativeTableCore:
             order_by = f'"{order_by}"'
         order_direction = "ASC" if order_ascending else "DESC"
         where = f"WHERE {' AND '.join(filters)}" if len(filters) > 0 else ""
-        async with GENTABLE_ENGINE.transaction() as conn:
+        _meta = {
+            "project_id": project_id,
+            "table_type": table_type,
+            "schema_id": schema_id,
+        }
+        async with GENTABLE_ENGINE.transaction(meta=_meta) as conn:
             try:
                 total = await conn.fetchval(
                     f'SELECT COUNT(*) FROM "{schema_id}"."TableMetadata" {where}',
@@ -1982,7 +2052,7 @@ class GenerativeTableCore:
         Returns:
             num_rows (int): Number of rows in the table.
         """
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             return await self._count_rows(conn)
         return self.num_rows
 
@@ -2004,7 +2074,7 @@ class GenerativeTableCore:
         table_id_src = self.table_id
         short_id_src = self.short_table_id
         short_id_dst = get_internal_id(table_id_dst)
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             try:
                 # Rename data table
                 await conn.execute(
@@ -2067,7 +2137,7 @@ class GenerativeTableCore:
         SET title = $1, updated_at = $2
         WHERE table_id = $3;
         """
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             await conn.execute(query, title, updated_at, self.table_id)
         self.table_metadata.title = title
         self.table_metadata.updated_at = updated_at
@@ -2080,8 +2150,21 @@ class GenerativeTableCore:
 
         Raises:
             ResourceNotFoundError: If the table is not found.
+            BadInputError: If the table has child tables.
         """
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
+            # Ensure no child table exists
+            try:
+                child_metadata = await conn.fetchrow(
+                    f'SELECT * FROM "{self.schema_id}"."TableMetadata" WHERE parent_id = $1',
+                    self.table_id,
+                )
+            except UndefinedTableError:
+                child_metadata = None
+            if child_metadata is not None:
+                raise BadInputError(
+                    f'Cannot drop table "{self.table_id}" because it has child tables.'
+                )
             try:
                 # Drop the data table
                 await conn.execute(
@@ -2305,6 +2388,9 @@ class GenerativeTableCore:
         # Check for existing table
         if table_id_dst is None:
             table_id_dst = pa_meta.id
+        # Check that parent ID is not the same as new ID
+        if pa_meta.parent_id == table_id_dst:
+            raise BadInputError("New table name cannot be the same as the parent table name.")
         if verbose:
             logger.info(
                 f'Importing table "{table_id_dst}": Parquet data loaded successfully. {_measure_ram()}'
@@ -2318,7 +2404,12 @@ class GenerativeTableCore:
         prog.load_data.progress = 100
         await CACHE.set_progress(prog)
 
-        async with GENTABLE_ENGINE.transaction() as conn:
+        _meta = {
+            "project_id": project_id,
+            "table_type": table_type,
+            "table_id_dst": table_id_dst,
+        }
+        async with GENTABLE_ENGINE.transaction(meta=_meta) as conn:
             schema_id = f"{project_id}_{table_type}"
             try:
                 table_metadata = await conn.fetchrow(
@@ -2329,6 +2420,20 @@ class GenerativeTableCore:
                 table_metadata = None
         if table_metadata is not None:
             raise ResourceExistsError(f'Table "{table_id_dst}" already exists.')
+        # Ensure parent table exists
+        if pa_meta.parent_id:
+            async with GENTABLE_ENGINE.transaction(meta=_meta) as conn:
+                try:
+                    parent_metadata = await conn.fetchrow(
+                        f'SELECT * FROM "{schema_id}"."TableMetadata" WHERE table_id = $1',
+                        pa_meta.parent_id,
+                    )
+                except UndefinedTableError:
+                    parent_metadata = None
+            if parent_metadata is None:
+                raise ResourceNotFoundError(f'Parent table "{pa_meta.parent_id}" is not found.')
+            if parent_metadata["parent_id"] is not None:
+                raise BadInputError(f'Table "{pa_meta.parent_id}" is not a parent table.')
         # Check for required columns
         pa_meta_cols = {c.id for c in pa_meta.cols}
         # Sometimes Chat Table has "user" instead of "User"
@@ -2515,7 +2620,7 @@ class GenerativeTableCore:
             await CACHE.set_progress(prog)
         prog.add_rows.progress = 100
         # Perform indexing
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             await self._recreate_fts_index(
                 conn,
                 schema_id=self.schema_id,
@@ -2523,7 +2628,7 @@ class GenerativeTableCore:
                 columns=self.text_column_names,
             )
         logger.info(f'Importing table "{self.table_id}": Created FTS index.')
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             await self._recreate_vector_index(
                 conn,
                 schema_id=self.schema_id,
@@ -2588,7 +2693,7 @@ class GenerativeTableCore:
                 prog = await CACHE.get_progress(progress_key, TableImportProgress)
                 if table_id := (prog.data.get("table_id_dst", None)):
                     # Might need to clean up
-                    async with GENTABLE_ENGINE.transaction() as conn:
+                    async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
                         try:
                             schema_id = f"{project_id}_{table_type}"
                             # Drop the data table
@@ -2831,7 +2936,7 @@ class GenerativeTableCore:
         if metadata.is_state_column:
             # TODO: Test this
             raise BadInputError(f'Table "{self.table_id}": Cannot add state column.')
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             column_metadata_list = await self._check_columns(
                 conn=conn,
                 project_id=self.project_id,
@@ -2933,7 +3038,7 @@ class GenerativeTableCore:
             raise BadInputError(
                 f'Table "{self.table_id}": Cannot rename state columns: {invalid_cols}'
             )
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             for col_id_src, col_id_dst in column_map.items():
                 col_meta = next(
                     (col for col in self.column_metadata if col.column_id == col_id_src), None
@@ -3053,7 +3158,7 @@ class GenerativeTableCore:
         """
         # Verify column exists
         columns_to_update = []
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             for column_id, config in update_mapping.items():
                 column = next(
                     (col for col in self.column_metadata if col.column_id == column_id), None
@@ -3138,7 +3243,7 @@ class GenerativeTableCore:
         if set(column_names) != set(columns):
             raise BadInputError("The list of columns to reorder does not match the table columns.")
         state_columns = [f"{col}_" for col in column_names if col.lower() not in self.INFO_COLUMNS]
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             # Update column order
             for idx, column_id in enumerate(column_names + state_columns):
                 await conn.execute(
@@ -3183,7 +3288,7 @@ class GenerativeTableCore:
             raise BadInputError(
                 f'Table "{self.table_id}": Cannot drop state columns: {invalid_cols}'
             )
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             short_table_id = self.short_table_id
             for column_id in column_ids:
                 # Drop column and state column
@@ -3351,7 +3456,7 @@ class GenerativeTableCore:
             f"VALUES ({', '.join(f'${i + 1}' for i in range(len(all_columns)))})"
         )
         values = [[getattr(row, c) for c in all_columns] for row in rows]
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             # Insert rows with retries
             for _ in range(3):
                 try:
@@ -3456,7 +3561,7 @@ class GenerativeTableCore:
         if filters:
             query += f" WHERE {' AND '.join(filters)}"
             total += f" WHERE {' AND '.join(filters)}"
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             # Row count
             try:
                 total = await conn.fetchval(total, *params)
@@ -3538,7 +3643,7 @@ class GenerativeTableCore:
         """
         # Get row
         row = None
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             try:
                 row = await conn.fetchrow(f'{query} WHERE "ID" = $1', row_id)
             except UndefinedTableError as e:
@@ -3864,7 +3969,7 @@ class GenerativeTableCore:
         """
         if explain:
             stmt = f"EXPLAIN ANALYZE {stmt}"
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             # Execute query
             try:
                 rows = await conn.fetch(stmt, query, limit, offset)
@@ -4017,7 +4122,7 @@ class GenerativeTableCore:
         """
         if explain:
             stmt = f"EXPLAIN ANALYZE {stmt}"
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             # Execute query
             try:
                 rows = await conn.fetch(stmt, *[vec for _, vec in columns], limit, offset)
@@ -4186,7 +4291,7 @@ class GenerativeTableCore:
             }
         except ValidationError as e:
             raise BadInputError(f"Input data contains errors: {e}") from e
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             try:
                 for row_id, update in updates.items():
                     if len(update) == 0:
@@ -4253,7 +4358,7 @@ class GenerativeTableCore:
             filters.append(where)
         if len(filters) == 0:
             raise BadInputError("Either `row_ids` or `where` must be provided.")
-        async with GENTABLE_ENGINE.transaction() as conn:
+        async with GENTABLE_ENGINE.transaction(meta=self._meta) as conn:
             try:
                 sql = f'DELETE FROM "{self.schema_id}"."{self.short_table_id}" WHERE {" AND ".join(filters)}'
                 if row_ids:

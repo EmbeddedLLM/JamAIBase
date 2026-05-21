@@ -896,6 +896,12 @@ class _UserBase(_BaseModel):
         "",
         description="User's email.",
     )
+    # Allow this to be updated by the frontend service
+    # NOTE: We should consider moving auth into backend to avoid this
+    email_verified: bool = Field(
+        False,
+        description="Whether the email address is verified.",
+    )
     picture_url: AnyUrl | None = Field(
         None,
         description="User picture URL.",
@@ -983,9 +989,6 @@ class User_(_UserBase, _TableBase):
     id: SanitisedNonEmptyStr = Field(
         default_factory=uuid7_str,
         description="User ID.",
-    )
-    email_verified: bool = Field(
-        description="Whether the email address is verified.",
     )
     password_hash: Annotated[str | None, BeforeValidator(_obscure_password_hash)] = Field(
         description="Password hash.",

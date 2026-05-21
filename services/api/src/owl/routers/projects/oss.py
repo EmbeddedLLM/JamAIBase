@@ -893,11 +893,14 @@ async def _import_project_from_pa_table(
 
     table_metas = json_loads(pa_table.schema.metadata[b"table_metas"])
     rows = pa_table.to_pylist()
+    table_entries = [
+        (row, TableMetaResponse.model_validate(meta["table_meta"]))
+        for row, meta in zip(rows, table_metas, strict=True)
+    ]
     i = 1
-    for row, meta in zip(rows, table_metas, strict=True):
+    for row, meta in table_entries:
         if row["table_type"] != TableType.KNOWLEDGE:
             continue
-        meta = TableMetaResponse.model_validate(meta["table_meta"])
         if verbose:
             logger.info(
                 (
@@ -918,31 +921,42 @@ async def _import_project_from_pa_table(
             if raise_error:
                 raise
         i += 1
-    # Import the rest
-    for row, meta in zip(rows, table_metas, strict=True):
-        if row["table_type"] == TableType.KNOWLEDGE:
-            continue
-        meta = TableMetaResponse.model_validate(meta["table_meta"])
-        if verbose:
-            logger.info(
-                (
-                    f'Importing project "{project.name}" ({project.id}): '
-                    f'Importing table "{meta.id}" ({i} of {len(rows)}) ...'
+
+    # Import the rest in dependency order: non-chat tables, chat parents, then chat children.
+    def _should_import(row: dict, meta: TableMetaResponse, group: str) -> bool:
+        table_type = row["table_type"]
+        if group == "non_chat":
+            return table_type not in {TableType.KNOWLEDGE, TableType.CHAT}
+        if group == "chat_parent":
+            return table_type == TableType.CHAT and meta.parent_id is None
+        if group == "chat_child":
+            return table_type == TableType.CHAT and meta.parent_id is not None
+        return False
+
+    for group in ["non_chat", "chat_parent", "chat_child"]:
+        for row, meta in table_entries:
+            if not _should_import(row, meta, group):
+                continue
+            if verbose:
+                logger.info(
+                    (
+                        f'Importing project "{project.name}" ({project.id}): '
+                        f'Importing table "{meta.id}" ({i} of {len(rows)}) ...'
+                    )
                 )
-            )
-        try:
-            await _import_table(row["data"], row["table_type"])
-        except ResourceExistsError as e:
-            logger.info(f'Importing project "{project.name}" ({project.id}): {e}')
-            if raise_error:
-                raise
-        except Exception as e:
-            logger.exception(
-                f'Importing project "{project.name}" ({project.id}): Failed to import table "{meta.id}": {e}'
-            )
-            if raise_error:
-                raise
-        i += 1
+            try:
+                await _import_table(row["data"], row["table_type"])
+            except ResourceExistsError as e:
+                logger.info(f'Importing project "{project.name}" ({project.id}): {e}')
+                if raise_error:
+                    raise
+            except Exception as e:
+                logger.exception(
+                    f'Importing project "{project.name}" ({project.id}): Failed to import table "{meta.id}": {e}'
+                )
+                if raise_error:
+                    raise
+            i += 1
     return project
 
 

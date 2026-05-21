@@ -44,15 +44,21 @@ def mask_string(x: str | None, *, include_len: bool = True) -> str | None:
     if x is None or x == "":
         return x
     str_len = len(x)
-    if str_len < 4:
-        return f"{'*' * str_len} ({str_len=})"
+    if str_len < 5:
+        return f"{'*' * str_len}"
     visible_len = min(100, str_len // 5)
     x = f"{x[:visible_len]}***{x[-visible_len:]}"
     return f"{x} ({str_len=})" if include_len else x
 
 
 def mask_content(x: str | list | dict | np.ndarray | Any) -> str | list | dict | None:
+    if x is None:
+        return x
+    if isinstance(x, bool):
+        return x
     if isinstance(x, str):
+        if x == "":
+            return x
         return mask_string(x)
     if isinstance(x, list):
         return [mask_content(v) for v in x]
@@ -60,7 +66,7 @@ def mask_content(x: str | list | dict | np.ndarray | Any) -> str | list | dict |
         return {k: mask_content(v) for k, v in x.items()}
     if isinstance(x, np.ndarray):
         return f"array(shape={x.shape}, dtype={x.dtype})"
-    return None
+    return mask_string(str(x))
 
 
 def merge_dict(d: dict | Any, update: dict | Any):

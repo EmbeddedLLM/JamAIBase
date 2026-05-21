@@ -1,5 +1,4 @@
 import csv
-import logging
 import pickle
 from collections import OrderedDict
 from io import StringIO
@@ -13,11 +12,10 @@ import orjson
 import pandas as pd
 import toml
 import yaml
+from loguru import logger
 from PIL import ExifTags, Image
 
 from jamaibase.types.common import JSONInput, JSONOutput
-
-logger = logging.getLogger(__name__)
 
 EMBED_WHITE_LIST = {
     "application/pdf": [".pdf"],

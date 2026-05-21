@@ -450,6 +450,9 @@ def _rename_table(
         yield table
     finally:
         try:
+            children = client.table.list_tables(table_type, parent_id=table_id_dst)
+            for child in children.items:
+                client.table.delete_table(table_type, child.id)
             client.table.delete_table(table_type, table_id_dst)
         except ResourceNotFoundError:
             pass  # Ignore if already deleted

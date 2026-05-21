@@ -24,6 +24,7 @@ from jamaibase.types import (
 )
 from owl.utils.exceptions import (
     BadInputError,
+    ResourceNotFoundError,
 )
 from owl.utils.io import csv_to_df, df_to_csv
 from owl.utils.test import (
@@ -876,6 +877,84 @@ def test_table_import_wrong_type(
                 )
 
 
+@pytest.mark.parametrize("version", ["v0.4"])
+def test_import_missing_parent(
+    setup: ServingContext,
+    version: str,
+):
+    client = JamAI(user_id=setup.superuser_id, project_id=setup.project_id)
+    client.table.delete_table(TableType.CHAT, "test-agent-1", missing_ok=True)
+    client.table.delete_table(TableType.CHAT, "test-agent", missing_ok=True)
+
+    with pytest.raises(ResourceNotFoundError, match='Parent table "test-agent" is not found'):
+        client.table.import_table(
+            TableType.CHAT,
+            TableImportRequest(
+                file_path=FILES[f"export-{version}-chat-agent-1.parquet"],
+                table_id_dst=None,
+            ),
+        )
+
+
+@pytest.mark.parametrize("version", ["v0.4"])
+def test_import_parent_conflict(
+    setup: ServingContext,
+    version: str,
+):
+    client = JamAI(user_id=setup.superuser_id, project_id=setup.project_id)
+
+    with pytest.raises(
+        BadInputError,
+        match="New table name cannot be the same as the parent table name.",
+    ):
+        client.table.import_table(
+            TableType.CHAT,
+            TableImportRequest(
+                file_path=FILES[f"export-{version}-chat-agent-1.parquet"],
+                table_id_dst="test-agent",
+            ),
+        )
+
+
+@pytest.mark.parametrize("version", ["v0.4"])
+def test_import_child_parent(
+    setup: ServingContext,
+    version: str,
+):
+    client = JamAI(user_id=setup.superuser_id, project_id=setup.project_id)
+    root_id = "test-agent-root"
+    parent_id = "test-agent"
+    child_id = "test-agent-1"
+    client.table.delete_table(TableType.CHAT, child_id, missing_ok=True)
+    client.table.delete_table(TableType.CHAT, parent_id, missing_ok=True)
+    client.table.delete_table(TableType.CHAT, root_id, missing_ok=True)
+
+    with create_table(client, TableType.CHAT, root_id) as root:
+        parent = client.table.duplicate_table(
+            TableType.CHAT,
+            root.id,
+            parent_id,
+            create_as_child=True,
+        )
+        try:
+            assert isinstance(parent, TableMetaResponse)
+            assert parent.parent_id == root.id
+            with pytest.raises(
+                BadInputError,
+                match=f'Table "{parent.id}" is not a parent table.',
+            ):
+                client.table.import_table(
+                    TableType.CHAT,
+                    TableImportRequest(
+                        file_path=FILES[f"export-{version}-chat-agent-1.parquet"],
+                        table_id_dst=None,
+                    ),
+                )
+        finally:
+            client.table.delete_table(TableType.CHAT, child_id, missing_ok=True)
+            client.table.delete_table(TableType.CHAT, parent.id)
+
+
 @pytest.mark.parametrize("table_type", TABLE_TYPES)
 @pytest.mark.parametrize("version", ["v0.4"])
 def test_table_import_parquet(
@@ -989,37 +1068,40 @@ def test_table_import_parquet(
             rows = list_table_rows(client, table_type, table.id, vec_decimals=2)
             assert len(rows.items) == 2
             assert rows.total == 2
+
+            ### --- Chat table (child table) --- ###
+            if table_type == TableType.CHAT:
+                child_table = client.table.import_table(
+                    table_type,
+                    TableImportRequest(
+                        file_path=FILES[f"export-{version}-chat-agent-1.parquet"],
+                        table_id_dst=None,
+                    ),
+                )
+                try:
+                    assert isinstance(child_table, TableMetaResponse)
+                    # Table ID should be derived from the Parquet data
+                    # TODO: Perhaps need to handle missing RAG table
+                    assert child_table.id == "test-agent-1"
+                    assert child_table.parent_id == "test-agent"
+                    # List rows
+                    rows = list_table_rows(client, table_type, child_table.id, vec_decimals=2)
+                    assert len(rows.items) == 2
+                    assert rows.total == 2
+                    # Check text content
+                    assert rows.values[0]["User"] == "Hi"
+                    assert rows.values[0]["AI"].startswith("Hello! How can I assist you today?")
+                    assert rows.values[1]["User"] == "What is 美洲驼?"
+                    assert rows.values[1]["AI"].startswith(
+                        "**美洲驼** (Měizhōu tuó) 是以下两种南美洲骆驼科动物的中文统称：  \n\n1. **羊驼**"
+                    )
+                    rows_r = list_table_rows(
+                        client, table_type, child_table.id, order_ascending=False, vec_decimals=2
+                    )
+                    assert all(
+                        rr == r for rr, r in zip(rows_r.values[::-1], rows.values, strict=True)
+                    )
+                finally:
+                    client.table.delete_table(table_type, child_table.id)
         finally:
             client.table.delete_table(table_type, table.id)
-
-        ### --- Chat table (child table) --- ###
-        if table_type == TableType.CHAT:
-            table = client.table.import_table(
-                table_type,
-                TableImportRequest(
-                    file_path=FILES[f"export-{version}-chat-agent-1.parquet"], table_id_dst=None
-                ),
-            )
-            try:
-                assert isinstance(table, TableMetaResponse)
-                # Table ID should be derived from the Parquet data
-                assert table.id == "test-agent-1"
-                # TODO: Perhaps need to handle missing parent and RAG table
-                assert table.parent_id == "test-agent"
-                # List rows
-                rows = list_table_rows(client, table_type, table.id, vec_decimals=2)
-                assert len(rows.items) == 2
-                assert rows.total == 2
-                # Check text content
-                assert rows.values[0]["User"] == "Hi"
-                assert rows.values[0]["AI"].startswith("Hello! How can I assist you today?")
-                assert rows.values[1]["User"] == "What is 美洲驼?"
-                assert rows.values[1]["AI"].startswith(
-                    "**美洲驼** (Měizhōu tuó) 是以下两种南美洲骆驼科动物的中文统称：  \n\n1. **羊驼**"
-                )
-                rows_r = list_table_rows(
-                    client, table_type, table.id, order_ascending=False, vec_decimals=2
-                )
-                assert all(rr == r for rr, r in zip(rows_r.values[::-1], rows.values, strict=True))
-            finally:
-                client.table.delete_table(table_type, table.id)

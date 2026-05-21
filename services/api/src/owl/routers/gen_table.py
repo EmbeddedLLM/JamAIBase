@@ -932,6 +932,7 @@ async def embed_file(
     billing.has_egress_quota()
     # --- Store original file into S3 --- #
     file_content = await data.file.read()
+    await data.file.close()
     file_uri = await s3_upload(
         project.organization.id,
         project.id,
@@ -1060,6 +1061,7 @@ async def import_table_data(
         delimiter=data.delimiter,
         ignore_info_columns=True,  # Ignore "ID" and "Updated at" columns
     )
+    await data.file.close()
     return await add_rows(
         request=request,
         auth_info=auth_info,
@@ -1146,7 +1148,9 @@ async def import_table(
         billing.has_db_storage_quota()
         billing.has_egress_quota()
     # Import
-    async with s3_temporary_file(await data.file.read(), "application/vnd.apache.parquet") as uri:
+    file_data = await data.file.read()
+    await data.file.close()
+    async with s3_temporary_file(file_data, "application/vnd.apache.parquet") as uri:
         result: AsyncResult = import_gen_table.delay(
             source=uri,
             project_id=project.id,

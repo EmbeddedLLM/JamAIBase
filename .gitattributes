@@ -22,7 +22,6 @@
 *.js* text
 *.md text
 *.py text
-*.sh text
 
 # These files are binary and should be left untouched
 # `binary` is a built-in macro for `-text` `-diff` (ie unset `text` and `diff`)

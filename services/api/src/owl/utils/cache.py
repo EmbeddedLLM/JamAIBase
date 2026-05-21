@@ -346,7 +346,7 @@ class Cache:
 
     def _ex_jitter(self) -> int:
         # Jitter to prevent cache stampede
-        return int(self.cache_expiration * random() / 2)
+        return int(self.cache_expiration * (random() / 2))
 
     async def clear_all_async(self) -> None:
         redis = await self._aredis()

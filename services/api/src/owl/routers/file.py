@@ -96,6 +96,7 @@ async def upload_file(
     billing: BillingManager = request.state.billing
     billing.has_file_storage_quota()
     content = await file.read()
+    await file.close()
     uri = await s3_upload(
         project.organization.id,
         project.id,
