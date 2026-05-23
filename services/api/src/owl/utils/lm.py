@@ -2114,7 +2114,7 @@ class LMEngine:
         hyperparams.update(
             temperature=0.01,
             top_p=0.01,
-            max_tokens=1000,
+            max_tokens=10000,
             stream=False,
             reasoning_effort="minimal",
         )

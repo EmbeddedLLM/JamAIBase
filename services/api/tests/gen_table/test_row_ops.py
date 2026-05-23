@@ -152,10 +152,10 @@ def setup():
             create_model_config(
                 {
                     # "id": "openai/Qwen/Qwen-2-Audio-7B",
-                    "id": "openai/gpt-4o-mini-audio-preview",
+                    "id": "openai/gpt-audio-mini",
                     "type": "llm",
                     # "name": "ELLM Qwen2 Audio (7B)",
-                    "name": "OpenAI GPT-4o Mini Audio Preview",
+                    "name": "OpenAI GPT Audio Mini",
                     "capabilities": ["chat", "audio"],
                     "context_length": 128000,
                     "languages": ["en"],
@@ -174,7 +174,7 @@ def setup():
                     DeploymentCreate(
                         model_id=llm_config_audio.id,
                         # name="ELLM Qwen2 Audio (7B) Deployment",
-                        name="OpenAI GPT-4o Mini Audio Preview Deployment",
+                        name="OpenAI GPT Audio Mini Deployment",
                         # provider=CloudProvider.ELLM,
                         provider=CloudProvider.OPENAI,
                         routing_id=llm_config_audio.id,
