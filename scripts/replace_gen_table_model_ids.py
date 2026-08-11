@@ -43,7 +43,7 @@ def load_mapping_file(path: Path) -> dict[str, str]:
         raise SystemExit(f"Cannot read mapping file {path}: {exc}") from exc
 
     if not isinstance(data, dict):
-        raise SystemExit("Mapping file must contain a JSON object like {\"old\": \"new\"}.")
+        raise SystemExit('Mapping file must contain a JSON object like {"old": "new"}.')
     return {str(old_id): str(new_id) for old_id, new_id in data.items()}
 
 
@@ -119,7 +119,10 @@ def poll_progress(
         state_line = json.dumps(progress.get("data", {}).get("stats", {}), sort_keys=True)
         state = progress.get("state")
 
-        if state_line != last_state_line or state in {ProgressState.COMPLETED, ProgressState.FAILED}:
+        if state_line != last_state_line or state in {
+            ProgressState.COMPLETED,
+            ProgressState.FAILED,
+        }:
             print_progress(progress)
             last_state_line = state_line
 
@@ -196,7 +199,9 @@ def add_common_options(parser: argparse.ArgumentParser) -> None:
         "-o",
         help="Comma-separated organization IDs to scan. If omitted, all organizations are scanned.",
     )
-    parser.add_argument("--initial-wait", type=float, default=0.5, help="Initial poll wait seconds.")
+    parser.add_argument(
+        "--initial-wait", type=float, default=0.5, help="Initial poll wait seconds."
+    )
     parser.add_argument("--max-wait", type=float, default=30 * 60.0, help="Max poll wait seconds.")
     parser.add_argument("--no-poll", action="store_true", help="Submit the task and exit.")
     parser.add_argument("--yes", "-y", action="store_true", help="Submit without confirmation.")

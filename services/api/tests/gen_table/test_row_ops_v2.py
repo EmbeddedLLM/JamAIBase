@@ -1375,9 +1375,8 @@ async def test_error_handling(
         assert row["inspect_llm0"] is None
         assert row["inspect_llm1"] is None
         row = rows.items[0]
-        assert row["python"]["error"]["message"].startswith(
-            "[ERROR] Result type must be bytes for column type"
-        )
+        message = row["python"]["error"]["message"]
+        assert message.startswith("[ERROR] Execution exception: 2")
         assert "original" not in row["python"]
         assert "original" not in row["llm0"]
         assert "original" not in row["llm1"]

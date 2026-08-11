@@ -163,9 +163,17 @@ async def code_executor(
                     return None if result is None else str(result)
 
                 if not isinstance(result, bytes):
-                    raise BadInputError(
-                        f'Result type must be bytes for column type "{dtype}" but got {type(result)}.'
-                    )
+                    if isinstance(result, str):
+                        content = result
+                        if len(content) > 500:
+                            content = content[:500] + "..."
+                        msg = f"Execution exception: {content}"
+                    else:
+                        msg = (
+                            f'Result type must be bytes for column type "{dtype}" '
+                            f"but got {type(result)}."
+                        )
+                    raise BadInputError(msg)
 
                 rec.set_result_bytes(len(result))
 
