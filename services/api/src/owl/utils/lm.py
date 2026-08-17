@@ -1659,12 +1659,12 @@ class LMEngine:
         model_configs: list[ModelConfig_],
         capabilities: list[ModelCapability],
     ) -> ModelConfig_:
-        def _sort_key_with_priority(m: ModelConfig_) -> tuple[int, int, str]:
+        def _sort_key_with_priority(m: ModelConfig_) -> tuple[int, int, int, int, str]:
             return (
                 int(not m.id.startswith("ellm")),
                 int(ModelCapability.AUDIO in m.capabilities),  # De-prioritise audio models
-                len(m.capabilities_set - set(capabilities)),
                 -m.priority,
+                len(m.capabilities_set - set(capabilities)),
                 m.name,
             )
 

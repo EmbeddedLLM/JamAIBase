@@ -917,7 +917,7 @@ def test_chat_reasoning_anthropic(setup: ServingContext, stream: bool):
     kwargs = dict(
         setup=setup,
         provider=CloudProvider.ANTHROPIC,
-        routing_id="claude-sonnet-4-0",
+        routing_id="claude-sonnet-4-5-20250929",
         stream=stream,
         max_tokens=2200,
     )
@@ -967,7 +967,7 @@ def test_chat_reasoning_gemini(setup: ServingContext, stream: bool):
     # Test reasoning effort
     response = _test_chat_reasoning_cloud(
         reasoning_effort="low",
-        routing_id="gemini-3-pro-preview",
+        routing_id="gemini-3.1-pro-preview",
         **kwargs,
     )
     assert len(response.content) > 0
