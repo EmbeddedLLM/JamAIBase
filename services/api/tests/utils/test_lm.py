@@ -159,6 +159,21 @@ def _make_vllm_context(*, is_reasoning_model: bool = True) -> DeploymentContext:
     )
 
 
+def _make_openai_context(
+    *,
+    deployment_provider: str = CloudProvider.OPENAI,
+    is_reasoning_model: bool = True,
+    routing_id: str = "gpt-5.6-luna",
+) -> DeploymentContext:
+    return DeploymentContext(
+        deployment=SimpleNamespace(provider=deployment_provider),
+        api_key="dummy",
+        routing_id=routing_id,
+        inference_provider=CloudProvider.OPENAI,
+        is_reasoning_model=is_reasoning_model,
+    )
+
+
 def test_prepare_bedrock_messages_should_replace_blank_content() -> None:
     messages = [
         {"role": "system", "content": ""},
@@ -563,3 +578,38 @@ def test_vllm_explicitly_disable_thinking() -> None:
     router._prepare_hyperparams(ctx, hyperparams)
 
     assert hyperparams["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+@pytest.mark.parametrize(
+    ("provider", "use_responses", "token_key", "absent_key"),
+    [
+        (CloudProvider.BEDROCK, False, "max_completion_tokens", "max_output_tokens"),
+        (CloudProvider.OPENAI, True, "max_output_tokens", "max_completion_tokens"),
+    ],
+)
+def test_openai_reasoning_token_param_follows_hosting_provider(
+    provider: str, use_responses: bool, token_key: str, absent_key: str
+) -> None:
+    router = _make_router()
+    ctx = _make_openai_context(deployment_provider=provider)
+    hyperparams: dict[str, object] = {"max_tokens": 100}
+
+    router._prepare_hyperparams(ctx, hyperparams)
+
+    assert ctx.use_openai_responses is use_responses
+    assert hyperparams[token_key] == 100
+    assert absent_key not in hyperparams
+    assert "max_tokens" not in hyperparams
+
+
+def test_gpt_5_6_bedrock_default_reasoning_uses_none_not_minimal() -> None:
+    router = _make_router()
+    ctx = _make_openai_context(
+        deployment_provider=CloudProvider.BEDROCK, routing_id="global.openai.gpt-5.6-luna"
+    )
+    hyperparams: dict[str, object] = {"max_tokens": 100}
+
+    router._prepare_hyperparams(ctx, hyperparams)
+
+    assert ctx.use_openai_responses is False
+    assert hyperparams["reasoning"] == {"effort": "none", "summary": "auto"}

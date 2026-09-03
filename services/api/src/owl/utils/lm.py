@@ -855,11 +855,15 @@ class DeploymentRouter:
             if ctx.is_reasoning_model or any(
                 t.get("type", "") in OPENAI_HOSTED_TOOLS for t in tools
             ):
-                ctx.use_openai_responses = True
+                ctx.use_openai_responses = ctx.deployment.provider != CloudProvider.BEDROCK
                 if ctx.is_reasoning_model:
                     hyperparams.pop("temperature", None)
                     hyperparams.pop("top_p", None)
-                hyperparams["max_output_tokens"] = hyperparams.pop("max_tokens", None)
+                if not ctx.use_openai_responses:
+                    # Chat completion uses "max_completion_tokens"
+                    hyperparams["max_completion_tokens"] = hyperparams.pop("max_tokens", None)
+                else:  # OpenAI Responses
+                    hyperparams["max_output_tokens"] = hyperparams.pop("max_tokens", None)
                 hyperparams.pop("id", None)
                 hyperparams.pop("n", None)
                 hyperparams.pop("presence_penalty", None)
@@ -931,8 +935,9 @@ class DeploymentRouter:
                     "gpt-5.1" in ctx.routing_id
                     or "gpt-5.2" in ctx.routing_id
                     or "gpt-5.4" in ctx.routing_id
+                    or "gpt-5.6" in ctx.routing_id
                 ):
-                    # gpt-5.1/2/4: Supported values are: 'none', 'low', 'medium', and 'high'.
+                    # gpt-5.1/2/4/6: Supported values are: 'none', 'low', 'medium', and 'high'.
                     hyperparams["reasoning"] = {
                         "effort": "none",
                         "summary": reasoning_summary,
