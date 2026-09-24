@@ -22,7 +22,6 @@ from typing import Any
 from jamaibase import JamAI
 from jamaibase.types import GenTableModelReplaceRequest, ProgressState
 
-
 DEFAULT_API_BASE = os.getenv("JAMAI_API_BASE", "http://localhost:6969/api")
 DEFAULT_TOKEN = os.getenv("JAMAI_TOKEN") or os.getenv("OWL_SERVICE_KEY") or ""
 DEFAULT_USER_ID = os.getenv("JAMAI_USER_ID", "0")
