@@ -1447,7 +1447,7 @@ class DeploymentRouter:
         *,
         texts: list[str],
         is_query: bool = True,
-        encoding_format: str | None = None,
+        encoding_format: str = "float",
         **hyperparams,
     ) -> EmbeddingResponse:
         async for attempt in AsyncRetrying(**self.retry_policy):
@@ -2429,7 +2429,7 @@ class LMEngine:
         *,
         model: str,
         texts: list[str],
-        encoding_format: str | None = None,
+        encoding_format: str = "float",
         **hyperparams,
     ) -> EmbeddingResponse:
         """
@@ -2438,7 +2438,7 @@ class LMEngine:
         Args:
             model (str): Model ID. Can be empty in which case we try to get a suitable model.
             texts (list[str]): List of strings to embed as documents.
-            encoding_format (str | None, optional): Vector encoding format. Defaults to None.
+            encoding_format (str, optional): Vector encoding format. Defaults to "float".
 
         Returns:
             response (EmbeddingResponse): The embedding response.
@@ -2466,7 +2466,7 @@ class LMEngine:
         self,
         model: str,
         texts: list[str],
-        encoding_format: str | None = None,
+        encoding_format: str = "float",
         **hyperparams,
     ) -> EmbeddingResponse:
         """
@@ -2475,7 +2475,7 @@ class LMEngine:
         Args:
             model (str): Model ID. Can be empty in which case we try to get a suitable model.
             texts (list[str]): List of strings to embed as queries.
-            encoding_format (str | None, optional): Vector encoding format. Defaults to None.
+            encoding_format (str, optional): Vector encoding format. Defaults to "float".
 
         Returns:
             response (EmbeddingResponse): The embedding response.

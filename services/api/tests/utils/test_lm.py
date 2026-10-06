@@ -1,7 +1,9 @@
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
+from tenacity import stop_after_attempt
 
 from owl.configs import CACHE
 from owl.types import CloudProvider, ModelCapability, ModelProvider, ModelType, OnPremProvider
@@ -613,3 +615,40 @@ def test_gpt_5_6_bedrock_default_reasoning_uses_none_not_minimal() -> None:
 
     assert ctx.use_openai_responses is False
     assert hyperparams["reasoning"] == {"effort": "none", "summary": "auto"}
+
+
+async def test_embedding_should_default_encoding_format_to_float(monkeypatch) -> None:
+    # Some OpenAI-compatible servers reject `encoding_format: null` with HTTP 422
+    router = _make_router(model_type=ModelType.EMBED)
+    router.config.embedding_dimensions = None
+    router.config.embedding_transform_query = None
+    router.config.timeout = 10
+    router.retry_policy = dict(stop=stop_after_attempt(1), reraise=True)
+    ctx = DeploymentContext(
+        deployment=SimpleNamespace(provider=OnPremProvider.VLLM, api_base=""),
+        api_key="dummy",
+        routing_id="hosted_vllm/test-embed",
+        inference_provider=OnPremProvider.VLLM,
+        is_reasoning_model=False,
+    )
+
+    @asynccontextmanager
+    async def _get_deployment(**kwargs):
+        yield ctx
+
+    calls: list[dict] = []
+
+    async def _aembedding(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            data=[{"embedding": [0.1, 0.2]} for _ in kwargs["input"]],
+            usage=SimpleNamespace(prompt_tokens=1, total_tokens=1),
+        )
+
+    router._get_deployment = _get_deployment
+    monkeypatch.setattr("owl.utils.lm.aembedding", _aembedding)
+
+    response = await router.embedding(texts=["hello"], is_query=False)
+
+    assert [c["encoding_format"] for c in calls] == ["float"]
+    assert response.data[0].embedding == [0.1, 0.2]
