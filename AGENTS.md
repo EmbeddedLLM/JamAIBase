@@ -88,8 +88,29 @@ This Agents.md file provides comprehensive guidance for OpenAI Codex and other A
         }
     ```
 
+## Testing
+
+- All tests must have a docstring stating their intention, goal, purpose, or the regression they guard against. For example: "Ensures ..." or "Asserts that ...".
+
 ## Pull Request Review Guidelines
 
 - Always prioritise any security issues
 - Always provide solution or suggestions for any issues found
 - Check whether the code aligns with Coding Conventions stated in `Agents.md`
+
+### Publishing PR review findings
+
+- When publishing a GitHub PR review, prefer inline review comments attached to the affected diff lines for actionable, code-specific findings.
+- Anchor each finding to the smallest relevant line range on the reviewed commit. Explain the problem, its concrete impact or reproduction, and the recommended fix. Include severity when the repository's review format uses it.
+- Keep separate findings in separate inline threads. Before posting, check existing comments to avoid duplicating the same finding.
+- Use the review body for a concise overall assessment, verification results, and findings that cannot reasonably be attached to a diff line. Reference inline threads instead of repeating their full contents.
+- If GitHub cannot anchor a finding to the relevant code, use a review-level comment with an explicit file/line or commit permalink. Do not attach it to unrelated changed lines merely to make it inline.
+- Follow an explicit user request for a different review format.
+
+This guidance governs how a review is published; a request to review code does not itself authorize publishing a review.
+
+## Closing Issues
+
+- Before closing an issue as completed, review its requirements, the merged changes, and the current source on the default branch to confirm it is fully resolved.
+- Leave a brief closing comment stating where the fix is available, summarizing the resulting behavior, and linking the merged PRs and commit URLs. State what was verified and any remaining limitations.
+- Close as completed only when the issue is resolved. For duplicates, superseded work, or declined requests, explain the reason and link the replacement issue when applicable.

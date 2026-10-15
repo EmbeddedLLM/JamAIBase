@@ -4,6 +4,7 @@ thumbs.db
 
 # Internal references, dependencies, temporary folders & files
 .env
+tasks/
 **/__ref__/
 *.log
 *.lock
