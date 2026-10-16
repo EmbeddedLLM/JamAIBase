@@ -92,6 +92,10 @@ This Agents.md file provides comprehensive guidance for OpenAI Codex and other A
 
 - All tests must have a docstring stating their intention, goal, purpose, or the regression they guard against. For example: "Ensures ..." or "Asserts that ...".
 
+## PR Descriptions
+
+- When updating a PR, review and rewrite the Summary section as needed to reflect the latest state of the entire PR. Do not merely append a bullet for each new commit pushed; consolidate or remove outdated bullets so the summary describes the current changes coherently.
+
 ## Pull Request Review Guidelines
 
 - Always prioritise any security issues
