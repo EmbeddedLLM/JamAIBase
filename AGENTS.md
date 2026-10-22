@@ -37,6 +37,16 @@ The user's job as a senior software engineer is dependent on you implementing cl
   6. Installed dependency? → use it
   7. One line? → one line
   8. Only then: the minimum that works
+- **Validate the Approach Before Implementing**: For non-trivial changes, distinguish the required outcome from the proposed implementation. Treat implementation suggestions as hypotheses, including those in issues and plans.
+
+  1. Identify the behavior and existing state that must be preserved.
+  2. Check whether existing code or native platform capabilities can achieve the outcome with less change.
+  3. When the choice depends on uncertain behavior, resolve that uncertainty with authoritative documentation or a focused experiment before coding.
+  4. Require evidence that a simpler approach is insufficient before adding complexity or choosing a destructive operation.
+  5. Derive tests from the required behavior and preservation guarantees, rather than assumptions specific to the chosen implementation.
+
+  Keep this checkpoint proportional to the task; straightforward changes do not require a written alternatives analysis.
+
 - **Simplify After Implementation**: Treat the first working version and the requirements behind it as drafts.
   1. Run relevant tests to uncover hidden requirements and assumptions.
   2. Relate every code path back to a concrete requirement, and challenge whether that requirement is truly necessary (first principles approach).
@@ -61,6 +71,7 @@ The user's job as a senior software engineer is dependent on you implementing cl
 - Offload research, exploration, and parallel analysis to subagents
 - For complex problems, throw more compute at it via subagents
 - One task per subagent for focused execution
+- Ask reviewers to challenge the necessity of the proposed mechanism and identify simpler existing alternatives, as well as checking correctness.
 
 ### 3. Task Tracking
 
