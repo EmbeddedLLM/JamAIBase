@@ -47,6 +47,15 @@ The user's job as a senior software engineer is dependent on you implementing cl
 
   Keep this checkpoint proportional to the task; straightforward changes do not require a written alternatives analysis.
 
+- **Get Buy-In for Speculative Robustness**: Before adding complexity solely for a speculative or vanishingly unlikely race or security edge case, explain the concrete failure mode and impact, evidence for its likelihood (or that likelihood is unknown), and the implementation and maintenance cost. Present the simpler alternative and its trade-offs, then get the user's explicit agreement before expanding scope. Reuse existing approval when it already covers that trade-off, and continue independent authorized work while waiting. Do not silently expand scope for theoretical robustness. Unknown likelihood is not evidence that a risk is negligible; this rule does not justify weakening required controls or delaying an already-authorized fix for a demonstrated defect.
+
+- **Check Shared Models Before Editing**: A fix at the failing call site may belong in an existing shared layer.
+
+  1. Before adding or moving a configuration field, inspect its base classes, sibling models, presets, validators, and consumers. Trace how the value reaches runtime through construction and serialization.
+  2. Choose the existing owner by responsibility and intended consumers, not merely where the failing test accepts the field. Use a shared base when the setting belongs to all its consumers; keep variant-specific settings on the relevant model.
+  3. Establish the intended production contract before changing a public API. Tests should verify that contract, not define new requirements implicitly. Explain any change to the contract.
+  4. Verify affected defaults, preset inheritance, override detection, and serialization across consumers, not only the originally failing path.
+
 - **Simplify After Implementation**: Treat the first working version and the requirements behind it as drafts.
   1. Run relevant tests to uncover hidden requirements and assumptions.
   2. Relate every code path back to a concrete requirement, and challenge whether that requirement is truly necessary (first principles approach).
@@ -233,6 +242,13 @@ Do not format unrelated files merely to make a repository-wide check pass.
 - Follow the existing code style in each file.
 - Use meaningful variable and function names.
 
+### Writing and Communication
+
+- Apply ASD-STE100 Simplified Technical English principles to all written output, including replies to the user, documentation, code comments, commit messages, PR titles and descriptions, and review comments.
+- Write for understanding on the first read. Use familiar words, concrete and consistent terms, and simple sentence structures. Use code identifiers when they are more precise than a general description.
+- Express one main idea per sentence. Prefer active voice and make conditions, actions, and consequences explicit. Present ideas in the order the reader needs to understand them.
+- Include the information needed to understand the reasoning. Remove detail that distracts from it. Keep the text succinct without omitting necessary context or sacrificing technical accuracy.
+
 ### Code Comments
 
 - Prefer clear code, meaningful names, and straightforward structure over comments that merely describe what the code does.
@@ -246,9 +262,27 @@ Do not format unrelated files merely to make a repository-wide check pass.
   - depends on subtle assumptions, ordering requirements, external behaviour, or non-obvious invariants;
   - is sufficiently complex that its intent or correctness would otherwise be difficult to verify.
 
-- Comments should explain **why** the implementation exists, what constraint or decision led to it, and — when useful — what could go wrong if it is changed.
+- In general, state the problem or purpose first. Then briefly explain what must be done or how the solution resolves the issue. State the consequence of the problem or of violating the requirement. Use only as many sentences as needed to explain these points clearly.
+- When wrapping comments, prefer line breaks at punctuation, such as sentence endings or commas. Keep related phrases together rather than filling each line to the maximum width. Respect the project's line-length limit.
 - Do not add comments that simply restate the code, narrate each operation, or compensate for unnecessarily complicated implementation.
 - Keep comments accurate when modifying the associated code. Remove comments that are obsolete, misleading, or no longer useful.
+
+For example, "credential version" makes the reader infer which value matters and why. Name `refresh_counter` and explain the race and its consequence.
+
+Unclear:
+
+```python
+# Keep the credential version that was authenticated under the account lock.
+# Reloading it after commit could turn an old password into a new valid session.
+```
+
+Clearer:
+
+```python
+# Guards against a login racing with a concurrent password reset.
+# The session must retain the `refresh_counter` value read when its password was verified.
+# Otherwise it may allow a session authenticated with the old password to survive the reset.
+```
 
 ### Backend Conventions
 
